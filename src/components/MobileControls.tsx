@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Sword, Zap, Footprints } from 'lucide-react';
+import { Sword, Zap, Footprints, Crosshair, Wrench } from 'lucide-react';
 
 interface MobileControlsProps {
   onJoystickMove: (vector: { x: number; y: number }) => void;
@@ -7,6 +7,10 @@ interface MobileControlsProps {
   onJump?: () => void;
   onToggleSprint?: () => void;
   isSprinting?: boolean;
+  onToggleAim?: () => void;
+  isAiming?: boolean;
+  onToggleInspect?: () => void;
+  isInspecting?: boolean;
   onUseSkill: (idx: number) => void;
   onToggleVehicle: () => void;
   onInteract: () => void;
@@ -19,6 +23,10 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
   onJump,
   onToggleSprint,
   isSprinting = false,
+  onToggleAim,
+  isAiming = false,
+  onToggleInspect,
+  isInspecting = false,
   onInteract,
   hasInteractable,
 }) => {
@@ -109,19 +117,47 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
         )}
 
         <div className="flex items-center gap-2.5">
-          {/* Sprint Toggle Button */}
+          {/* Gunsmith Mods Button [C] */}
+          {onToggleInspect && (
+            <button
+              type="button"
+              onClick={onToggleInspect}
+              className={`w-13 h-13 rounded-2xl border-2 font-bold text-xs shadow-lg flex flex-col items-center justify-center active:scale-90 transition-all cursor-pointer ${
+                isInspecting
+                  ? 'bg-red-600 border-amber-300 text-white shadow-[0_0_20px_rgba(239,68,68,0.8)] scale-105'
+                  : 'bg-zinc-900/80 text-zinc-300 border-zinc-700 hover:border-red-500'
+              }`}
+            >
+              <Wrench size={19} className={isInspecting ? 'text-amber-300 animate-spin' : 'text-amber-400'} />
+              <span className="text-[8px] uppercase font-black tracking-wider">{isInspecting ? 'MOD ON' : 'MODS [C]'}</span>
+            </button>
+          )}
+
+          {/* Aim Mode Button (ПКМ Equivalent) */}
+          {onToggleAim && (
+            <button
+              type="button"
+              onClick={onToggleAim}
+              className={`w-13 h-13 rounded-2xl border-2 font-bold text-xs shadow-lg flex flex-col items-center justify-center active:scale-90 transition-all cursor-pointer ${
+                isAiming
+                  ? 'bg-red-600 border-amber-300 text-white shadow-[0_0_20px_rgba(239,68,68,0.8)] scale-105'
+                  : 'bg-zinc-900/80 text-zinc-300 border-zinc-700 hover:border-red-500'
+              }`}
+            >
+              <Crosshair size={20} className={isAiming ? 'text-amber-300 animate-spin' : 'text-red-400'} />
+              <span className="text-[8px] uppercase font-black tracking-wider">{isAiming ? 'AIM ON' : 'AIM'}</span>
+            </button>
+          )}
+
+          {/* Dodge Roll Button with I-Frames */}
           {onToggleSprint && (
             <button
               type="button"
               onClick={onToggleSprint}
-              className={`w-13 h-13 rounded-2xl border-2 font-bold text-xs shadow-lg flex flex-col items-center justify-center active:scale-90 transition-transform cursor-pointer ${
-                isSprinting
-                  ? 'bg-amber-400 text-slate-950 border-white ring-2 ring-amber-400 animate-pulse'
-                  : 'bg-slate-900/70 text-white border-white/30'
-              }`}
+              className="w-13 h-13 rounded-2xl border-2 font-bold text-xs shadow-lg flex flex-col items-center justify-center active:scale-90 transition-transform cursor-pointer bg-sky-500/80 text-white border-white/50"
             >
-              <Zap size={20} />
-              <span className="text-[8px] uppercase">Sprint</span>
+              <Zap size={20} className="text-amber-300" />
+              <span className="text-[8px] uppercase font-black tracking-wider">Dodge</span>
             </button>
           )}
 

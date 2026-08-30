@@ -3,7 +3,15 @@ export type CharacterClass = 'gunslinger' | 'swordmaster' | 'cybermage';
 export type GunType = 'pistol' | 'revolver' | 'mac10' | 'ak47' | 'shotgun' | 'cheytac' | 'katana' | 'sledgehammer';
 
 export interface ChibiConfig {
-  hairStyle:
+  hairStyle?:
+    | 'teto_drills'
+    | 'miku_twintails'
+    | 'anya_buns'
+    | 'bocchi_side'
+    | 'sailor_odango'
+    | 'gyaru_ponytail'
+    | 'cat_hood_bob'
+    | 'pompadour_chad'
     | 'bob'
     | 'twintails'
     | 'ponytail'
@@ -15,21 +23,235 @@ export interface ChibiConfig {
     | 'cyber_buns'
     | 'short_messy'
     | 'side_ponytail'
-    | 'hime_cut';
+    | 'hime_cut'
+    | 'ojou_drills'
+    | 'afro'
+    | 'side_braid'
+    | 'ahoge_messy'
+    | 'slicked_back'
+    | 'pixie_cut'
+    | 'low_twintails'
+    | 'half_updo'
+    | 'topknot_samurai'
+    | 'curtain_bangs'
+    | 'twin_buns_flowing'
+    | 'mushroom_bob'
+    | 'goth_side_fringe'
+    | 'drill_ponytail'
+    | 'fluffy_short'
+    | 'dreadlocks'
+    | 'mega_drill_buns'
+    | 'super_saiyan'
+    | 'rapunzel_braid'
+    | 'twin_bubble_tails'
+    | 'shaggy_mullet'
+    | 'twin_drill_tails'
+    | 'none_short';
+  frontHairStyle?:
+    | 'straight_bangs'
+    | 'curtain_bangs'
+    | 'teto_arched_bangs'
+    | 'miku_fringe'
+    | 'anya_horns_bangs'
+    | 'bocchi_shaggy'
+    | 'sailor_crescent'
+    | 'side_swept'
+    | 'hime_sidelocks'
+    | 'spiky_bangs'
+    | 'emo_fringe'
+    | 'short_parted'
+    | 'blunt_fringe'
+    | 'center_split'
+    | 'chad_quiff'
+    | 'v_bangs'
+    | 'messy_curly'
+    | 'braided_headband'
+    | 'feathered_bangs'
+    | 'choppy_micro'
+    | 'none';
+  backHairStyle?:
+    | 'teto_drills'
+    | 'miku_twintails'
+    | 'anya_buns'
+    | 'bocchi_side'
+    | 'sailor_odango'
+    | 'gyaru_ponytail'
+    | 'cat_hood_bob'
+    | 'pompadour_chad'
+    | 'bob'
+    | 'twintails'
+    | 'ponytail'
+    | 'spiky'
+    | 'wavy'
+    | 'braids'
+    | 'long_flowing'
+    | 'wolf_cut'
+    | 'cyber_buns'
+    | 'short_messy'
+    | 'side_ponytail'
+    | 'hime_cut'
+    | 'ojou_drills'
+    | 'afro'
+    | 'side_braid'
+    | 'ahoge_messy'
+    | 'slicked_back'
+    | 'pixie_cut'
+    | 'low_twintails'
+    | 'half_updo'
+    | 'topknot_samurai'
+    | 'twin_buns_flowing'
+    | 'mushroom_bob'
+    | 'drill_ponytail'
+    | 'fluffy_short'
+    | 'dreadlocks'
+    | 'mega_drill_buns'
+    | 'super_saiyan'
+    | 'rapunzel_braid'
+    | 'twin_bubble_tails'
+    | 'shaggy_mullet'
+    | 'twin_drill_tails'
+    | 'none_short';
   hairColor: string;
   skinTone?: string;
-  earType: 'cat' | 'bunny' | 'fox' | 'bear' | 'elf' | 'cyber_antennas' | 'horns' | 'none';
+  eyesOverHair?: boolean;
+  hatType?:
+    | 'none'
+    | 'cyber_cap'
+    | 'combat_helmet'
+    | 'cat_beanie'
+    | 'witch_hat'
+    | 'maid_headdress'
+    | 'beret'
+    | 'bunny_hood'
+    | 'cyber_visor'
+    | 'straw_hat'
+    | 'crown_hat'
+    | 'police_cap'
+    | 'kitsune_mask'
+    | 'chef_toque'
+    | 'pirate_hat'
+    | 'propeller_beanie'
+    | 'top_hat'
+    | 'cowboy_hat'
+    | 'shark_hood'
+    | 'nvg_goggles'
+    | 'flower_crown';
+  hatColor?: string;
+  wingType?:
+    | 'none'
+    | 'angel_feathers'
+    | 'devil_bat'
+    | 'cyber_thrusters'
+    | 'fairy_sparkle'
+    | 'dragon_drake'
+    | 'pixel_wings'
+    | 'mecha_wings'
+    | 'phoenix_fire'
+    | 'butterfly_prisma'
+    | 'crystal_shards'
+    | 'shadow_tendrils';
+  wingColor?: string;
+  earType:
+    | 'cat'
+    | 'bunny'
+    | 'fox'
+    | 'wolf'
+    | 'bear'
+    | 'elf'
+    | 'cyber_antennas'
+    | 'horns'
+    | 'devil_horns'
+    | 'dragon_horns'
+    | 'sheep_horns'
+    | 'mouse'
+    | 'deer_antlers'
+    | 'dog_floppy'
+    | 'wings_head'
+    | 'devil_wings'
+    | 'none';
   earColor: string;
   innerEarColor?: string;
-  haloType: 'star' | 'circle' | 'winged' | 'crown' | 'cross' | 'cyber_hex' | 'heart' | 'floral' | 'neon_rings' | 'none';
+  haloType:
+    | 'star'
+    | 'circle'
+    | 'winged'
+    | 'crown'
+    | 'cross'
+    | 'cyber_hex'
+    | 'heart'
+    | 'floral'
+    | 'neon_rings'
+    | 'shuriken'
+    | 'none';
   haloColor: string;
-  outfitType?: 'academy_blazer' | 'cyber_hoodie' | 'tactical_shinobi' | 'maid_idol' | 'streetwear' | 'magic_robe' | 'kimono_yukata';
+  outfitType?:
+    | 'academy_blazer'
+    | 'cyber_hoodie'
+    | 'tactical_shinobi'
+    | 'maid_idol'
+    | 'streetwear'
+    | 'magic_robe'
+    | 'kimono_yukata'
+    | 'mecha_pilot'
+    | 'goth_lolita'
+    | 'military_officer'
+    | 'gym_bloomer'
+    | 'swimsuit_sailor'
+    | 'bunny_suit'
+    | 'shrine_miko'
+    | 'cyber_ninja'
+    | 'techwear_poncho'
+    | 'magical_girl'
+    | 'kigurumi_onesie'
+    | 'vampire_noble'
+    | 'combat_commando'
+    | 'sukeban_trench'
+    | 'work_overalls';
   coatColor: string;
   accentColor?: string;
   skirtColor: string;
-  eyeType: 'cat_w' | 'happy' | 'determined' | 'wink' | 'sparkle' | 'smug' | 'sleepy' | 'blush' | 'glasses' | 'dot';
+  ribbonColor?: string;
+  eyeType:
+    | 'anya_smug'
+    | 'aqua_crying'
+    | 'bocchi_panic'
+    | 'sparkle_stars'
+    | 'heart_eyes'
+    | 'owo'
+    | 'pout'
+    | 'giga_chad'
+    | 'cat_w'
+    | 'happy'
+    | 'determined'
+    | 'wink'
+    | 'sparkle'
+    | 'smug'
+    | 'sleepy'
+    | 'blush'
+    | 'glasses'
+    | 'dot'
+    | 'teary'
+    | 'dizzy_spiral'
+    | 'deadpan'
+    | 'starry_tears'
+    | 'rage_fire'
+    | 'derp'
+    | 'hypno_spiral'
+    | 'sleepy_closed'
+    | 'wink_star'
+    | 'nya_cat'
+    | 'dead_x'
+    | 'sparkle_hearts'
+    | 'waterfall_cry'
+    | 'smug_cat_face'
+    | 'yandere_glow'
+    | 'anime_shades'
+    | 'laser_eyes'
+    | 'pog_shock'
+    | 'drool_sleepy'
+    | 'diamond_shoujo';
   eyeColor?: string;
-  ribbonColor: string;
+  ribbonColor?: string;
 }
 
 export type ItemRarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'mythic';
@@ -137,6 +359,25 @@ export interface Skill {
   range: number;
 }
 
+export type AttachmentSlot = 'muzzle' | 'optic' | 'magazine' | 'underbarrel';
+
+export interface WeaponAttachment {
+  id: string;
+  name: string;
+  slot: AttachmentSlot;
+  icon: string;
+  description: string;
+  statBonus: {
+    damageMult?: number;
+    critRateBonus?: number;
+    rangeBonus?: number;
+    ammoBonus?: number;
+    reloadSpeedMult?: number;
+    spreadReduction?: number;
+    aimSpeedBonus?: number;
+  };
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -167,12 +408,28 @@ export interface Player {
   spawnBounce: number; // 0 to 1 for spawn squash & stretch
   attackTimer: number;
   dodgeTimer: number;
+  dodgeCooldown?: number;
+  dashVx?: number;
+  dashVy?: number;
+  isAirDash?: boolean;
+  aimAngle?: number;
+  isAiming?: boolean;
+  isInspectingWeapon?: boolean;
+  weaponAttachments?: Record<AttachmentSlot, WeaponAttachment | null>;
+  ammo?: number;
+  maxAmmo?: number;
+  isReloading?: boolean;
+  reloadTimer?: number;
+  respawnTimer?: number;
+  isRespawning?: boolean;
   combo: number;
   lastAttackTime: number;
   chatMessage?: string;
   chatTimer?: number;
   emote?: string;
   emoteTimer?: number;
+  cinematicPose?: 'dance' | 'dive' | 'skid' | 'dazed' | 'brush' | 'bonk' | 'pickup' | 'ready' | 'none';
+  hideWeapon?: boolean;
   activeQuests: Record<string, QuestProgress>;
   completedQuestIds: string[];
   currentZone: string;
@@ -187,6 +444,8 @@ export type FactionType = 'police' | 'punk_demon' | 'bandit' | 'wild' | 'neutral
 
 export interface Monster {
   id: string;
+  retaliatePlayer?: boolean;
+  targetEnemyId?: string | null;
   name: string;
   type:
     | 'boss_welder'
@@ -234,14 +493,41 @@ export interface Monster {
   headTiltVel?: number;
   knockbackX?: number;
   knockbackY?: number;
+  jumpZ?: number; // Vertical height in air (0 is ground)
+  jumpVz?: number;
+  isJumping?: boolean;
   dodgeTimer?: number;
+  dodgeCooldown?: number;
   dashVx?: number;
   dashVy?: number;
+  isAirDash?: boolean;
+  isCharging?: boolean; // Rushdown tackle / pinning charge
+  chargeTimer?: number;
+  chargeVx?: number;
+  chargeVy?: number;
+  isPinned?: boolean; // Pinned to wall or enemy
+  pinTimer?: number;
+  hasShield?: boolean; // SWAT ballistic shield
+  shieldHp?: number;
+  isBlocking?: boolean;
   hitFlash?: number; // White flash on hit
+  facing?: 'left' | 'right';
   state: 'idle' | 'patrol' | 'chase' | 'attack' | 'dead';
   targetPlayerId: string | null;
   attackCooldown: number;
   specialCooldown: number;
+  sniperLaser?: {
+    active: boolean;
+    angle: number;
+    length: number;
+    chargeProgress: number;
+  };
+  battleBark?: {
+    text: string;
+    timer: number;
+  };
+  deathProgress?: number; // 0 to 1 for ragdoll death fall
+  deathType?: 'back' | 'front';
   welderSpecialPhase?: number;
   telegraphedAttack?: {
     type: 'circle' | 'laser' | 'slam' | 'grenade' | 'fire_pool';
@@ -262,6 +548,7 @@ export interface Monster {
   }[];
   animTimer: number;
   respawnTime?: number;
+  isRespawning?: boolean;
 }
 
 export interface GroundDecal {
@@ -273,6 +560,8 @@ export interface GroundDecal {
   alpha: number;
   life: number;
   maxLife: number;
+  type?: 'blood' | 'scorch' | 'fire_pool' | 'smoke';
+  dps?: number;
   splatterCount?: number;
 }
 
@@ -373,10 +662,15 @@ export interface DamagePopup {
   id: string;
   x: number;
   y: number;
+  vx?: number;
+  vy?: number;
+  rotation?: number;
   text: string;
   color: string;
   isCrit: boolean;
   isHeal: boolean;
+  type?: 'damage' | 'crit' | 'headshot' | 'dodge' | 'heal' | 'system' | 'manga';
+  scale?: number;
   life: number;
   maxLife: number;
 }

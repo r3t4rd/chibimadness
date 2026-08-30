@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld } from './game/worldRenderer';
+import { drawWorld, screenToWorld } from './game/worldRenderer';
 import { sound } from './game/audioEngine';
 import { CharacterCreator } from './components/CharacterCreator';
 import { HUD } from './components/HUD';
@@ -12,6 +12,7 @@ import { ShopModal } from './components/ShopModal';
 import { DialogueModal } from './components/DialogueModal';
 import { SkillTreeModal } from './components/SkillTreeModal';
 import { WorldMapModal } from './components/WorldMapModal';
+import { GunsmithModal } from './components/GunsmithModal';
 import { ChatAndEmotes } from './components/ChatAndEmotes';
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
@@ -138,6 +139,45 @@ export function App() {
     };
   }, [createdPlayer]);
 
+  // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'KeyC' && !e.repeat && engine.activeModal === 'none') {
+        engine.setIsModdingWeapon(true);
+      }
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'KeyC') {
+        engine.setIsModdingWeapon(false);
+      }
+    };
+    const handleGlobalMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        engine.setIsAiming(false);
+      }
+    };
+    const handleGlobalContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    const handleWindowBlur = () => {
+      engine.setIsAiming(false);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('contextmenu', handleGlobalContextMenu);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('contextmenu', handleGlobalContextMenu);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [engine.activeModal, engine.setIsModdingWeapon, engine.setIsAiming]);
+
   const handleToggleMute = () => {
     const next = !isMuted;
     setIsMuted(next);
@@ -190,15 +230,30 @@ export function App() {
           {/* 2. Main Open World Canvas */}
           <canvas
             ref={canvasRef}
+            onContextMenu={(e) => e.preventDefault()}
             onMouseDown={(e) => {
               const canvas = canvasRef.current;
               if (!canvas) return;
-              const rect = canvas.getBoundingClientRect();
-              const screenX = e.clientX - rect.left;
-              const screenY = e.clientY - rect.top;
-              const targetWorldX = engine.player.x + (screenX - canvas.width / 2);
-              const targetWorldY = engine.player.y + (screenY - canvas.height / 2);
-              engine.handleAttack(targetWorldX, targetWorldY);
+              if (e.button === 2) {
+                // Right Mouse Button: Aim Mode
+                e.preventDefault();
+                engine.setIsAiming(true);
+                return;
+              }
+              if (e.button === 0) {
+                // Left Mouse Button: Fire Weapon accurately using world coordinates
+                const rect = canvas.getBoundingClientRect();
+                const screenX = e.clientX - rect.left;
+                const screenY = e.clientY - rect.top;
+                const targetWorldPos = screenToWorld(screenX, screenY, canvas.width, canvas.height);
+                engine.handleAttack(targetWorldPos.x, targetWorldPos.y);
+              }
+            }}
+            onMouseUp={(e) => {
+              if (e.button === 2) {
+                e.preventDefault();
+                engine.setIsAiming(false);
+              }
             }}
             className="absolute inset-0 block w-full h-full cursor-crosshair"
           />
@@ -233,12 +288,14 @@ export function App() {
             onOpenModal={engine.setActiveModal}
             onUseSkill={engine.handleUseSkill}
             onSwitchWeapon={engine.handleSwitchWeapon}
+            onReload={engine.handleReload}
             onToggleVehicle={engine.handleToggleVehicle}
             onJump={engine.handleJump}
             onAttack={engine.handleAttack}
             isMuted={isMuted}
             onToggleMute={handleToggleMute}
             onlineCount={Object.keys(engine.remotePlayers).length + 1}
+            onOpenGunsmith={() => engine.setIsModdingWeapon((prev) => !prev)}
           />
 
           {/* 6. In-Game Chat & Emote Wheel */}
@@ -256,9 +313,16 @@ export function App() {
             onAttack={engine.handleAttack}
             onJump={engine.handleJump}
             onToggleSprint={() => {
-              engine.joystickSprintRef.current = !engine.joystickSprintRef.current;
+              engine.joystickSprintRef.current = true;
+              setTimeout(() => {
+                engine.joystickSprintRef.current = false;
+              }, 150);
             }}
             isSprinting={engine.player.isSprinting}
+            onToggleAim={() => engine.setIsAiming(!engine.isAiming)}
+            isAiming={engine.isAiming}
+            onToggleInspect={() => engine.setIsModdingWeapon(!engine.isModdingWeapon)}
+            isInspecting={engine.isModdingWeapon}
             onUseSkill={engine.handleUseSkill}
             onToggleVehicle={engine.handleToggleVehicle}
             onInteract={handleInteract}
@@ -325,6 +389,13 @@ export function App() {
           {engine.activeModal === 'map' && (
             <WorldMapModal player={engine.player} onClose={() => engine.setActiveModal('none')} />
           )}
+
+          {/* 9. Real-Time Gunsmith Weapon Modding (Hold [C]) */}
+          <GunsmithModal
+            player={engine.player}
+            isOpen={engine.isModdingWeapon}
+            onEquipAttachment={engine.handleEquipAttachment}
+          />
         </>
       )}
     </div>
