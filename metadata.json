@@ -2,5 +2,7 @@
   "name": "ChibiVerse MMORPG",
   "description": "A cozy multiplayer 2D open-world MMORPG featuring chibi characters, modern cyber-city and lush forests, vehicles, leveling, crafting, quests, NPC dialogues, world bosses, and real-time co-op combat.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
