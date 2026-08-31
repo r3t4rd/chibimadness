@@ -13,6 +13,8 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
+В Release публикуются portable `chibimadness-desktop.exe` и рекомендуемый `ChibiMadness-Setup-<version>.exe`. Setup позволяет выбрать папку установки, создаёт Start Menu/опциональный desktop shortcut и удаляется из Windows Apps. Это per-user установщик без UAC; стандартная папка — `%LOCALAPPDATA%\Programs\ChibiMadness`.
+
 Также workflow можно запустить вручную во вкладке **Actions**: в этом случае `.exe` будет доступен как artifact запуска. Чтобы вручную указать другой сервер при старте, используй:
 
 ```powershell
