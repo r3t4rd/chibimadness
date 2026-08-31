@@ -2517,15 +2517,29 @@ export function useGameEngine(initialPlayer: Player) {
     const aimDirX = Math.cos(aimAngle);
     const aimDirY = Math.sin(aimAngle);
 
-    setPlayer((prev) => {
-      const skills = [...prev.skills];
-      skills[skillIndex] = { ...skill, lastUsed: now };
-      return { ...prev, facing: aimDirX >= 0 ? 'right' : 'left', skills };
-    });
+    // Input handlers read playerRef rather than waiting for React's next
+    // render. Keep both representations in sync or Q/E/F can cast from stale
+    // cooldown state on the following key press.
+    const skills = [...curPlayer.skills];
+    skills[skillIndex] = { ...skill, lastUsed: now };
+    const skillCastPlayer: Player = {
+      ...curPlayer,
+      facing: aimDirX >= 0 ? 'right' : 'left',
+      skills,
+    };
+    playerRef.current = skillCastPlayer;
+    setPlayer(skillCastPlayer);
 
     sound.playSkillCast(skill.type);
 
     const pushSkillProj = (proj: Projectile) => {
+      // In a shared world, projectile collision and damage are server-owned.
+      // Adding the projectile locally made it disappear at the next snapshot
+      // and, worse, never sent any Q/E/F skill projectile to the server.
+      if (net.hasSharedWorld()) {
+        net.fireProjectile(proj);
+        return;
+      }
       projectilesRef.current = [...projectilesRef.current, proj];
       setProjectiles([...projectilesRef.current]);
     };
@@ -5709,17 +5723,18 @@ export function useGameEngine(initialPlayer: Player) {
       if (net.hasSharedWorld()) {
         net.healPlayer(item.healHp);
       }
-      setPlayer((prev) => {
-        const newHp = Math.min(prev.stats.maxHp, prev.stats.hp + item.healHp);
-        const inv = prev.inventory
-          .map((s) => (s.item && s.item.id === item.id ? { ...s, quantity: s.quantity - 1 } : s))
-          .filter((s) => s.quantity > 0);
-        return {
-          ...prev,
-          stats: { ...prev.stats, hp: newHp },
-          inventory: inv,
-        };
-      });
+      const current = playerRef.current;
+      const newHp = Math.min(current.stats.maxHp, current.stats.hp + item.healHp);
+      const inv = current.inventory
+        .map((s) => (s.item && s.item.id === item.id ? { ...s, quantity: s.quantity - 1 } : s))
+        .filter((s) => s.quantity > 0);
+      const healedPlayer: Player = {
+        ...current,
+        stats: { ...current.stats, hp: newHp },
+        inventory: inv,
+      };
+      playerRef.current = healedPlayer;
+      setPlayer(healedPlayer);
       sound.playPickup();
     }
   }, []);

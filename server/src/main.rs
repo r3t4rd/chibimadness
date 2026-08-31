@@ -283,8 +283,15 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
         let existing_session = state
             .players
             .get(&player_id)
-            .map(|record| (record.session_id, record.resume_token.clone()));
-        if let Some((_, expected_token)) = &existing_session
+            .map(|record| {
+                (
+                    record.session_id,
+                    record.resume_token.clone(),
+                    record.value.clone(),
+                    record.respawn_at,
+                )
+            });
+        if let Some((_, expected_token, _, _)) = &existing_session
             && requested_resume_token.as_deref() != Some(expected_token.as_str())
         {
             drop(state);
@@ -297,20 +304,24 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             return;
         }
 
-        let (resume_token, old_sender) =
-            if let Some((old_session_id, resume_token)) = existing_session {
+        let (resume_token, authoritative_player, respawn_at, old_sender) =
+            if let Some((old_session_id, resume_token, player, respawn_at)) = existing_session {
                 let old_sender = (old_session_id != session_id)
                     .then(|| state.sessions.remove(&old_session_id))
                     .flatten()
                     .map(|session| session.sender);
-                (resume_token, old_sender)
+                // Reconnecting must retain the authoritative transform, HP,
+                // and Nullspace membership. Replacing this value with the
+                // client's last local save put a horde participant back in
+                // the overworld and spawned its targets at invalid positions.
+                (resume_token, player, respawn_at, old_sender)
             } else {
                 let Some(resume_token) = new_resume_token() else {
                     drop(state);
                     reject_join(sender, "server_error");
                     return;
                 };
-                (resume_token, None)
+                (resume_token, player, None, None)
             };
         let existing_players = state
             .players
@@ -326,7 +337,8 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             "resumeToken": resume_token,
         })
         .to_string();
-        let joined_payload = json!({ "type": "player_joined", "player": player }).to_string();
+        let joined_payload =
+            json!({ "type": "player_joined", "player": authoritative_player }).to_string();
         state
             .sessions
             .get_mut(&session_id)
@@ -336,8 +348,8 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             player_id,
             PlayerRecord {
                 session_id,
-                value: player,
-                respawn_at: None,
+                value: authoritative_player,
+                respawn_at,
                 resume_token,
             },
         );
@@ -1273,16 +1285,26 @@ fn sanitize_player_projectile(
     } else {
         (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
     };
+    let requested_type = value.get("type").and_then(Value::as_str).unwrap_or("bullet");
     let x = bounded_number(&Value::Object(value.clone()), "x", min_x, max_x)?;
     let y = bounded_number(&Value::Object(value.clone()), "y", min_y, max_y)?;
-    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0)) > 100.0 {
+    // Most projectiles originate at the caster. Targeted meteor and falling
+    // sword skills originate above a selected point, which may legitimately
+    // be within cast range instead of the weapon muzzle radius.
+    let max_origin_distance = match requested_type {
+        "meteor" | "falling_sword" => 1_000.0,
+        _ => 100.0,
+    };
+    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0))
+        > max_origin_distance
+    {
         return None;
     }
-    let kind = match value.get("type").and_then(Value::as_str) {
-        Some("laser") => ("laser", 48.0, 2_200.0),
-        Some("slash_wave") => ("slash_wave", 28.0, 240.0),
-        Some("magic_orb" | "fireball" | "meteor") => ("magic_orb", 34.0, 1_100.0),
-        Some("thrown_knife") => ("thrown_knife", 30.0, 980.0),
+    let kind = match requested_type {
+        "laser" => ("laser", 48.0, 2_200.0),
+        "slash_wave" => ("slash_wave", 28.0, 240.0),
+        "magic_orb" | "fireball" | "meteor" => ("magic_orb", 34.0, 1_100.0),
+        "thrown_knife" => ("thrown_knife", 30.0, 980.0),
         _ => ("bullet", 24.0, 1_500.0),
     };
     let vx = bounded_number(&Value::Object(value.clone()), "vx", -50.0, 50.0)?;
@@ -1644,6 +1666,31 @@ mod tests {
     }
 
     #[test]
+    fn targeted_skill_projectiles_are_accepted_within_cast_range() {
+        let (_, player) = sanitize_player(&player("caster", 650.0, 750.0)).expect("valid player");
+        let projectile = sanitize_player_projectile(
+            Some(&json!({
+                "type": "meteor", "x": 1_350.0, "y": 750.0,
+                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
+            })),
+            "caster",
+            &player,
+        )
+        .expect("targeted meteor within cast range");
+        assert_eq!(projectile["type"], "magic_orb");
+
+        assert!(sanitize_player_projectile(
+            Some(&json!({
+                "type": "meteor", "x": 1_700.0, "y": 750.0,
+                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
+            })),
+            "caster",
+            &player,
+        )
+        .is_none());
+    }
+
+    #[test]
     fn server_revives_dead_player_at_camp() {
         let (_, mut value) = sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
         value["hp"] = json!(0.0);
@@ -1795,6 +1842,21 @@ mod tests {
                 .session_id,
             3
         );
+        assert_eq!(
+            number(
+                &server
+                    .state
+                    .lock()
+                    .await
+                    .players
+                    .get("operator")
+                    .expect("resumed player")
+                    .value,
+                "x",
+                0.0,
+            ),
+            100.0
+        );
     }
 
     #[tokio::test]
@@ -1924,7 +1986,7 @@ mod tests {
 
         heal_player(&server, 1, json!({ "amount": 25.0 })).await;
 
-        let snapshot = serde_json::from_str::<Value>(&receiver.recv().await.expect("heal snapshot"))
+        let snapshot = serde_json::from_str::<Value>(&recv_text(&mut receiver, "heal snapshot").await)
             .expect("snapshot JSON");
         assert_eq!(snapshot["type"], "world_snapshot");
         assert_eq!(snapshot["players"][0]["hp"], 65.0);
