@@ -139,9 +139,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             decorations: true,
             mode: WindowMode::Windowed,
         })
-        // The embedded page is a continuously animated game. Keep the native
-        // host responsive between WebView2 compositor frames for the A/B path.
-        .render_loop(RenderLoop::Continuous)
+        // WebView2 owns the game's own animation cadence. A continuously
+        // presenting native WGPU parent competes with its child compositor,
+        // so the host must remain event-driven.
+        .render_loop(RenderLoop::OnDemand)
         .webview(webview)
         .run()?;
     Ok(())
