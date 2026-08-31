@@ -1212,7 +1212,7 @@ fn tick_combat_world(state: &mut WorldState) {
             .get("hordeKind")
             .and_then(Value::as_str)
             .unwrap_or("");
-        if target_immune {
+        if *target_immune {
             set_number(monster, "attackCooldown", cooldown.max(0.35));
             continue;
         }
