@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld } from './game/worldRenderer';
+import { drawWorld, screenToWorld, getCameraState } from './game/worldRenderer';
+import { perfMonitor } from './game/performanceMonitor';
+import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
 import { CharacterCreator } from './components/CharacterCreator';
 import { HUD } from './components/HUD';
@@ -16,7 +18,7 @@ import { GunsmithModal } from './components/GunsmithModal';
 import { ChatAndEmotes } from './components/ChatAndEmotes';
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
-import { NPCS_DATABASE, CLASS_DEFAULTS } from './game/constants';
+import { CLASS_DEFAULTS } from './game/constants';
 import { net } from './game/multiplayerClient';
 
 const FALLBACK_PLAYER: Player = {
@@ -110,8 +112,20 @@ export function App() {
     window.addEventListener('resize', handleResize);
 
     const render = (time: number) => {
+      const frameStart = performance.now();
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
+
+      perfMonitor.setExtras({
+        monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
+        particles: curEngine.particles.length,
+        projectiles: curEngine.projectiles.length,
+        zoom: getCameraState().zoom,
+        canvasW: canvas.width,
+        canvasH: canvas.height,
+      });
+
+      const drawStart = performance.now();
       drawWorld(
         ctx,
         canvas.width,
@@ -126,8 +140,15 @@ export function App() {
         curEngine.damagePopups,
         curEngine.screenShake,
         curEngine.groundDecals,
-        timeInSeconds
+        timeInSeconds,
+        curEngine.introCinematic,
+        curEngine.worldPois,
+        curEngine.cars,
+        curEngine.summons,
+        curEngine.gameTimePhase
       );
+      perfMonitor.recordDraw(performance.now() - drawStart);
+      perfMonitor.recordFrame(performance.now() - frameStart);
       animationId = requestAnimationFrame(render);
     };
 
@@ -142,7 +163,12 @@ export function App() {
   // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'KeyC' && !e.repeat && engine.activeModal === 'none') {
+      if (
+        e.code === 'KeyC' &&
+        !e.repeat &&
+        engine.activeModal === 'none' &&
+        engine.player.characterClass === 'gunslinger'
+      ) {
         engine.setIsModdingWeapon(true);
       }
     };
@@ -155,12 +181,16 @@ export function App() {
       if (e.button === 2) {
         engine.setIsAiming(false);
       }
+      if (e.button === 0) {
+        engine.setFireHeld(false);
+      }
     };
     const handleGlobalContextMenu = (e: MouseEvent) => {
       e.preventDefault();
     };
     const handleWindowBlur = () => {
       engine.setIsAiming(false);
+      engine.setFireHeld(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -185,35 +215,15 @@ export function App() {
   };
 
   const handleBuyItem = (item: Item) => {
-    if (engine.player.gold >= item.price) {
-      engine.player.gold -= item.price;
-      const inv = [...engine.player.inventory];
-      const existing = inv.find((s) => s.item.id === item.id);
-      if (existing && item.stackable) {
-        existing.quantity += 1;
-      } else {
-        inv.push({ slotId: Date.now(), item, quantity: 1 });
-      }
-      engine.player.inventory = inv;
-    }
+    engine.handleBuyItem(item);
   };
 
   const handleSellItem = (item: Item) => {
-    const sellPrice = Math.floor(item.price * 0.6) || 10;
-    engine.player.gold += sellPrice;
-    engine.player.inventory = engine.player.inventory
-      .map((s) => (s.item.id === item.id ? { ...s, quantity: s.quantity - 1 } : s))
-      .filter((s) => s.quantity > 0);
+    engine.handleSellItem(item);
   };
 
   const handleInteract = () => {
-    if (engine.nearbyInteractable?.type === 'npc') {
-      const npc = Object.values(NPCS_DATABASE).find((n) => n.id === engine.nearbyInteractable?.id);
-      if (npc) {
-        engine.setActiveNpc(npc);
-        engine.setActiveModal('dialogue');
-      }
-    }
+    engine.handleInteract();
   };
 
   return (
@@ -232,6 +242,10 @@ export function App() {
             ref={canvasRef}
             onContextMenu={(e) => e.preventDefault()}
             onMouseDown={(e) => {
+              if (engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete') {
+                return;
+              }
+
               const canvas = canvasRef.current;
               if (!canvas) return;
               if (e.button === 2) {
@@ -246,6 +260,7 @@ export function App() {
                 const screenX = e.clientX - rect.left;
                 const screenY = e.clientY - rect.top;
                 const targetWorldPos = screenToWorld(screenX, screenY, canvas.width, canvas.height);
+                engine.setFireHeld(true);
                 engine.handleAttack(targetWorldPos.x, targetWorldPos.y);
               }
             }}
@@ -253,6 +268,9 @@ export function App() {
               if (e.button === 2) {
                 e.preventDefault();
                 engine.setIsAiming(false);
+              }
+              if (e.button === 0) {
+                engine.setFireHeld(false);
               }
             }}
             className="absolute inset-0 block w-full h-full cursor-crosshair"
@@ -279,55 +297,81 @@ export function App() {
             )}
           </AnimatePresence>
 
-          {/* 4. Top World Boss HP Bar */}
-          <BossBar boss={engine.currentBoss} />
+          {engine.worldFade > 0.01 && (
+            <div
+              className="fixed inset-0 z-[90] bg-black pointer-events-none"
+              style={{ opacity: engine.worldFade }}
+            />
+          )}
 
-          {/* 5. Main Game HUD */}
-          <HUD
-            player={engine.player}
-            onOpenModal={engine.setActiveModal}
-            onUseSkill={engine.handleUseSkill}
-            onSwitchWeapon={engine.handleSwitchWeapon}
-            onReload={engine.handleReload}
-            onToggleVehicle={engine.handleToggleVehicle}
-            onJump={engine.handleJump}
-            onAttack={engine.handleAttack}
-            isMuted={isMuted}
-            onToggleMute={handleToggleMute}
-            onlineCount={Object.keys(engine.remotePlayers).length + 1}
-            onOpenGunsmith={() => engine.setIsModdingWeapon((prev) => !prev)}
-          />
+          {/* Hide HUD and UI overlays during Cinematic Sequence */}
+          {engine.introCinematic.phase === 'none' || engine.introCinematic.phase === 'complete' ? (
+            <>
+              {/* 4. Top World Boss HP Bar */}
+              <BossBar boss={engine.currentBoss} />
 
-          {/* 6. In-Game Chat & Emote Wheel */}
-          <ChatAndEmotes
-            chatMessages={chatLog}
-            onSendMessage={engine.handleSendChat}
-            onSendEmote={engine.handleSendEmote}
-          />
+              {/* 5. Main Game HUD */}
+              <HUD
+                player={engine.player}
+                gameTimePhase={engine.gameTimePhase}
+                nearbyNpcName={engine.nearbyInteractable?.name}
+                onOpenModal={engine.setActiveModal}
+                onUseSkill={engine.handleUseSkill}
+                onSwitchWeapon={engine.handleSwitchWeapon}
+                onReload={engine.handleReload}
+                onToggleVehicle={engine.handleToggleVehicle}
+                onJump={engine.handleJump}
+                onAttack={engine.handleAttack}
+                isMuted={isMuted}
+                onToggleMute={handleToggleMute}
+                onlineCount={Object.keys(engine.remotePlayers).length + 1}
+                onOpenGunsmith={() => engine.setIsModdingWeapon((prev) => !prev)}
+                hordeRun={engine.hordeRun}
+                onExtractHorde={engine.handleExtractHorde}
+              />
 
-          {/* 7. Mobile Touch Controls */}
-          <MobileControls
-            onJoystickMove={(vec) => {
-              engine.joystickVectorRef.current = vec;
-            }}
-            onAttack={engine.handleAttack}
-            onJump={engine.handleJump}
-            onToggleSprint={() => {
-              engine.joystickSprintRef.current = true;
-              setTimeout(() => {
-                engine.joystickSprintRef.current = false;
-              }, 150);
-            }}
-            isSprinting={engine.player.isSprinting}
-            onToggleAim={() => engine.setIsAiming(!engine.isAiming)}
-            isAiming={engine.isAiming}
-            onToggleInspect={() => engine.setIsModdingWeapon(!engine.isModdingWeapon)}
-            isInspecting={engine.isModdingWeapon}
-            onUseSkill={engine.handleUseSkill}
-            onToggleVehicle={engine.handleToggleVehicle}
-            onInteract={handleInteract}
-            hasInteractable={!!engine.nearbyInteractable}
-          />
+              <DebugOverlay />
+
+              {/* 6. In-Game Chat & Emote Wheel */}
+              <ChatAndEmotes
+                chatMessages={chatLog}
+                onSendMessage={engine.handleSendChat}
+                onSendEmote={engine.handleSendEmote}
+              />
+
+              {/* 7. Mobile Touch Controls */}
+              <MobileControls
+                onJoystickMove={(vec) => {
+                  engine.joystickVectorRef.current = vec;
+                }}
+                onAttack={() => {
+                  engine.setFireHeld(true);
+                  engine.handleAttack();
+                }}
+                onAttackHoldEnd={() => engine.setFireHeld(false)}
+                onJump={engine.handleJump}
+                onToggleSprint={() => {
+                  engine.joystickSprintRef.current = true;
+                  setTimeout(() => {
+                    engine.joystickSprintRef.current = false;
+                  }, 150);
+                }}
+                isSprinting={engine.player.isSprinting}
+                onToggleAim={() => engine.setIsAiming(!engine.isAiming)}
+                isAiming={engine.isAiming}
+                onToggleInspect={
+                  engine.player.characterClass === 'gunslinger'
+                    ? () => engine.setIsModdingWeapon(!engine.isModdingWeapon)
+                    : undefined
+                }
+                isInspecting={engine.isModdingWeapon}
+                onUseSkill={engine.handleUseSkill}
+                onToggleVehicle={engine.handleToggleVehicle}
+                onInteract={handleInteract}
+                hasInteractable={!!engine.nearbyInteractable}
+              />
+            </>
+          ) : null}
 
           {/* 8. Interactive Modals */}
           {engine.activeModal === 'inventory' && (
@@ -365,16 +409,10 @@ export function App() {
               onOpenShop={() => engine.setActiveModal('shop')}
               onOpenCraft={() => engine.setActiveModal('craft')}
               onAcceptQuest={(qid) => {
-                engine.player.activeQuests[qid] = {
-                  questId: qid,
-                  status: 'active',
-                  objectives: [
-                    { type: 'kill', targetId: 'slime_blob', targetName: 'Slime Blobs', current: 0, required: 3 },
-                  ],
-                };
-                sound.playPickup();
+                engine.handleAcceptQuest(qid);
               }}
               onCompleteQuest={engine.completeQuest}
+              onEnterHorde={engine.handleEnterHorde}
             />
           )}
 
@@ -387,13 +425,20 @@ export function App() {
           )}
 
           {engine.activeModal === 'map' && (
-            <WorldMapModal player={engine.player} onClose={() => engine.setActiveModal('none')} />
+            <WorldMapModal
+              player={engine.player}
+              onClose={() => engine.setActiveModal('none')}
+              onTeleport={(x, y, zoneName) => {
+                engine.handleTeleport(x, y, zoneName);
+                engine.setActiveModal('none');
+              }}
+            />
           )}
 
           {/* 9. Real-Time Gunsmith Weapon Modding (Hold [C]) */}
           <GunsmithModal
             player={engine.player}
-            isOpen={engine.isModdingWeapon}
+            isOpen={engine.isModdingWeapon && engine.player.characterClass === 'gunslinger'}
             onEquipAttachment={engine.handleEquipAttachment}
           />
         </>

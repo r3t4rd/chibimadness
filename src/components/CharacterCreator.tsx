@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Player, CharacterClass, ChibiConfig } from '../types/game';
 import { CLASS_DEFAULTS, ITEMS_DATABASE } from '../game/constants';
+import { WEAPON_CONFIGS } from '../game/useGameEngine';
 import {
   drawChibiCharacter,
   drawFrontHairThumbnail,
@@ -197,95 +198,90 @@ const PRESET_CHARACTERS: PresetCharacter[] = [
     },
   },
   {
-    id: 'miku',
-    name: 'Hatsune Miku',
-    badge: 'CYBER DIVA 🎵',
-    desc: 'Floor-length cyan twin tails & cyber tech',
-    tagline: '「 初音ミク // CYBER VOCALIST 」',
-    classType: 'cybermage',
+    id: 'cirno',
+    name: 'Cirno',
+    badge: 'ICE FAIRY ⑨',
+    desc: '「 チルノ // STRONGEST FAIRY 」',
+    tagline: 'Baka ice fairy with the power of ⑨',
+    classType: 'cybermage' as CharacterClass,
     chibi: {
-      frontHairStyle: 'miku_fringe',
-      backHairStyle: 'miku_twintails',
-      hairStyle: 'miku_twintails',
-      hairColor: '#06B6D4',
-      eyesOverHair: true,
-      hatType: 'cyber_visor',
-      hatColor: '#0F172A',
-      wingType: 'cyber_thrusters',
-      wingColor: '#38BDF8',
-      earType: 'cyber_antennas',
-      earColor: '#1E293B',
-      haloType: 'cyber_hex',
+      frontHairStyle: 'cirno_fringe' as any,
+      backHairStyle: 'cirno_bob' as any,
+      hairColor: '#38BDF8',
+      hatType: 'none' as any,
+      hatColor: '#38BDF8',
+      wingType: 'ice_crystal_wings' as any,
+      wingColor: '#67E8F9',
+      earType: 'none' as any,
+      earColor: '#2B272C',
+      haloType: 'snowflake' as any,
       haloColor: '#38BDF8',
-      coatColor: '#FFFFFF',
-      accentColor: '#06B6D4',
-      skirtColor: '#1E293B',
-      eyeType: 'sparkle_stars',
+      eyeType: 'determined' as any,
       eyeColor: '#0EA5E9',
       skinTone: '#FFF1E0',
-      outfitType: 'academy_blazer',
-      ribbonColor: '#EC4899',
-    },
-  },
-  {
-    id: 'anya',
-    name: 'Anya Forger',
-    badge: 'WAKU WAKU 🥜',
-    desc: 'Cute buns + signature Anya Smug grin',
-    tagline: '「 アーニャ // HEH MEME 𓁹‿𓁹 」',
-    classType: 'gunslinger',
-    chibi: {
-      frontHairStyle: 'anya_horns_bangs',
-      backHairStyle: 'anya_buns',
-      hairStyle: 'anya_buns',
-      hairColor: '#F472B6',
-      eyesOverHair: true,
-      hatType: 'cat_beanie',
-      hatColor: '#EC4899',
-      wingType: 'angel_feathers',
-      wingColor: '#FFFFFF',
-      earType: 'none',
-      earColor: '#2B272C',
-      haloType: 'star',
-      haloColor: '#FDE047',
-      coatColor: '#1E293B',
-      accentColor: '#FDE047',
-      skirtColor: '#0F172A',
-      eyeType: 'anya_smug',
-      eyeColor: '#10B981',
-      skinTone: '#FFF1E0',
-      outfitType: 'academy_blazer',
-      ribbonColor: '#FDE047',
-    },
-  },
-  {
-    id: 'bocchi',
-    name: 'Bocchi The Rock',
-    badge: 'ANXIETY GUITAR 🎸',
-    desc: 'Shaggy pink hair, cube clips & panic meme face',
-    tagline: '「 後藤ひとり // GUITAR HERO 」',
-    classType: 'swordmaster',
-    chibi: {
-      frontHairStyle: 'bocchi_shaggy',
-      backHairStyle: 'bocchi_side',
-      hairStyle: 'bocchi_side',
-      hairColor: '#F472B6',
-      eyesOverHair: true,
-      hatType: 'none',
-      wingType: 'fairy_sparkle',
-      wingColor: '#F472B6',
-      earType: 'none',
-      earColor: '#2B272C',
-      haloType: 'none',
-      haloColor: '#38BDF8',
-      coatColor: '#FCE7F3',
+      outfitType: 'sailor_uniform' as any,
+      coatColor: '#0284C7',
       accentColor: '#38BDF8',
-      skirtColor: '#1E293B',
-      eyeType: 'bocchi_panic',
-      eyeColor: '#38BDF8',
-      skinTone: '#FFF1E0',
-      outfitType: 'cyber_hoodie',
+      skirtColor: '#1E3A8A',
       ribbonColor: '#38BDF8',
+    },
+  },
+  {
+    id: 'remilia',
+    name: 'Remilia Scarlet',
+    badge: 'VAMPIRE QUEEN 🦇',
+    desc: '「 レミリア // SCARLET DEVIL 」',
+    tagline: 'Charismatic vampire of the Scarlet Devil Mansion',
+    classType: 'cybermage' as CharacterClass,
+    chibi: {
+      frontHairStyle: 'ojou_ringlets' as any,
+      backHairStyle: 'ojou_drills' as any,
+      hairColor: '#C084FC',
+      hatType: 'tiara' as any,
+      hatColor: '#FDE047',
+      wingType: 'devil_bat' as any,
+      wingColor: '#312E81',
+      earType: 'bat' as any,
+      earColor: '#4C1D95',
+      haloType: 'cross' as any,
+      haloColor: '#EF4444',
+      eyeType: 'yandere_glow' as any,
+      eyeColor: '#EF4444',
+      skinTone: '#FFF1E0',
+      outfitType: 'vampire_noble' as any,
+      coatColor: '#312E81',
+      accentColor: '#EF4444',
+      skirtColor: '#1E1B4B',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'flandre',
+    name: 'Flandre Scarlet',
+    badge: 'DESTRUCTION 🌈',
+    desc: '「 フランドール // LAEVATEINN 」',
+    tagline: 'Destructive little sister with rainbow crystals',
+    classType: 'swordmaster' as CharacterClass,
+    chibi: {
+      frontHairStyle: 'side_swept' as any,
+      backHairStyle: 'side_ponytail' as any,
+      hairColor: '#FDE047',
+      hatType: 'none' as any,
+      hatColor: '#EF4444',
+      wingType: 'crystal_shards' as any,
+      wingColor: '#F43F5E',
+      earType: 'none' as any,
+      earColor: '#2B272C',
+      haloType: 'star' as any,
+      haloColor: '#FDE047',
+      eyeType: 'sparkle_stars' as any,
+      eyeColor: '#EF4444',
+      skinTone: '#FFF1E0',
+      outfitType: 'goth_lolita' as any,
+      coatColor: '#DC2626',
+      accentColor: '#FDE047',
+      skirtColor: '#7F1D1D',
+      ribbonColor: '#FDE047',
     },
   },
   {
@@ -407,6 +403,661 @@ const PRESET_CHARACTERS: PresetCharacter[] = [
       ribbonColor: '#F59E0B',
     },
   },
+  {
+    id: 'bocchi',
+    name: 'Hitori Gotoh',
+    badge: 'BOCCHI THE ROCK 🎸',
+    desc: 'Pink shag, studio cans & social panic',
+    tagline: '「 後藤ひとり // GUITAR HEROINE 」',
+    classType: 'cybermage',
+    chibi: {
+      frontHairStyle: 'bocchi_shaggy',
+      backHairStyle: 'bocchi_side',
+      hairStyle: 'bocchi_side',
+      hairColor: '#F9A8D4',
+      eyesOverHair: true,
+      hatType: 'headphones',
+      hatColor: '#1E293B',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'music_notes',
+      haloColor: '#F472B6',
+      coatColor: '#FFFFFF',
+      accentColor: '#F472B6',
+      skirtColor: '#1E293B',
+      eyeType: 'bocchi_panic',
+      eyeColor: '#1E293B',
+      skinTone: '#FFF1E0',
+      outfitType: 'sailor_uniform',
+      ribbonColor: '#F472B6',
+    },
+  },
+  {
+    id: 'miku',
+    name: 'Hatsune Miku',
+    badge: 'VIRTUAL DIVA 🎤',
+    desc: 'Aqua twintails, idol stage & neon cyan',
+    tagline: '「 初音ミク // WORLD IS MINE 」',
+    classType: 'cybermage',
+    chibi: {
+      frontHairStyle: 'miku_fringe',
+      backHairStyle: 'miku_twintails',
+      hairStyle: 'miku_twintails',
+      hairColor: '#06B6D4',
+      eyesOverHair: true,
+      hatType: 'headphones',
+      hatColor: '#06B6D4',
+      wingType: 'pixel_wings',
+      wingColor: '#67E8F9',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'music_notes',
+      haloColor: '#06B6D4',
+      coatColor: '#0F172A',
+      accentColor: '#06B6D4',
+      skirtColor: '#0F172A',
+      eyeType: 'wink_star',
+      eyeColor: '#0EA5E9',
+      skinTone: '#FFF1E0',
+      outfitType: 'idol_stage',
+      ribbonColor: '#06B6D4',
+    },
+  },
+  {
+    id: 'anya',
+    name: 'Anya Forger',
+    badge: 'WAKU WAKU 🥜',
+    desc: 'Pink horn buns, smug spy kid energy',
+    tagline: '「 アーニャ // WAKU WAKU 」',
+    classType: 'gunslinger',
+    chibi: {
+      frontHairStyle: 'anya_horns_bangs',
+      backHairStyle: 'anya_buns',
+      hairStyle: 'anya_buns',
+      hairColor: '#F472B6',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'star',
+      haloColor: '#FDE047',
+      coatColor: '#FCE7F3',
+      accentColor: '#EF4444',
+      skirtColor: '#FCE7F3',
+      eyeType: 'anya_smug',
+      eyeColor: '#10B981',
+      skinTone: '#FFF1E0',
+      outfitType: 'academy_blazer',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'kaneki',
+    name: 'Ken Kaneki',
+    badge: 'ONE-EYED GHOUL 👁️',
+    desc: 'White wolf cut, kakugan & kagune shadows',
+    tagline: '「 金木研 // TOKYO GHOUL 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'emo_fringe',
+      backHairStyle: 'wolf_cut',
+      hairStyle: 'wolf_cut',
+      hairColor: '#F1F5F9',
+      eyesOverHair: true,
+      hatType: 'kitsune_mask',
+      hatColor: '#FFFFFF',
+      wingType: 'shadow_tendrils',
+      wingColor: '#F43F5E',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'cross',
+      haloColor: '#EF4444',
+      coatColor: '#0F172A',
+      accentColor: '#EF4444',
+      skirtColor: '#1E293B',
+      eyeType: 'heterochromia',
+      eyeColor: '#EF4444',
+      skinTone: '#FFF1E0',
+      outfitType: 'sukeban_trench',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'nezuko',
+    name: 'Nezuko Kamado',
+    badge: 'DEMON SISTER 🌸',
+    desc: 'Pink checkered kimono & sleepy demon stare',
+    tagline: '「 竈門禰豆子 // BLOOD DEMON ART 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'hime_sidelocks',
+      backHairStyle: 'long_flowing',
+      hairStyle: 'long_flowing',
+      hairColor: '#1E293B',
+      eyesOverHair: true,
+      hatType: 'flower_crown',
+      hatColor: '#F472B6',
+      wingType: 'phoenix_fire',
+      wingColor: '#F43F5E',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'floral',
+      haloColor: '#F472B6',
+      coatColor: '#FCE7F3',
+      accentColor: '#EF4444',
+      skirtColor: '#F472B6',
+      eyeType: 'sleepy_closed',
+      eyeColor: '#F472B6',
+      skinTone: '#FFF1E0',
+      outfitType: 'kimono_yukata',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'gojo',
+    name: 'Satoru Gojo',
+    badge: 'STRONGEST 🕶️',
+    desc: 'Snow hair, blindfold shades & infinity',
+    tagline: '「 五条悟 // LIMITLESS 」',
+    classType: 'cybermage',
+    chibi: {
+      frontHairStyle: 'wispy_bangs',
+      backHairStyle: 'fluffy_short',
+      hairStyle: 'fluffy_short',
+      hairColor: '#F8FAFC',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'void_portals',
+      wingColor: '#38BDF8',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'infinity',
+      haloColor: '#38BDF8',
+      coatColor: '#0F172A',
+      accentColor: '#38BDF8',
+      skirtColor: '#0F172A',
+      eyeType: 'anime_shades',
+      eyeColor: '#38BDF8',
+      skinTone: '#FFF1E0',
+      outfitType: 'academy_blazer',
+      ribbonColor: '#38BDF8',
+    },
+  },
+  {
+    id: 'gon',
+    name: 'Gon Freecss',
+    badge: 'JAJANKEN 🦊',
+    desc: 'Spiky hunter, green fit & determined grin',
+    tagline: '「 ゴン＝フリークス // HUNTER 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'spiky_bangs',
+      backHairStyle: 'spiky',
+      hairStyle: 'spiky',
+      hairColor: '#1E293B',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'fox',
+      earColor: '#78716C',
+      haloType: 'star',
+      haloColor: '#A3E635',
+      coatColor: '#10B981',
+      accentColor: '#FDE047',
+      skirtColor: '#166534',
+      eyeType: 'determined',
+      eyeColor: '#A3E635',
+      skinTone: '#F7D7BA',
+      outfitType: 'streetwear',
+      ribbonColor: '#FDE047',
+    },
+  },
+  {
+    id: 'killua',
+    name: 'Killua Zoldyck',
+    badge: 'GODSPEED ⚡',
+    desc: 'Silver spikes, assassin smirk & lightning',
+    tagline: '「 キルア＝ゾルディック // GODSPEED 」',
+    classType: 'gunslinger',
+    chibi: {
+      frontHairStyle: 'spiky_bangs',
+      backHairStyle: 'ahoge_messy',
+      hairStyle: 'ahoge_messy',
+      hairColor: '#E2E8F0',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'cat',
+      earColor: '#E2E8F0',
+      haloType: 'neon_rings',
+      haloColor: '#38BDF8',
+      coatColor: '#E0F2FE',
+      accentColor: '#38BDF8',
+      skirtColor: '#1E293B',
+      eyeType: 'cat_w',
+      eyeColor: '#38BDF8',
+      skinTone: '#FFF1E0',
+      outfitType: 'streetwear',
+      ribbonColor: '#38BDF8',
+    },
+  },
+  {
+    id: 'hisoka',
+    name: 'Hisoka Morow',
+    badge: 'BUNGEE GUM 🃏',
+    desc: 'Crimson slick, star halo & magician grin',
+    tagline: '「 ヒソカ // BUNGEE GUM 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'feathered_bangs',
+      backHairStyle: 'slicked_back',
+      hairStyle: 'slicked_back',
+      hairColor: '#EF4444',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'star',
+      haloColor: '#FDE047',
+      coatColor: '#FCE7F3',
+      accentColor: '#FDE047',
+      skirtColor: '#1E293B',
+      eyeType: 'yandere_glow',
+      eyeColor: '#FDE047',
+      skinTone: '#FFF1E0',
+      outfitType: 'idol_stage',
+      ribbonColor: '#FDE047',
+    },
+  },
+  {
+    id: 'kurapika',
+    name: 'Kurapika',
+    badge: 'CHAIN USER ⛓️',
+    desc: 'Blond bob, scarlet eyes & chain justice',
+    tagline: '「 クラピカ // SCARLET EYES 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'straight_bangs',
+      backHairStyle: 'bob',
+      hairStyle: 'bob',
+      hairColor: '#FDE047',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'neon_rings',
+      haloColor: '#EF4444',
+      coatColor: '#FFFFFF',
+      accentColor: '#EF4444',
+      skirtColor: '#1E293B',
+      eyeType: 'rage_fire',
+      eyeColor: '#EF4444',
+      skinTone: '#FFF1E0',
+      outfitType: 'china_dress',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'tanjiro',
+    name: 'Tanjiro Kamado',
+    badge: 'WATER BREATHING 🌊',
+    desc: 'Checkered haori, scarred bangs & kind fire',
+    tagline: '「 竈門炭治郎 // HINOZAMI 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'thick_eyebrow_bangs',
+      backHairStyle: 'short_messy',
+      hairStyle: 'short_messy',
+      hairColor: '#1E293B',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'floral',
+      haloColor: '#10B981',
+      coatColor: '#10B981',
+      accentColor: '#1E293B',
+      skirtColor: '#1E293B',
+      eyeType: 'determined',
+      eyeColor: '#EF4444',
+      skinTone: '#F7D7BA',
+      outfitType: 'kimono_yukata',
+      ribbonColor: '#1E293B',
+    },
+  },
+  {
+    id: 'luffy',
+    name: 'Monkey D. Luffy',
+    badge: 'PIRATE KING ☠️',
+    desc: 'Straw hat, scar grin & stretchy chaos',
+    tagline: '「 モンキー・D・ルフィ // GEAR 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'messy_curly',
+      backHairStyle: 'short_messy',
+      hairStyle: 'short_messy',
+      hairColor: '#1E293B',
+      eyesOverHair: true,
+      hatType: 'straw_hat',
+      hatColor: '#FDE047',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'crown',
+      haloColor: '#FDE047',
+      coatColor: '#DC2626',
+      accentColor: '#FDE047',
+      skirtColor: '#1E3A8A',
+      eyeType: 'happy',
+      eyeColor: '#1E293B',
+      skinTone: '#F7D7BA',
+      outfitType: 'streetwear',
+      ribbonColor: '#FDE047',
+    },
+  },
+  {
+    id: 'goku',
+    name: 'Son Goku',
+    badge: 'SUPER SAIYAN 💥',
+    desc: 'Golden spikes, orange gi & kamehameha',
+    tagline: '「 孫悟空 // KAMEHAMEHA 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'spiky_bangs',
+      backHairStyle: 'super_saiyan',
+      hairStyle: 'super_saiyan',
+      hairColor: '#FDE047',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'phoenix_fire',
+      wingColor: '#FDE047',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'star',
+      haloColor: '#FDE047',
+      coatColor: '#FB923C',
+      accentColor: '#1E3A8A',
+      skirtColor: '#1E3A8A',
+      eyeType: 'laser_eyes',
+      eyeColor: '#10B981',
+      skinTone: '#F7D7BA',
+      outfitType: 'tactical_shinobi',
+      ribbonColor: '#1E3A8A',
+    },
+  },
+  {
+    id: 'naruto',
+    name: 'Naruto Uzumaki',
+    badge: 'HOKAGE 🍜',
+    desc: 'Whisker grin, orange jacket & fox chakra',
+    tagline: '「 うずまきナルト // BELIEVE IT 」',
+    classType: 'gunslinger',
+    chibi: {
+      frontHairStyle: 'spiky_bangs',
+      backHairStyle: 'spiky',
+      hairStyle: 'spiky',
+      hairColor: '#FDE047',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'fox',
+      earColor: '#FB923C',
+      haloType: 'shuriken',
+      haloColor: '#FB923C',
+      coatColor: '#FB923C',
+      accentColor: '#1E3A8A',
+      skirtColor: '#1E3A8A',
+      eyeType: 'determined',
+      eyeColor: '#1E293B',
+      skinTone: '#F7D7BA',
+      outfitType: 'tactical_shinobi',
+      ribbonColor: '#1E3A8A',
+    },
+  },
+  {
+    id: 'yuji',
+    name: 'Yuji Itadori',
+    badge: 'VESSEL 👊',
+    desc: 'Pink undercut, school fit & cursed fists',
+    tagline: '「 虎杖悠仁 // SUKUNA VESSEL 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'spiky_bangs',
+      backHairStyle: 'short_messy',
+      hairStyle: 'short_messy',
+      hairColor: '#F472B6',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'cross',
+      haloColor: '#EF4444',
+      coatColor: '#DC2626',
+      accentColor: '#1E293B',
+      skirtColor: '#1E293B',
+      eyeType: 'determined',
+      eyeColor: '#A3E635',
+      skinTone: '#FEE2D5',
+      outfitType: 'academy_blazer',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'power',
+    name: 'Power',
+    badge: 'BLOOD FIEND 😈',
+    desc: 'Blonde chaos, devil horns & murder smile',
+    tagline: '「 パワー // BLOOD DEVIL 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'messy_curly',
+      backHairStyle: 'long_flowing',
+      hairStyle: 'long_flowing',
+      hairColor: '#FDE047',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'devil_bat',
+      wingColor: '#F43F5E',
+      earType: 'devil_horns',
+      earColor: '#EF4444',
+      haloType: 'none',
+      haloColor: '#EF4444',
+      coatColor: '#FFFFFF',
+      accentColor: '#EF4444',
+      skirtColor: '#1E293B',
+      eyeType: 'rage_fire',
+      eyeColor: '#EF4444',
+      skinTone: '#FFF1E0',
+      outfitType: 'streetwear',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'zerotwo',
+    name: 'Zero Two',
+    badge: 'DARLING 🦖',
+    desc: 'Pink twin tails, horns & darling smirk',
+    tagline: '「 ゼロツー // DARLING 」',
+    classType: 'gunslinger',
+    chibi: {
+      frontHairStyle: 'side_swept',
+      backHairStyle: 'twintails',
+      hairStyle: 'twintails',
+      hairColor: '#F472B6',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'dragon_drake',
+      wingColor: '#F43F5E',
+      earType: 'devil_horns',
+      earColor: '#EF4444',
+      haloType: 'heart',
+      haloColor: '#EF4444',
+      coatColor: '#DC2626',
+      accentColor: '#FFFFFF',
+      skirtColor: '#FFFFFF',
+      eyeType: 'yandere_glow',
+      eyeColor: '#10B981',
+      skinTone: '#FFF1E0',
+      outfitType: 'mecha_pilot',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'levi',
+    name: 'Levi Ackerman',
+    badge: 'HUMANITY STRONGEST 🧹',
+    desc: 'Undercut, military cape & deadpan stare',
+    tagline: '「 リヴァイ // ACKERMAN 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'short_parted',
+      backHairStyle: 'slicked_back',
+      hairStyle: 'slicked_back',
+      hairColor: '#1E293B',
+      eyesOverHair: true,
+      hatType: 'military_cap',
+      hatColor: '#1E293B',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'none',
+      haloColor: '#94A3B8',
+      coatColor: '#1E293B',
+      accentColor: '#94A3B8',
+      skirtColor: '#0F172A',
+      eyeType: 'deadpan',
+      eyeColor: '#38BDF8',
+      skinTone: '#FFF1E0',
+      outfitType: 'military_officer',
+      ribbonColor: '#94A3B8',
+    },
+  },
+  {
+    id: 'sailormoon',
+    name: 'Usagi Tsukino',
+    badge: 'MOON PRISM 🌙',
+    desc: 'Odango buns, sailor fuku & moon tiara',
+    tagline: '「 月野うさぎ // MOON PRISM 」',
+    classType: 'cybermage',
+    chibi: {
+      frontHairStyle: 'sailor_crescent',
+      backHairStyle: 'sailor_odango',
+      hairStyle: 'sailor_odango',
+      hairColor: '#FDE047',
+      eyesOverHair: true,
+      hatType: 'tiara',
+      hatColor: '#FDE047',
+      wingType: 'fairy_sparkle',
+      wingColor: '#FDE047',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'saturn_rings',
+      haloColor: '#FDE047',
+      coatColor: '#FFFFFF',
+      accentColor: '#EF4444',
+      skirtColor: '#1E3A8A',
+      eyeType: 'sparkle_stars',
+      eyeColor: '#38BDF8',
+      skinTone: '#FFF1E0',
+      outfitType: 'sailor_uniform',
+      ribbonColor: '#EF4444',
+    },
+  },
+  {
+    id: 'jotaro',
+    name: 'Jotaro Kujo',
+    badge: 'STAR PLATINUM ⭐',
+    desc: 'Cap, trench & yare yare deadpan',
+    tagline: '「 空条承太郎 // ORA ORA 」',
+    classType: 'swordmaster',
+    chibi: {
+      frontHairStyle: 'none',
+      backHairStyle: 'slicked_back',
+      hairStyle: 'slicked_back',
+      hairColor: '#1E293B',
+      eyesOverHair: true,
+      hatType: 'military_cap',
+      hatColor: '#0F172A',
+      wingType: 'none',
+      earType: 'none',
+      earColor: '#2B272C',
+      haloType: 'star',
+      haloColor: '#FDE047',
+      coatColor: '#0F172A',
+      accentColor: '#FDE047',
+      skirtColor: '#0F172A',
+      eyeType: 'deadpan',
+      eyeColor: '#1E293B',
+      skinTone: '#FEE2D5',
+      outfitType: 'sukeban_trench',
+      ribbonColor: '#FDE047',
+    },
+  },
+  {
+    id: 'makima',
+    name: 'Makima',
+    badge: 'CONTROL DEVIL 🐕',
+    desc: 'Fox-eye rings, braid & office predator',
+    tagline: '「 マキマ // CONTROL 」',
+    classType: 'cybermage',
+    chibi: {
+      frontHairStyle: 'straight_bangs',
+      backHairStyle: 'braids',
+      hairStyle: 'braids',
+      hairColor: '#FB923C',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'none',
+      earType: 'dog_floppy',
+      earColor: '#FB923C',
+      haloType: 'neon_rings',
+      haloColor: '#FDE047',
+      coatColor: '#FFFFFF',
+      accentColor: '#FDE047',
+      skirtColor: '#1E293B',
+      eyeType: 'yandere_glow',
+      eyeColor: '#FDE047',
+      skinTone: '#FFF1E0',
+      outfitType: 'academy_blazer',
+      ribbonColor: '#FDE047',
+    },
+  },
+  {
+    id: 'asuka',
+    name: 'Asuka Langley',
+    badge: 'EVA-02 🔥',
+    desc: 'Orange twintails, plugsuit & tsundere fire',
+    tagline: '「 アスカ // EVA-02 」',
+    classType: 'gunslinger',
+    chibi: {
+      frontHairStyle: 'v_bangs',
+      backHairStyle: 'twintails',
+      hairStyle: 'twintails',
+      hairColor: '#FB923C',
+      eyesOverHair: true,
+      hatType: 'none',
+      wingType: 'mecha_wings',
+      wingColor: '#DC2626',
+      earType: 'cyber_antennas',
+      earColor: '#EF4444',
+      haloType: 'cyber_hex',
+      haloColor: '#EF4444',
+      coatColor: '#DC2626',
+      accentColor: '#FDE047',
+      skirtColor: '#0F172A',
+      eyeType: 'tsurime_sharp',
+      eyeColor: '#38BDF8',
+      skinTone: '#FFF1E0',
+      outfitType: 'mecha_pilot',
+      ribbonColor: '#EF4444',
+    },
+  },
 ];
 
 const FRONT_HAIR_LIST: { id: ChibiConfig['frontHairStyle']; name: string; tag?: string }[] = [
@@ -422,6 +1073,23 @@ const FRONT_HAIR_LIST: { id: ChibiConfig['frontHairStyle']; name: string; tag?: 
   { id: 'braided_headband', name: 'Crown Braid', tag: 'CUTE' },
   { id: 'feathered_bangs', name: 'Feathered Wisps', tag: 'NEW' },
   { id: 'choppy_micro', name: 'Micro Bangs', tag: 'NEW' },
+  { id: 'straight_bangs_short', name: 'Straight Short', tag: 'SHORT' },
+  { id: 'teto_arched_bangs_short', name: 'Teto Arched Short', tag: 'SHORT' },
+  { id: 'miku_fringe_short', name: 'Miku Fringe Short', tag: 'SHORT' },
+  { id: 'curtain_bangs_short', name: 'Curtain Short', tag: 'SHORT' },
+  { id: 'v_bangs_short', name: 'V-Point Short', tag: 'SHORT' },
+  { id: 'blunt_fringe_short', name: 'Blunt Short', tag: 'SHORT' },
+  { id: 'wispy_bangs_short', name: 'Wispy Short', tag: 'SHORT' },
+  { id: 'side_swept_short', name: 'Side Swept Short', tag: 'SHORT' },
+  { id: 'feathered_bangs_short', name: 'Feathered Short', tag: 'SHORT' },
+  { id: 'hime_sidelocks_short', name: 'Hime Locks Short', tag: 'SHORT' },
+  { id: 'sailor_crescent_short', name: 'Sailor Short', tag: 'SHORT' },
+  { id: 'spiky_bangs_short', name: 'Spiky Short', tag: 'SHORT' },
+  { id: 'emo_fringe_short', name: 'Emo Side Short', tag: 'SHORT' },
+  { id: 'messy_curly_short', name: 'Curly Short', tag: 'SHORT' },
+  { id: 'forehead_peek', name: 'Forehead Peek', tag: 'SHORT' },
+  { id: 'buzz_fringe', name: 'Buzz Fringe', tag: 'SHORT' },
+  { id: 'swept_back_bangs', name: 'Swept Back', tag: 'SHORT' },
   { id: 'side_swept', name: 'Side Swept' },
   { id: 'hime_sidelocks', name: 'Hime Locks' },
   { id: 'spiky_bangs', name: 'Spiky Bangs' },
@@ -430,6 +1098,12 @@ const FRONT_HAIR_LIST: { id: ChibiConfig['frontHairStyle']; name: string; tag?: 
   { id: 'blunt_fringe', name: 'Blunt Fringe' },
   { id: 'center_split', name: 'Center Split' },
   { id: 'chad_quiff', name: 'Chad Quiff', tag: 'MEME' },
+  { id: 'wispy_bangs', name: 'Wispy Bangs', tag: 'NEW' },
+  { id: 'zigzag_bangs', name: 'Zigzag Bangs', tag: 'NEW' },
+  { id: 'twin_antenna', name: 'Twin Ahoge', tag: 'CUTE' },
+  { id: 'thick_eyebrow_bangs', name: 'Heavy Bangs', tag: 'NEW' },
+  { id: 'ojou_ringlets', name: 'Ojou Ringlets', tag: 'CUTE' },
+  { id: 'cirno_fringe', name: 'Ice Fringe', tag: 'NEW' },
   { id: 'none', name: 'Clear Forehead' },
 ];
 
@@ -474,6 +1148,12 @@ const BACK_HAIR_LIST: { id: ChibiConfig['backHairStyle']; name: string; tag?: st
   { id: 'topknot_samurai', name: 'Samurai Topknot' },
   { id: 'afro', name: 'Afro Puff' },
   { id: 'dreadlocks', name: 'Cyber Dreads' },
+  { id: 'fishtail_braid', name: 'Fishtail Braid', tag: 'NEW' },
+  { id: 'high_bun', name: 'High Bun', tag: 'NEW' },
+  { id: 'waterfall_curls', name: 'Waterfall Curls', tag: 'CUTE' },
+  { id: 'ribbon_ponytail', name: 'Ribbon Pony', tag: 'CUTE' },
+  { id: 'asymmetric_bob', name: 'Asymmetric Bob', tag: 'NEW' },
+  { id: 'cirno_bob', name: 'Ice Bob', tag: 'NEW' },
   { id: 'none_short', name: 'Tapered Short' },
 ];
 
@@ -498,6 +1178,12 @@ const HATS_LIST: { id: ChibiConfig['hatType']; name: string; tag?: string }[] = 
   { id: 'straw_hat', name: 'Straw Hat', tag: 'NEW' },
   { id: 'crown_hat', name: 'Mini Crown', tag: 'ROYAL' },
   { id: 'police_cap', name: 'Officer Cap', tag: 'NEW' },
+  { id: 'bandana', name: 'Rebel Bandana', tag: 'NEW' },
+  { id: 'headphones', name: 'Headphones', tag: 'NEW' },
+  { id: 'tiara', name: 'Princess Tiara', tag: 'CUTE' },
+  { id: 'aviator_goggles', name: 'Aviator Goggles', tag: 'NEW' },
+  { id: 'nurse_cap', name: 'Nurse Cap', tag: 'NEW' },
+  { id: 'military_cap', name: 'Garrison Cap', tag: 'NEW' },
   { id: 'none', name: 'No Hat' },
 ];
 
@@ -513,6 +1199,10 @@ const WINGS_LIST: { id: ChibiConfig['wingType']; name: string; tag?: string }[] 
   { id: 'fairy_sparkle', name: 'Fairy Sparkle', tag: 'CUTE' },
   { id: 'dragon_drake', name: 'Dragon Drake', tag: 'NEW' },
   { id: 'pixel_wings', name: '8-Bit Retro', tag: 'MEME' },
+  { id: 'bee_wings', name: 'Buzzy Bee', tag: 'CUTE' },
+  { id: 'steampunk_gears', name: 'Steampunk Gears', tag: 'NEW' },
+  { id: 'ice_crystal_wings', name: 'Ice Crystal', tag: 'NEW' },
+  { id: 'void_portals', name: 'Void Portals', tag: 'DARK' },
   { id: 'none', name: 'No Wings' },
 ];
 
@@ -539,6 +1229,12 @@ const OUTFITS_LIST: { id: ChibiConfig['outfitType']; name: string; desc: string;
   { id: 'military_officer', name: 'Officer Coat', desc: 'Tactical greatcoat' },
   { id: 'magic_robe', name: 'Scholar Robe', desc: 'Arcane caster' },
   { id: 'kimono_yukata', name: 'Modern Kimono', desc: 'Festival wrap' },
+  { id: 'sailor_uniform', name: 'Sailor Uniform', desc: 'School sailor dress', tag: 'POPULAR' },
+  { id: 'nurse_outfit', name: 'Nurse Outfit', desc: 'Medical uniform', tag: 'NEW' },
+  { id: 'china_dress', name: 'China Dress', desc: 'Traditional cheongsam', tag: 'NEW' },
+  { id: 'detective_coat', name: 'Detective Coat', desc: 'Sherlock double-breasted', tag: 'NEW' },
+  { id: 'idol_stage', name: 'Idol Stage', desc: 'Pop idol performance dress', tag: 'CUTE' },
+  { id: 'winter_coat', name: 'Winter Coat', desc: 'Warm padded coat', tag: 'NEW' },
 ];
 
 const EYES_LIST: { id: ChibiConfig['eyeType']; name: string; tag?: string }[] = [
@@ -577,6 +1273,12 @@ const EYES_LIST: { id: ChibiConfig['eyeType']; name: string; tag?: string }[] = 
   { id: 'deadpan', name: 'Deadpan -_-' },
   { id: 'dot', name: 'Dots • •' },
   { id: 'dead_x', name: 'Knockout X_X', tag: 'MEME' },
+  { id: 'heterochromia', name: 'Heterochromia 🔴🔵', tag: 'RARE' },
+  { id: '9ball', name: 'Baka ⑨', tag: 'MEME' },
+  { id: 'tsurime_sharp', name: 'Sharp Tsurime ↗', tag: 'NEW' },
+  { id: 'tareme_soft', name: 'Soft Tareme ↘', tag: 'CUTE' },
+  { id: 'closed_smile', name: 'Gentle Smile ^_^', tag: 'CUTE' },
+  { id: 'sweat_nervous', name: 'Nervous Sweat 💧', tag: 'MEME' },
 ];
 
 const SKIN_TONES_LIST: { id: string; name: string; color: string }[] = [
@@ -602,10 +1304,14 @@ const EARS_LIST: { id: ChibiConfig['earType']; name: string; tag?: string }[] = 
   { id: 'cyber_antennas', name: 'Cyber Tech Fins' },
   { id: 'devil_horns', name: 'Devil Horns' },
   { id: 'dragon_horns', name: 'Dragon Horns' },
+  { id: 'raccoon', name: 'Tanuki Ears', tag: 'CUTE' },
+  { id: 'bat', name: 'Bat Wings', tag: 'DARK' },
+  { id: 'cow_horns', name: 'Cow Horns', tag: 'NEW' },
+  { id: 'unicorn_horn', name: 'Unicorn Horn', tag: 'CUTE' },
   { id: 'none', name: 'Human / None' },
 ];
 
-const HALOS_LIST: { id: ChibiConfig['haloType']; name: string }[] = [
+const HALOS_LIST: { id: ChibiConfig['haloType']; name: string; tag?: string }[] = [
   { id: 'shuriken', name: 'Shuriken' },
   { id: 'star', name: 'Star' },
   { id: 'winged', name: 'Winged' },
@@ -616,6 +1322,11 @@ const HALOS_LIST: { id: ChibiConfig['haloType']; name: string }[] = [
   { id: 'floral', name: 'Sakura' },
   { id: 'cross', name: 'Cross' },
   { id: 'neon_rings', name: 'Dual Rings' },
+  { id: 'diamond', name: 'Diamond', tag: 'NEW' },
+  { id: 'infinity', name: 'Infinity', tag: 'NEW' },
+  { id: 'saturn_rings', name: 'Saturn', tag: 'NEW' },
+  { id: 'music_notes', name: 'Music Notes', tag: 'CUTE' },
+  { id: 'snowflake', name: 'Snowflake', tag: 'NEW' },
   { id: 'none', name: 'No Halo' },
 ];
 
@@ -1036,6 +1747,98 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
   const [skirtColor, setSkirtColor] = useState<string>('#0F172A');
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const bannerRef = useRef<HTMLDivElement | null>(null);
+  const previewFacingRef = useRef<'left' | 'right'>('right');
+
+  type PreviewReaction = 'dance' | 'cute' | 'shy';
+  const previewInteractionRef = useRef({
+    inBanner: false,
+    mouseCanvasX: 180,
+    mouseCanvasY: 170,
+    reaction: null as PreviewReaction | null,
+    reactionStart: 0,
+  });
+
+  const updatePreviewMouseFromEvent = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    previewInteractionRef.current.mouseCanvasX = (clientX - rect.left) * scaleX;
+    previewInteractionRef.current.mouseCanvasY = (clientY - rect.top) * scaleY;
+  };
+
+  const handleBannerMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    previewInteractionRef.current.inBanner = true;
+    updatePreviewMouseFromEvent(e.clientX, e.clientY);
+  };
+
+  const handleBannerMouseLeave = () => {
+    previewInteractionRef.current.inBanner = false;
+  };
+
+  const handleCharacterClick = () => {
+    const reactions: PreviewReaction[] = ['cute', 'dance', 'shy'];
+    const pick = reactions[Math.floor(Math.random() * reactions.length)];
+    previewInteractionRef.current.reaction = pick;
+    previewInteractionRef.current.reactionStart = performance.now();
+    sound.playPickup();
+  };
+
+  const buildPreviewInteraction = (canvas: HTMLCanvasElement, now: number) => {
+    const inter = previewInteractionRef.current;
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2 + 35;
+    const drawScale = 1.75;
+
+    let cinematicPose: Player['cinematicPose'];
+    let spawnBounce = 1;
+    let emote: string | undefined;
+    let hideWeapon = false;
+    let eyeLookX = 0;
+    let eyeLookY = 0;
+    let facing = previewFacingRef.current;
+
+    if (inter.reaction === 'dance' && now - inter.reactionStart < 2800) {
+      cinematicPose = 'dance';
+      hideWeapon = true;
+    } else if (inter.reaction === 'cute' && now - inter.reactionStart < 2200) {
+      cinematicPose = 'cute';
+      spawnBounce = Math.min(1, (now - inter.reactionStart) / 900);
+      emote = '\u2665';
+      hideWeapon = true;
+    } else if (inter.reaction === 'shy' && now - inter.reactionStart < 1800) {
+      cinematicPose = 'shy';
+    } else if (inter.reaction) {
+      inter.reaction = null;
+    }
+
+    if (inter.inBanner) {
+      const charX = (inter.mouseCanvasX - centerX) / drawScale;
+      const charY = (inter.mouseCanvasY - centerY) / drawScale;
+      const rawLookX = Math.max(-2.8, Math.min(2.8, charX * 0.18));
+      const rawLookY = Math.max(-2.2, Math.min(2.2, (charY + 24) * 0.14));
+
+      if (charX < -10) facing = 'left';
+      else if (charX > 10) facing = 'right';
+      previewFacingRef.current = facing;
+
+      eyeLookX = facing === 'left' ? -rawLookX : rawLookX;
+      eyeLookY = rawLookY;
+    }
+
+    return {
+      cinematicPose,
+      spawnBounce,
+      emote,
+      hideWeapon,
+      eyeLookX,
+      eyeLookY,
+      facing,
+    };
+  };
 
   // Apply full preset
   const applyPreset = (preset: PresetCharacter) => {
@@ -1070,107 +1873,124 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const previewPlayer: Player = {
-      id: 'preview',
-      name: name.trim() || 'Hero',
-      characterClass,
-      chibi: {
-        frontHairStyle,
-        backHairStyle,
-        hairStyle: backHairStyle,
-        hairColor,
-        eyesOverHair,
-        hatType,
-        hatColor,
-        wingType,
-        wingColor,
-        earType,
-        earColor: '#2B272C',
-        innerEarColor: '#F472B6',
-        haloType,
-        haloColor,
-        coatColor,
-        accentColor,
-        skirtColor,
-        eyeType,
-        eyeColor,
-        skinTone,
-        outfitType,
-        ribbonColor: accentColor,
-      },
-      x: 0,
-      y: 0,
-      vx: 0,
-      vy: 0,
-      facing: 'right',
-      state: 'idle',
-      stats: {
-        level: 1,
-        exp: 0,
-        maxExp: 100,
-        hp: 300,
-        maxHp: 300,
-        mp: 100,
-        maxMp: 100,
-        atk: 20,
-        def: 10,
-        speed: 4.5,
-        critRate: 10,
-        statPoints: 0,
-        str: 5,
-        agi: 5,
-        int: 5,
-        vit: 5,
-      },
-      stamina: 100,
-      maxStamina: 100,
-      isSprinting: false,
-      jumpZ: 0,
-      jumpVz: 0,
-      isJumping: false,
-      bhopStreak: 0,
-      bhopTimer: 0,
-      bhopSpeedMult: 1.0,
-      gold: 100,
-      inventory: [],
-      equipment: {
-        weapon: ITEMS_DATABASE[CLASS_DEFAULTS[characterClass].starterWeapon] || null,
-        headwear: null,
-        outfit: null,
-        vehicle: ITEMS_DATABASE['veh_skateboard'] || null,
-        accessory: null,
-      },
-      skills: CLASS_DEFAULTS[characterClass].starterSkills,
-      activeVehicleId: null,
-      isRiding: false,
-      spawnBounce: 1,
-      attackTimer: 0,
-      dodgeTimer: 0,
-      combo: 0,
-      lastAttackTime: 0,
-      activeQuests: {
-        quest_rookie_patrol: {
-          questId: 'quest_rookie_patrol',
-          status: 'active',
-          objectives: [],
-        },
-      },
-      completedQuestIds: [],
-      currentZone: 'cyber_city',
-      activeBuffs: [],
-    };
-
     let startTime = performance.now();
     const render = (time: number) => {
       const elapsed = (time - startTime) / 1000;
+      const interaction = buildPreviewInteraction(canvas, time);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Scaled up preview
+      const previewPlayer: Player = {
+        id: 'preview',
+        name: name.trim() || 'Hero',
+        characterClass,
+        chibi: {
+          frontHairStyle,
+          backHairStyle,
+          hairStyle: backHairStyle,
+          hairColor,
+          eyesOverHair,
+          hatType,
+          hatColor,
+          wingType,
+          wingColor,
+          earType,
+          earColor: '#2B272C',
+          innerEarColor: '#F472B6',
+          haloType,
+          haloColor,
+          coatColor,
+          accentColor,
+          skirtColor,
+          eyeType,
+          eyeColor,
+          skinTone,
+          outfitType,
+          ribbonColor: accentColor,
+        },
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        facing: interaction.facing,
+        state: 'idle',
+        stats: {
+          level: 1,
+          exp: 0,
+          maxExp: 100,
+          hp: 300,
+          maxHp: 300,
+          mp: 100,
+          maxMp: 100,
+          atk: 20,
+          def: 10,
+          speed: 4.5,
+          critRate: 10,
+          statPoints: 0,
+          str: 5,
+          agi: 5,
+          int: 5,
+          vit: 5,
+        },
+        stamina: 100,
+        maxStamina: 100,
+        isSprinting: false,
+        jumpZ: 0,
+        jumpVz: 0,
+        isJumping: false,
+        bhopStreak: 0,
+        bhopTimer: 0,
+        bhopSpeedMult: 1.0,
+        gold: 100,
+        inventory: [],
+        equipment: {
+          weapon: ITEMS_DATABASE[CLASS_DEFAULTS[characterClass].starterWeapon] || null,
+          headwear: null,
+          outfit: null,
+          vehicle: ITEMS_DATABASE['veh_skateboard'] || null,
+          accessory: null,
+        },
+        skills: CLASS_DEFAULTS[characterClass].starterSkills,
+        activeVehicleId: null,
+        isRiding: false,
+        spawnBounce: interaction.spawnBounce,
+        attackTimer: 0,
+        dodgeTimer: 0,
+        combo: 0,
+        lastAttackTime: 0,
+        activeQuests: {
+          quest_rookie_patrol: {
+            questId: 'quest_rookie_patrol',
+            status: 'active',
+            objectives: [],
+          },
+        },
+        completedQuestIds: [],
+        currentZone: 'cyber_city',
+        activeBuffs: [],
+        cinematicPose: interaction.cinematicPose,
+        hideWeapon: interaction.hideWeapon,
+        emote: interaction.emote,
+        emoteTimer: interaction.emote ? 2 : undefined,
+        eyeLookX: interaction.eyeLookX,
+        eyeLookY: interaction.eyeLookY,
+      };
+
       ctx.save();
       ctx.translate(canvas.width / 2, canvas.height / 2 + 35);
       ctx.scale(1.75, 1.75);
       drawChibiCharacter(ctx, previewPlayer, elapsed, true);
       ctx.restore();
+
+      const bgCanvas = bgCanvasRef.current;
+      const bgCtx = bgCanvas?.getContext('2d');
+      if (bgCanvas && bgCtx) {
+        bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+        bgCtx.save();
+        bgCtx.translate(bgCanvas.width / 2, bgCanvas.height / 2 + 60);
+        bgCtx.scale(2.6, 2.6);
+        drawChibiCharacter(bgCtx, previewPlayer, elapsed, true);
+        bgCtx.restore();
+      }
 
       frameId = requestAnimationFrame(render);
     };
@@ -1231,156 +2051,28 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
     setAccentColor(ACCENT_COLORS[Math.floor(Math.random() * ACCENT_COLORS.length)]);
   };
 
-  const handleLaunch = () => {
-    if (isDeploying) return;
-    setIsDeploying(true);
-    sound.playDanceJingle();
-
-    // Phase 1: Dance (1.5s) → Phase 2: Zoom (1s) → Phase 3: Fade to black (1s) → Call onStartGame
-    setDeployPhase('dance');
-    setTimeout(() => {
-      setDeployPhase('zoom');
-      setTimeout(() => {
-        setDeployPhase('fade');
-        setTimeout(() => {
-          sound.startCozyMusic();
-
-          const selectedClassData = CLASS_DEFAULTS[characterClass];
-          const starterWeapon = ITEMS_DATABASE[selectedClassData.starterWeapon];
-          const starterSkateboard = ITEMS_DATABASE['veh_skateboard'];
-          const starterPotion = ITEMS_DATABASE['item_hp_potion_s'];
-
-          const chosenName = name.trim() || 'Hero';
-
-          const newPlayer: Player = {
-            id: `player_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-            name: chosenName,
-            characterClass,
-            chibi: {
-              frontHairStyle,
-              backHairStyle,
-              hairStyle: backHairStyle,
-              hairColor,
-              eyesOverHair,
-              hatType,
-              hatColor,
-              wingType,
-              wingColor,
-              earType,
-              earColor: '#2B272C',
-              innerEarColor: '#F472B6',
-              haloType,
-              haloColor,
-              coatColor,
-              accentColor,
-              skirtColor,
-              eyeType,
-              eyeColor,
-              skinTone,
-              outfitType,
-              ribbonColor: accentColor,
-            },
-            x: 650,
-            y: 750,
-            vx: 0,
-            vy: 0,
-            facing: 'right',
-            state: 'idle',
-            stats: {
-              level: 1,
-              exp: 0,
-              maxExp: 100,
-              hp: selectedClassData.baseHp,
-              maxHp: selectedClassData.baseHp,
-              mp: selectedClassData.baseMp,
-              maxMp: selectedClassData.baseMp,
-              atk: selectedClassData.baseAtk,
-              def: selectedClassData.baseDef,
-              speed: selectedClassData.baseSpd,
-              critRate: 10,
-              statPoints: 0,
-              str: 5,
-              agi: 5,
-              int: 5,
-              vit: 5,
-            },
-            stamina: 100,
-            maxStamina: 100,
-            isSprinting: false,
-            jumpZ: 0,
-            jumpVz: 0,
-            isJumping: false,
-            bhopStreak: 0,
-            bhopTimer: 0,
-            bhopSpeedMult: 1.0,
-            gold: 150,
-            inventory: [
-              { slotId: 1, item: starterWeapon, quantity: 1 },
-              { slotId: 2, item: starterSkateboard, quantity: 1 },
-              { slotId: 3, item: starterPotion, quantity: 5 },
-            ],
-            equipment: {
-              weapon: starterWeapon,
-              headwear: null,
-              outfit: null,
-              vehicle: starterSkateboard,
-              accessory: null,
-            },
-            skills: selectedClassData.starterSkills,
-            activeVehicleId: 'veh_skateboard',
-            isRiding: false,
-            spawnBounce: 0.1,
-            attackTimer: 0,
-            dodgeTimer: 0,
-            combo: 0,
-            lastAttackTime: 0,
-            activeQuests: {
-              quest_rookie_patrol: {
-                questId: 'quest_rookie_patrol',
-                status: 'active',
-                objectives: [
-                  {
-                    type: 'kill',
-                    targetId: 'slime_blob',
-                    targetName: 'Slime Blobs',
-                    current: 0,
-                    required: 3,
-                  },
-                  {
-                    type: 'kill',
-                    targetId: 'cyber_drone',
-                    targetName: 'Cyber Drones',
-                    current: 0,
-                    required: 2,
-                  },
-                ],
-              },
-            },
-            completedQuestIds: [],
-            currentZone: 'cyber_city',
-            activeBuffs: [],
-          };
-
-          onStartGame(newPlayer);
-        }, 1000);
-      }, 1000);
-    }, 1500);
-  };
-
   // Deploy animation states
   const [isDeploying, setIsDeploying] = useState(false);
-  const [deployPhase, setDeployPhase] = useState<'none' | 'dance' | 'zoom' | 'fade'>('none');
+  const deployStartTimeRef = useRef<number | null>(null);
+  const hasStartedGameRef = useRef<boolean>(false);
+  const fullscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Update preview chibi to dance when deploying
+  const selectedClassData = CLASS_DEFAULTS[characterClass];
+  const starterWeapon = ITEMS_DATABASE[selectedClassData.starterWeapon];
+
+  const handleLaunch = () => {
+    if (isDeploying) return;
+    deployStartTimeRef.current = performance.now();
+    hasStartedGameRef.current = false;
+    setIsDeploying(true);
+    sound.playDanceJingle();
+  };
+
+  // Fullscreen camera zoom render loop when deploying
   useEffect(() => {
     if (!isDeploying) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
     let frameId: number;
-    const startTime = performance.now();
 
     const previewPlayer: Player = {
       id: 'preview_deploy',
@@ -1445,61 +2137,239 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
       hideWeapon: true,
     };
 
-    const render = (time: number) => {
-      const elapsed = (time - startTime) / 1000;
+    const render = () => {
+      const canvas = fullscreenCanvasRef.current;
+      if (!canvas) {
+        frameId = requestAnimationFrame(render);
+        return;
+      }
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        frameId = requestAnimationFrame(render);
+        return;
+      }
+
+      if (canvas.width !== window.innerWidth || canvas.height !== window.innerHeight) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+
+      const now = performance.now();
+      if (!deployStartTimeRef.current) deployStartTimeRef.current = now;
+      const elapsed = (now - deployStartTimeRef.current) / 1000;
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Progressive zoom during deployment
-      const zoomProgress = deployPhase === 'zoom' || deployPhase === 'fade' ? 1.0 : Math.min(1, elapsed / 1.5) * 0.3;
-      const scale = 1.75 + zoomProgress * 1.2;
+      // Dark cinematic background
+      ctx.fillStyle = '#09090B';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Radial background glow
+      const grad = ctx.createRadialGradient(
+        canvas.width / 2,
+        canvas.height / 2,
+        60,
+        canvas.width / 2,
+        canvas.height / 2,
+        Math.max(canvas.width, canvas.height) * 0.65
+      );
+      grad.addColorStop(0, `${accentColor || '#EF4444'}44`);
+      grad.addColorStop(0.5, '#00000099');
+      grad.addColorStop(1, '#000000FD');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Monotonic, Continuous Smooth Camera Zoom (from 2.2x to 5.2x over 3.2s)
+      const zoomProgress = Math.min(1, elapsed / 3.0);
+      const easeZoom = zoomProgress * zoomProgress;
+      const scale = 2.2 + easeZoom * 3.0;
 
       ctx.save();
-      ctx.translate(canvas.width / 2, canvas.height / 2 + 35 - zoomProgress * 30);
+      ctx.translate(canvas.width / 2, canvas.height / 2 + 10);
       ctx.scale(scale, scale);
       drawChibiCharacter(ctx, previewPlayer, elapsed, true);
       ctx.restore();
+
+      // Top/Bottom letterbox bars during deploy
+      const barH = 55;
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, barH);
+      ctx.fillRect(0, canvas.height - barH, canvas.width, barH);
+
+      ctx.strokeStyle = '#EF4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, barH);
+      ctx.lineTo(canvas.width, barH);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#38BDF8';
+      ctx.beginPath();
+      ctx.moveTo(0, canvas.height - barH);
+      ctx.lineTo(canvas.width, canvas.height - barH);
+      ctx.stroke();
+
+      ctx.font = "bold 14px 'Teko', monospace, sans-serif";
+      ctx.fillStyle = '#EF4444';
+      ctx.textAlign = 'left';
+      ctx.fillText('✦ OPERATOR DEPLOYMENT // SYSTEM READY ✦', 24, 34);
+
+      ctx.fillStyle = '#38BDF8';
+      ctx.textAlign = 'right';
+      ctx.fillText(`OPERATOR: ${(name.trim() || 'HERO').toUpperCase()}`, canvas.width - 24, 34);
+
+      // Smooth black fade out from t=2.2s to 3.2s
+      if (elapsed >= 2.2) {
+        const fadeAlpha = Math.min(1, (elapsed - 2.2) / 1.0);
+        ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // Handover to game world cutscene at t >= 3.3s
+      if (elapsed >= 3.3 && !hasStartedGameRef.current) {
+        hasStartedGameRef.current = true;
+        const newPlayer: Player = {
+          id: 'local_player',
+          name: name.trim() || 'Hero',
+          characterClass,
+          chibi: { ...previewPlayer.chibi },
+          x: 650,
+          y: 750,
+          vx: 0,
+          vy: 0,
+          facing: 'right',
+          state: 'idle',
+          stats: { ...previewPlayer.stats },
+          stamina: 100,
+          maxStamina: 100,
+          isSprinting: false,
+          jumpZ: 0,
+          jumpVz: 0,
+          isJumping: false,
+          bhopStreak: 0,
+          bhopTimer: 0,
+          bhopSpeedMult: 1.0,
+          gold: 100,
+          inventory: [
+            { slotId: 1, item: starterWeapon!, quantity: 1 },
+            { slotId: 2, item: ITEMS_DATABASE['item_hp_potion_s']!, quantity: 5 },
+            { slotId: 3, item: ITEMS_DATABASE['item_ramen_bowl']!, quantity: 3 },
+          ],
+          equipment: {
+            weapon: starterWeapon,
+            headwear: null,
+            outfit: null,
+            vehicle: null,
+            accessory: null,
+          },
+          skills: JSON.parse(JSON.stringify(selectedClassData.starterSkills)),
+          activeVehicleId: null,
+          isRiding: false,
+          spawnBounce: 1,
+          attackTimer: 0,
+          dodgeTimer: 0,
+          combo: 0,
+          lastAttackTime: 0,
+          ammo: WEAPON_CONFIGS[starterWeapon?.gunType || 'pistol']?.maxAmmo || 12,
+          maxAmmo: WEAPON_CONFIGS[starterWeapon?.gunType || 'pistol']?.maxAmmo || 12,
+          isReloading: false,
+          reloadTimer: 0,
+          activeQuests: {
+            q_first_steps: {
+              questId: 'q_first_steps',
+              status: 'active',
+              objectives: [
+                {
+                  type: 'kill',
+                  targetId: 'cyber_drone',
+                  targetName: 'Cyber Drones',
+                  current: 0,
+                  required: 2,
+                },
+              ],
+            },
+          },
+          completedQuestIds: [],
+          currentZone: 'cyber_city',
+          activeBuffs: [],
+        };
+        onStartGame(newPlayer);
+        return;
+      }
 
       frameId = requestAnimationFrame(render);
     };
 
     frameId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(frameId);
-  }, [isDeploying, deployPhase]);
-
-  const selectedClassData = CLASS_DEFAULTS[characterClass];
-  const starterWeapon = ITEMS_DATABASE[selectedClassData.starterWeapon];
+  }, [
+    isDeploying,
+    name,
+    characterClass,
+    frontHairStyle,
+    backHairStyle,
+    hairColor,
+    eyesOverHair,
+    hatType,
+    hatColor,
+    wingType,
+    wingColor,
+    earType,
+    haloType,
+    haloColor,
+    coatColor,
+    accentColor,
+    skirtColor,
+    eyeColor,
+    skinTone,
+    outfitType,
+    onStartGame,
+  ]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-2xl p-2 sm:p-4 overflow-y-auto font-mono select-none">
-      {/* Heavy Cyberpunk Anime Background Ambient Graphic Stencils */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden opacity-15">
-        <div className="absolute -top-10 -left-10 text-[180px] font-black text-red-500 italic tracking-tighter select-none">
+      <canvas
+        ref={bgCanvasRef}
+        width={640}
+        height={640}
+        className={`fixed right-[-6%] sm:right-[1%] top-1/2 -translate-y-1/2 w-[min(68vw,560px)] h-[min(68vw,560px)] opacity-10 pointer-events-none z-[1] blur-[32px] scale-[1.4] transition-opacity duration-700 ${isDeploying ? 'opacity-0' : ''}`}
+        aria-hidden
+      />
+      {/* Heavy Cyberpunk Anime Background Ambient Graphic Stencils (Valorant Thick Display Font) */}
+      <div className={`absolute inset-0 pointer-events-none overflow-hidden opacity-15 transition-opacity duration-700 ${isDeploying ? 'opacity-0' : ''}`}>
+        <div className="absolute -top-10 -left-10 text-[190px] font-['Anton',sans-serif] font-black text-red-500 italic tracking-[0.14em] select-none uppercase">
           CHIBI//PROTOCOL
         </div>
-        <div className="absolute -bottom-16 -right-10 text-[200px] font-black text-white italic tracking-tighter select-none">
-          ARCHETYPE//07
+        <div className="absolute -bottom-16 -right-10 text-[210px] font-['Anton',sans-serif] font-black text-white italic tracking-[0.16em] select-none uppercase">
+          ARCHETYPE//02
         </div>
-        <div className="absolute top-1/4 right-1/4 text-9xl font-black text-zinc-700 tracking-widest">
+        <div className="absolute top-1/4 right-1/4 text-9xl font-['Russo_One',sans-serif] font-black text-zinc-700 tracking-widest select-none">
           「 決 闘 者 」
         </div>
       </div>
 
       <motion.div
         initial={{ opacity: 0, scale: 0.94, y: 15 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
+        animate={{ opacity: isDeploying ? 0 : 1, scale: isDeploying ? 0.95 : 1, y: 0 }}
+        transition={{ duration: 0.8, ease: 'easeInOut' }}
         style={{
           clipPath:
             'polygon(0 14px, 4% 2px, 8% 16px, 14% 3px, 20% 15px, 27% 2px, 34% 16px, 41% 3px, 48% 15px, 55% 2px, 62% 16px, 70% 3px, 78% 15px, 86% 2px, 94% 15px, 100% 4px, 100% 100%, 0 100%)',
         }}
-        className="w-full max-w-5xl bg-zinc-950/98 border-b-4 border-red-600 shadow-[0_32px_120px_rgba(0,0,0,0.98)] p-4 sm:p-6 pt-7 flex flex-col md:flex-row gap-5 sm:gap-7 ring-1 ring-red-900/50 relative z-10"
+        className={`w-full max-w-5xl bg-zinc-950/98 border-b-4 border-red-600 shadow-[0_32px_120px_rgba(0,0,0,0.98)] p-4 sm:p-6 pt-7 flex flex-col md:flex-row gap-5 sm:gap-7 ring-1 ring-red-900/50 relative z-10 transition-opacity duration-800 ${isDeploying ? 'pointer-events-none' : ''}`}
       >
         {/* Left: ENLARGED Character Showcase Card Banner */}
-        <div className="flex flex-col items-center justify-between md:w-[380px] lg:w-[410px] bg-gradient-to-b from-zinc-900/90 via-zinc-950/95 to-black border-2 border-red-600/60 p-4 relative overflow-hidden shadow-2xl">
+        <div
+          ref={bannerRef}
+          onMouseMove={handleBannerMouseMove}
+          onMouseLeave={handleBannerMouseLeave}
+          className="flex flex-col items-center justify-between md:w-[380px] lg:w-[410px] bg-gradient-to-b from-zinc-900/90 via-zinc-950/95 to-black border-2 border-red-600/60 p-4 relative overflow-hidden shadow-2xl"
+        >
           {/* Vertical Sideways Background Watermarks */}
-          <div className="absolute right-1 top-10 bottom-10 [writing-mode:vertical-rl] font-black text-5xl sm:text-6xl text-white/10 uppercase tracking-widest pointer-events-none select-none">
+          <div className="absolute right-1 top-10 bottom-10 [writing-mode:vertical-rl] font-['Anton',sans-serif] font-black text-6xl text-white/10 uppercase tracking-widest pointer-events-none select-none">
             CHIBI // UNIT 07
           </div>
-          <div className="absolute left-1 top-10 bottom-10 [writing-mode:vertical-rl] rotate-180 font-black text-4xl sm:text-5xl text-red-500/10 uppercase tracking-widest pointer-events-none select-none">
+          <div className="absolute left-1 top-10 bottom-10 [writing-mode:vertical-rl] rotate-180 font-['Anton',sans-serif] font-black text-5xl text-red-500/10 uppercase tracking-widest pointer-events-none select-none">
             「 決 闘 者 」 ARCHETYPE
           </div>
 
@@ -1551,7 +2421,8 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
               ref={canvasRef}
               width={360}
               height={340}
-              className="w-[290px] h-[270px] sm:w-[340px] sm:h-[310px] relative z-10 drop-shadow-[0_16px_32px_rgba(0,0,0,0.95)]"
+              onClick={handleCharacterClick}
+              className="w-[290px] h-[270px] sm:w-[340px] sm:h-[310px] relative z-10 drop-shadow-[0_16px_32px_rgba(0,0,0,0.95)] cursor-pointer"
             />
           </div>
 
@@ -2337,18 +3208,18 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
           <div className="space-y-2 pt-2 border-t border-red-900/40">
             <div className="flex flex-wrap items-center justify-between text-[10px] font-mono text-zinc-400 px-1">
               <span>⌨️ <b>WASD</b>: Move</span>
-              <span>💨 <b>Shift</b>: Slide / Dash</span>
-              <span>⚡ <b>Space</b>: Bhop</span>
+              <span>💨 <b>Shift</b>: Ollie / Dash</span>
+              <span>⚡ <b>Space</b>: Kickflip / Bhop</span>
               <span>🔫 <b>Click/F</b>: Fire</span>
               <span>🔄 <b>R</b>: Reload</span>
-              <span>🛹 <b>V</b>: Mount</span>
+              <span>🛹 <b>V</b>: Kickflip mount</span>
             </div>
 
             <button
               type="button"
               onClick={handleLaunch}
               disabled={isDeploying}
-              className={`w-full bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-black text-base py-3.5 px-6 rounded-xs shadow-[0_0_36px_rgba(220,38,38,0.85)] border-2 border-red-400 flex items-center justify-center gap-2 transform active:scale-98 transition-all cursor-pointer -skew-x-3 uppercase tracking-wider ${isDeploying ? 'opacity-50 pointer-events-none' : ''}`}
+              className={`w-full bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 text-white font-['Teko',sans-serif] text-2xl font-black py-2.5 px-6 rounded-xs shadow-[0_0_36px_rgba(220,38,38,0.85)] border-2 border-red-400 flex items-center justify-center gap-2 transform active:scale-98 transition-all cursor-pointer -skew-x-3 uppercase tracking-widest ${isDeploying ? 'opacity-50 pointer-events-none' : ''}`}
             >
               <Play size={18} className="fill-white" />
               {isDeploying ? 'DEPLOYING...' : 'LOCK IN // DEPLOY TO COMBAT ZONE'}
@@ -2358,27 +3229,18 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
         </div>
       </motion.div>
 
-      {/* Cinematic Deploy Fade Overlay */}
-      {isDeploying && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: deployPhase === 'fade' ? 1 : deployPhase === 'zoom' ? 0.5 : 0.15 }}
-          transition={{ duration: deployPhase === 'fade' ? 0.8 : 0.5 }}
-          className="fixed inset-0 z-[60] bg-black pointer-events-none flex items-center justify-center"
-        >
-          {deployPhase === 'dance' && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="text-center"
-            >
-              <div className="text-2xl font-black text-red-500 tracking-widest uppercase animate-pulse">
-                ✦ DEPLOYING OPERATOR ✦
-              </div>
-            </motion.div>
-          )}
-        </motion.div>
-      )}
+      {/* Fullscreen Deployment Zoom Viewport with smooth crossfade */}
+      <motion.div
+        initial={false}
+        animate={{ opacity: isDeploying ? 1 : 0 }}
+        transition={{ duration: 0.8, ease: 'easeInOut' }}
+        className={`fixed inset-0 z-[70] ${isDeploying ? 'pointer-events-auto' : 'pointer-events-none'}`}
+      >
+        <canvas
+          ref={fullscreenCanvasRef}
+          className="block w-full h-full"
+        />
+      </motion.div>
     </div>
   );
 };

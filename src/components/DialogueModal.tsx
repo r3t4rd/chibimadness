@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
-import { X, MessageSquare, Award, ArrowRight, CheckCircle } from 'lucide-react';
+import { X, MessageSquare, Award, ArrowRight, Sparkles } from 'lucide-react';
 import { NPC, Player } from '../types/game';
 import { drawChibiCharacter } from '../game/chibiRenderer';
 import { QUESTS_DATABASE } from '../game/constants';
@@ -14,6 +14,7 @@ interface DialogueModalProps {
   onOpenCraft: () => void;
   onAcceptQuest: (questId: string) => void;
   onCompleteQuest: (questId: string) => void;
+  onEnterHorde?: () => void;
 }
 
 export const DialogueModal: React.FC<DialogueModalProps> = ({
@@ -24,6 +25,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
   onOpenCraft,
   onAcceptQuest,
   onCompleteQuest,
+  onEnterHorde,
 }) => {
   const [currentText, setCurrentText] = useState<string>(npc.dialogue.greeting);
   const [typedText, setTypedText] = useState<string>('');
@@ -31,7 +33,6 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // VN text typing effect
   useEffect(() => {
     setTypedText('');
     let i = 0;
@@ -47,7 +48,6 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
     return () => clearInterval(interval);
   }, [currentText]);
 
-  // NPC Chibi Canvas Render
   useEffect(() => {
     let frameId: number;
     const canvas = canvasRef.current;
@@ -114,50 +114,51 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
       <motion.div
         initial={{ opacity: 0, y: 30 }}
         animate={{ opacity: 1, y: 0 }}
-        className="pointer-events-auto w-full max-w-3xl bg-white/40 backdrop-blur-2xl border-2 border-white rounded-[36px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.2)] p-6 flex flex-col md:flex-row gap-5 relative ring-1 ring-black/5"
+        className="pointer-events-auto w-full max-w-3xl bg-gradient-to-br from-white/50 via-pink-50/35 to-white/45 backdrop-blur-2xl border-2 border-white rounded-[36px] shadow-[0_32px_64px_-12px_rgba(236,72,153,0.22)] p-6 flex flex-col md:flex-row gap-5 relative ring-2 ring-pink-200/40"
       >
+        <div className="absolute -top-3 left-8 px-3 py-1 rounded-full bg-gradient-to-r from-pink-500 to-fuchsia-500 text-white text-[10px] font-['Fredoka'] font-black uppercase tracking-wider shadow-md flex items-center gap-1">
+          <Sparkles size={12} />
+          Диалог
+        </div>
+
         <button
           type="button"
           onClick={onClose}
-          className="absolute top-4 right-4 p-2 rounded-2xl bg-white/60 hover:bg-white/90 border border-white text-gray-700 hover:text-gray-900 shadow-xs transition-all cursor-pointer"
+          className="absolute top-4 right-4 p-2 rounded-2xl bg-white/70 hover:bg-white/95 border border-pink-100 text-gray-700 hover:text-pink-600 shadow-xs transition-all cursor-pointer"
         >
           <X size={16} />
         </button>
 
-        {/* NPC Avatar Portrait */}
-        <div className="flex flex-col items-center justify-center bg-white/45 border-2 border-white rounded-3xl p-3 w-36 self-center md:self-auto shrink-0 shadow-xs">
+        <div className="flex flex-col items-center justify-center bg-white/55 border-2 border-pink-100/80 rounded-3xl p-3 w-36 self-center md:self-auto shrink-0 shadow-xs">
           <canvas ref={canvasRef} width={150} height={150} className="w-[120px] h-[120px]" />
           <div className="text-center mt-1">
             <h4 className="font-['Fredoka'] text-sm font-black text-gray-900">{npc.name}</h4>
-            <span className="text-[10px] text-blue-600 font-black uppercase tracking-wider">{npc.title}</span>
+            <span className="text-[10px] text-pink-600 font-black uppercase tracking-wider">{npc.title}</span>
           </div>
         </div>
 
-        {/* Dialogue Text & Action Branches */}
         <div className="flex-1 flex flex-col justify-between">
           <div>
             <div className="flex items-center gap-1.5 text-pink-600 text-xs font-black font-['Fredoka'] uppercase tracking-wider mb-1.5">
               <MessageSquare size={14} />
-              Dialogue
+              {npc.name}
             </div>
 
-            {/* Typed dialogue text */}
-            <p className="text-sm font-medium text-gray-800 min-h-[55px] leading-relaxed bg-white/60 backdrop-blur-md p-3.5 rounded-2xl border border-white shadow-inner">
+            <p className="text-sm font-medium text-gray-800 min-h-[55px] leading-relaxed bg-white/70 backdrop-blur-md p-3.5 rounded-2xl border border-pink-100/60 shadow-inner">
               {typedText}
             </p>
           </div>
 
-          {/* Quests View or Options */}
           {showQuests ? (
             <div className="mt-3 space-y-2 max-h-40 overflow-y-auto pr-1">
-              <div className="flex items-center justify-between text-xs font-black text-amber-700 border-b border-black/5 pb-1">
-                <span>Available Quests</span>
+              <div className="flex items-center justify-between text-xs font-black text-pink-700 border-b border-pink-100/60 pb-1">
+                <span>Квесты</span>
                 <button
                   type="button"
                   onClick={() => setShowQuests(false)}
-                  className="text-gray-600 hover:text-gray-900 text-[11px] font-bold cursor-pointer"
+                  className="text-gray-600 hover:text-pink-600 text-[11px] font-bold cursor-pointer"
                 >
-                  ← Back to Options
+                  ← Назад
                 </button>
               </div>
 
@@ -170,22 +171,22 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                 return (
                   <div
                     key={q.id}
-                    className="flex items-center justify-between bg-white/50 p-3 rounded-2xl border border-white text-xs shadow-xs"
+                    className="flex items-center justify-between bg-white/55 p-3 rounded-2xl border border-pink-100/50 text-xs shadow-xs"
                   >
                     <div>
                       <div className="font-['Fredoka'] font-black text-gray-900 flex items-center gap-1.5">
-                        <Award size={14} className="text-amber-500" />
+                        <Award size={14} className="text-pink-500" />
                         {q.title}
                       </div>
                       <p className="text-[11px] text-gray-600 mt-0.5 font-medium">{q.description}</p>
                       <div className="text-[10px] text-emerald-600 font-bold font-mono mt-0.5">
-                        Reward: +{q.rewardExp} EXP | 🪙 +{q.rewardGold} Gold
+                        Награда: +{q.rewardExp} EXP | 🪙 +{q.rewardGold} Gold
                       </div>
                     </div>
 
                     <div>
                       {isTurnedIn ? (
-                        <span className="text-[11px] font-bold text-gray-400">Completed ✔</span>
+                        <span className="text-[11px] font-bold text-gray-400">Выполнено ✔</span>
                       ) : isCompleted ? (
                         <button
                           type="button"
@@ -195,10 +196,10 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                           }}
                           className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-['Fredoka'] font-black text-xs shadow-sm transition-all cursor-pointer active:scale-95"
                         >
-                          Turn In!
+                          Сдать!
                         </button>
                       ) : isActive ? (
-                        <span className="text-[11px] font-bold text-amber-600">In Progress...</span>
+                        <span className="text-[11px] font-bold text-amber-600">В процессе...</span>
                       ) : (
                         <button
                           type="button"
@@ -206,9 +207,9 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                             onAcceptQuest(q.id);
                             sound.playPickup();
                           }}
-                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-['Fredoka'] font-black text-xs shadow-sm transition-all cursor-pointer active:scale-95"
+                          className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-pink-500 to-fuchsia-600 hover:from-pink-600 hover:to-fuchsia-700 text-white font-['Fredoka'] font-black text-xs shadow-sm transition-all cursor-pointer active:scale-95"
                         >
-                          Accept
+                          Взять
                         </button>
                       )}
                     </div>
@@ -227,7 +228,10 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                     if (opt.action === 'open_shop') onOpenShop();
                     else if (opt.action === 'open_craft') onOpenCraft();
                     else if (opt.action === 'open_quests') setShowQuests(true);
-                    else if (opt.action === 'heal') {
+                    else if (opt.action === 'enter_horde') {
+                      onEnterHorde?.();
+                      onClose();
+                    } else if (opt.action === 'heal') {
                       if (opt.dialogueText) setCurrentText(opt.dialogueText);
                     } else if (opt.dialogueText) {
                       setCurrentText(opt.dialogueText);
@@ -235,7 +239,7 @@ export const DialogueModal: React.FC<DialogueModalProps> = ({
                       onClose();
                     }
                   }}
-                  className="px-4 py-2 rounded-2xl bg-white/60 hover:bg-white/90 border border-white text-xs font-['Fredoka'] font-black text-gray-800 hover:text-gray-900 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                  className="px-4 py-2 rounded-2xl bg-white/70 hover:bg-white/95 border border-pink-100 text-xs font-['Fredoka'] font-black text-gray-800 hover:text-pink-700 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
                 >
                   <ArrowRight size={13} className="text-pink-500" />
                   {opt.text}

@@ -495,6 +495,52 @@ class AudioEngine {
     osc.stop(now + 0.15);
   }
 
+  public playSkateTrick(trick: 'mount_kickflip' | 'kickflip' | 'ollie' | 'treflip' = 'kickflip') {
+    if (this.isMuted) return;
+    this.initCtx();
+    if (!this.ctx || !this.sfxGain) return;
+
+    const now = this.ctx.currentTime;
+    const pop = this.ctx.createOscillator();
+    const popGain = this.ctx.createGain();
+    pop.type = 'triangle';
+    pop.frequency.setValueAtTime(trick === 'ollie' ? 160 : 220, now);
+    pop.frequency.exponentialRampToValueAtTime(trick === 'treflip' ? 90 : 70, now + 0.08);
+    popGain.gain.setValueAtTime(0.28, now);
+    popGain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+    pop.connect(popGain);
+    popGain.connect(this.sfxGain);
+    pop.start(now);
+    pop.stop(now + 0.13);
+
+    const whoosh = this.ctx.createOscillator();
+    const whooshGain = this.ctx.createGain();
+    whoosh.type = 'sawtooth';
+    const startF = trick === 'treflip' ? 900 : trick === 'mount_kickflip' ? 720 : 640;
+    whoosh.frequency.setValueAtTime(startF, now);
+    whoosh.frequency.exponentialRampToValueAtTime(180, now + (trick === 'treflip' ? 0.32 : 0.22));
+    whooshGain.gain.setValueAtTime(trick === 'treflip' ? 0.22 : 0.16, now);
+    whooshGain.gain.exponentialRampToValueAtTime(0.01, now + 0.28);
+    whoosh.connect(whooshGain);
+    whooshGain.connect(this.sfxGain);
+    whoosh.start(now);
+    whoosh.stop(now + 0.3);
+
+    if (trick === 'treflip' || trick === 'mount_kickflip') {
+      const sparkle = this.ctx.createOscillator();
+      const sparkleGain = this.ctx.createGain();
+      sparkle.type = 'sine';
+      sparkle.frequency.setValueAtTime(980, now + 0.08);
+      sparkle.frequency.exponentialRampToValueAtTime(1400, now + 0.22);
+      sparkleGain.gain.setValueAtTime(0.12, now + 0.08);
+      sparkleGain.gain.exponentialRampToValueAtTime(0.01, now + 0.26);
+      sparkle.connect(sparkleGain);
+      sparkleGain.connect(this.sfxGain);
+      sparkle.start(now + 0.08);
+      sparkle.stop(now + 0.28);
+    }
+  }
+
   public playBossDefeated() {
     if (this.isMuted) return;
     this.initCtx();

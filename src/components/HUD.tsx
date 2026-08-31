@@ -5,11 +5,16 @@ import {
   Map as MapIcon,
 } from 'lucide-react';
 import { Player, QuestProgress, GunType } from '../types/game';
-import { ZONES, QUESTS_DATABASE } from '../game/constants';
+import { ZONES, QUESTS_DATABASE, CLASS_HOTBAR } from '../game/constants';
+import { formatGameTime, getTimeOfDayLabel } from '../game/fogOfWar';
+import { getBuilding } from '../game/buildings';
 import { HandheldWeaponHUD } from './HandheldWeaponHUD';
+import { formatHordeTime, type HordeRunState } from '../game/hordeMode';
 
 interface HUDProps {
   player: Player;
+  gameTimePhase?: number;
+  nearbyNpcName?: string;
   onOpenModal: (modal: 'inventory' | 'craft' | 'shop' | 'skills' | 'map') => void;
   onUseSkill: (idx: number) => void;
   onSwitchWeapon?: (gunType: GunType) => void;
@@ -21,79 +26,29 @@ interface HUDProps {
   onToggleMute: () => void;
   onlineCount: number;
   onOpenGunsmith?: () => void;
+  hordeRun?: HordeRunState;
+  onExtractHorde?: () => void;
 }
 
-const WEAPONS_LIST: {
-  type: GunType;
-  key: string;
-  name: string;
-  icon: string;
-  rotation: string;
-  translateY: string;
-  clipPath: string;
-  tapeRotation: string;
-}[] = [
-  {
-    type: 'pistol',
-    key: '1',
-    name: 'Pistol',
-    icon: '🔫',
-    rotation: '-3.5deg',
-    translateY: '2px',
-    clipPath: 'polygon(0% 4px, 4px 0%, 96% 2px, 100% 8px, 97% 95%, 93% 100%, 3% 97%, 0% 92%)',
-    tapeRotation: '-6deg',
-  },
-  {
-    type: 'revolver',
-    key: '2',
-    name: 'Revolver',
-    icon: '🤠',
-    rotation: '4.0deg',
-    translateY: '-3px',
-    clipPath: 'polygon(2% 0%, 98% 3px, 100% 92%, 96% 99%, 4% 96%, 0% 88%, 0% 6px)',
-    tapeRotation: '5deg',
-  },
-  {
-    type: 'mac10',
-    key: '3',
-    name: 'MAC-10',
-    icon: '⚡',
-    rotation: '-2.0deg',
-    translateY: '3px',
-    clipPath: 'polygon(0% 2px, 95% 0%, 100% 6px, 98% 97%, 92% 100%, 5% 94%, 0% 96%)',
-    tapeRotation: '-4deg',
-  },
-  {
-    type: 'ak47',
-    key: '4',
-    name: 'AK-47',
-    icon: '🔥',
-    rotation: '3.5deg',
-    translateY: '-2px',
-    clipPath: 'polygon(3% 0%, 97% 2px, 100% 94%, 95% 100%, 3% 98%, 0% 90%, 0% 4px)',
-    tapeRotation: '7deg',
-  },
-  {
-    type: 'shotgun',
-    key: '5',
-    name: 'Shotgun',
-    icon: '💥',
-    rotation: '-4.2deg',
-    translateY: '4px',
-    clipPath: 'polygon(0% 5px, 6px 0%, 96% 0%, 100% 4px, 97% 93%, 91% 100%, 2% 96%, 0% 90%)',
-    tapeRotation: '-5deg',
-  },
-  {
-    type: 'cheytac',
-    key: '6',
-    name: 'CheyTac',
-    icon: '🎯',
-    rotation: '2.8deg',
-    translateY: '-1px',
-    clipPath: 'polygon(2% 2px, 98% 0%, 100% 92%, 94% 98%, 4% 100%, 0% 95%, 0% 8px)',
-    tapeRotation: '4deg',
-  },
-];
+const WEAPON_META: Record<
+  string,
+  { name: string; icon: string; rotation: string; translateY: string; clipPath: string; tapeRotation: string }
+> = {
+  pistol: { name: 'Pistol', icon: '🔫', rotation: '-3.5deg', translateY: '2px', clipPath: 'polygon(0% 4px, 4px 0%, 96% 2px, 100% 8px, 97% 95%, 93% 100%, 3% 97%, 0% 92%)', tapeRotation: '-6deg' },
+  revolver: { name: 'Revolver', icon: '🤠', rotation: '4.0deg', translateY: '-3px', clipPath: 'polygon(2% 0%, 98% 3px, 100% 92%, 96% 99%, 4% 96%, 0% 88%, 0% 6px)', tapeRotation: '5deg' },
+  mac10: { name: 'MAC-10', icon: '⚡', rotation: '-2.0deg', translateY: '3px', clipPath: 'polygon(0% 2px, 95% 0%, 100% 6px, 98% 97%, 92% 100%, 5% 94%, 0% 96%)', tapeRotation: '-4deg' },
+  ak47: { name: 'AK-47', icon: '🔥', rotation: '3.5deg', translateY: '-2px', clipPath: 'polygon(3% 0%, 97% 2px, 100% 94%, 95% 100%, 3% 98%, 0% 90%, 0% 4px)', tapeRotation: '7deg' },
+  shotgun: { name: 'Shotgun', icon: '💥', rotation: '-4.2deg', translateY: '4px', clipPath: 'polygon(0% 5px, 6px 0%, 96% 0%, 100% 4px, 97% 93%, 91% 100%, 2% 96%, 0% 90%)', tapeRotation: '-5deg' },
+  cheytac: { name: 'CheyTac', icon: '🎯', rotation: '2.8deg', translateY: '-1px', clipPath: 'polygon(2% 2px, 98% 0%, 100% 92%, 94% 98%, 4% 100%, 0% 95%, 0% 8px)', tapeRotation: '4deg' },
+  throwing_knives: { name: 'Knives', icon: '🔪', rotation: '-3deg', translateY: '2px', clipPath: 'polygon(0% 4px, 4px 0%, 96% 2px, 100% 8px, 97% 95%, 93% 100%, 3% 97%, 0% 92%)', tapeRotation: '-5deg' },
+  katana: { name: 'Katana', icon: '🗡️', rotation: '3deg', translateY: '-2px', clipPath: 'polygon(2% 0%, 98% 3px, 100% 92%, 96% 99%, 4% 96%, 0% 88%, 0% 6px)', tapeRotation: '4deg' },
+  scythe: { name: 'Scythe', icon: '🪓', rotation: '-2deg', translateY: '3px', clipPath: 'polygon(0% 2px, 95% 0%, 100% 6px, 98% 97%, 92% 100%, 5% 94%, 0% 96%)', tapeRotation: '-4deg' },
+  greatsword: { name: 'Zweihander', icon: '⚔️', rotation: '4deg', translateY: '-1px', clipPath: 'polygon(3% 0%, 97% 2px, 100% 94%, 95% 100%, 3% 98%, 0% 90%, 0% 4px)', tapeRotation: '6deg' },
+  staff: { name: 'Fireball', icon: '🔥', rotation: '-3deg', translateY: '2px', clipPath: 'polygon(0% 4px, 4px 0%, 96% 2px, 100% 8px, 97% 95%, 93% 100%, 3% 97%, 0% 92%)', tapeRotation: '-6deg' },
+  wand: { name: 'Sparks', icon: '✨', rotation: '3deg', translateY: '-2px', clipPath: 'polygon(2% 0%, 98% 3px, 100% 92%, 96% 99%, 4% 96%, 0% 88%, 0% 6px)', tapeRotation: '5deg' },
+  grimoire: { name: 'Meteor', icon: '☄️', rotation: '-2deg', translateY: '3px', clipPath: 'polygon(0% 2px, 95% 0%, 100% 6px, 98% 97%, 92% 100%, 5% 94%, 0% 96%)', tapeRotation: '-4deg' },
+  totem: { name: 'Hex', icon: '💀', rotation: '3.5deg', translateY: '-1px', clipPath: 'polygon(3% 0%, 97% 2px, 100% 94%, 95% 100%, 3% 98%, 0% 90%, 0% 4px)', tapeRotation: '7deg' },
+};
 
 const SKILLS_CONFIG: {
   keyLetter: string;
@@ -123,6 +78,8 @@ const SKILLS_CONFIG: {
 
 export const HUD: React.FC<HUDProps> = ({
   player,
+  gameTimePhase = 0.35,
+  nearbyNpcName,
   onOpenModal,
   onUseSkill,
   onSwitchWeapon,
@@ -132,6 +89,8 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleMute,
   onlineCount,
   onOpenGunsmith,
+  hordeRun,
+  onExtractHorde,
 }) => {
   const {
     stats,
@@ -141,9 +100,19 @@ export const HUD: React.FC<HUDProps> = ({
     skills,
     isRiding,
     bhopStreak = 0,
+    coolness = 0,
+    coolStreak = 0,
+    skateTrick,
+    skateTrickTimer = 0,
   } = player;
 
   const activeGunType: GunType = equipment.weapon?.gunType || 'pistol';
+  const classLoadout = CLASS_HOTBAR[player.characterClass] || CLASS_HOTBAR.gunslinger;
+  const weaponsList = classLoadout.map((type, i) => ({
+    type,
+    key: String(i + 1),
+    ...(WEAPON_META[type] || { name: type, icon: '•', rotation: '0deg', translateY: '0px', clipPath: 'none', tapeRotation: '0deg' }),
+  }));
   const expRatio = Math.max(0, Math.min(1, stats.exp / stats.maxExp));
 
   const currentZoneData =
@@ -155,6 +124,11 @@ export const HUD: React.FC<HUDProps> = ({
         player.y <= z.bounds.maxY
       );
     }) || ZONES[0];
+
+  const interiorBldg = player.interiorBuildingId ? getBuilding(player.interiorBuildingId) : undefined;
+  const interiorFloorName = interiorBldg
+    ? interiorBldg.floors[Math.max(0, Math.min(interiorBldg.floors.length - 1, player.interiorFloor ?? 0))]?.name
+    : null;
 
   const activeQuestList = (Object.values(activeQuests) as QuestProgress[])
     .filter((q) => q.status === 'active' || q.status === 'completed')
@@ -192,9 +166,24 @@ export const HUD: React.FC<HUDProps> = ({
         <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/50 backdrop-blur-md text-[11px] font-mono text-slate-200 border border-white/15 shadow-md">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span>{currentZoneData.name}</span>
+          {interiorFloorName && (
+            <>
+              <span className="text-cyan-400/80">·</span>
+              <span className="text-cyan-300">{interiorBldg?.shortName} · {interiorFloorName}</span>
+            </>
+          )}
           <span className="text-white/30">|</span>
           <span>{onlineCount} online</span>
+          <span className="text-white/30">|</span>
+          <span className="text-amber-200">{formatGameTime(gameTimePhase)}</span>
+          <span className="text-slate-400 text-[10px]">{getTimeOfDayLabel(gameTimePhase)}</span>
         </div>
+
+        {nearbyNpcName && (
+          <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-pink-500/90 backdrop-blur-md text-[11px] font-['Fredoka'] font-black text-white shadow-md animate-pulse">
+            <span>[E] Поговорить с {nearbyNpcName}</span>
+          </div>
+        )}
 
         {bhopStreak >= 2 && (
           <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/90 backdrop-blur-md text-[11px] font-mono font-bold text-slate-950 shadow-md animate-pulse">
@@ -202,7 +191,60 @@ export const HUD: React.FC<HUDProps> = ({
             <span>(+{bhopStreak * 12}%)</span>
           </div>
         )}
+
+        {coolness > 0 && (
+          <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full backdrop-blur-md text-[11px] font-mono font-bold shadow-md ${
+            coolStreak >= 3
+              ? 'bg-fuchsia-500/95 text-white animate-pulse'
+              : 'bg-pink-500/85 text-slate-950'
+          }`}>
+            <span>😎 {coolness}</span>
+            {coolStreak >= 2 && <span>COMBO x{coolStreak}</span>}
+            {skateTrick && skateTrickTimer > 0 && (
+              <span className="uppercase tracking-wide">
+                {skateTrick === 'treflip' ? 'TRE FLIP' : skateTrick === 'ollie' ? 'OLLIE' : skateTrick === 'mount_kickflip' ? 'MOUNT' : 'KICKFLIP'}
+              </span>
+            )}
+          </div>
+        )}
       </div>
+
+      {hordeRun?.active && (
+        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1 select-none">
+          <div className="px-4 py-1.5 rounded-full bg-cyan-950/85 backdrop-blur-md border border-cyan-400/40 text-cyan-100 shadow-[0_0_24px_rgba(34,211,238,0.35)] font-mono text-xs font-bold tracking-wide pointer-events-none">
+            {formatHordeTime(hordeRun.elapsed)}
+            <span className="text-white/30 mx-2">|</span>
+            ☠ {hordeRun.kills}
+            <span className="text-white/30 mx-2">|</span>
+            ◆ {hordeRun.gemsCollected}
+            <span className="text-white/30 mx-2">|</span>
+            {hordeRun.currentMobName}
+          </div>
+          <div className="text-[10px] font-mono font-bold text-cyan-200/80 pointer-events-none">
+            NEXT {hordeRun.nextMobName} {Math.max(0, Math.ceil(hordeRun.nextUnlockIn))}s
+            <span className="text-white/30 mx-2">|</span>
+            BOSS {Math.max(0, Math.ceil(hordeRun.nextBossIn))}s
+          </div>
+          {hordeRun.blindness?.active && (
+            <div className="text-[10px] font-mono font-black text-fuchsia-300 animate-pulse bg-black/60 px-3 py-1 rounded-full border border-fuchsia-400/50">
+              VISION NULL — kill the caster
+            </div>
+          )}
+          {hordeRun.canExtract ? (
+            <button
+              type="button"
+              onClick={onExtractHorde}
+              className="text-[10px] font-mono font-bold text-amber-300 animate-pulse bg-black/50 px-3 py-1 rounded-full border border-amber-400/40 cursor-pointer pointer-events-auto"
+            >
+              [T] EXTRACT — leave with the spoils
+            </button>
+          ) : (
+            <div className="text-[10px] font-mono font-bold text-slate-400 pointer-events-none">
+              Survive to open the extract gate
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 4. TOP-RIGHT MINIMAL MENU & QUEST TRACKER */}
       <div className="fixed top-2.5 right-4 z-40 flex items-center gap-2 select-none pointer-events-auto">
@@ -244,11 +286,13 @@ export const HUD: React.FC<HUDProps> = ({
       )}
 
       {/* 5. FIRST-PERSON PAPER HANDS HOLDING WEAPON & AMMO VIEWPORT (BOTTOM-RIGHT) */}
+      {player.characterClass === 'gunslinger' && (
       <HandheldWeaponHUD
         player={player}
         onReload={onReload}
         onOpenGunsmith={onOpenGunsmith}
       />
+      )}
 
       {/* 6. TORN PAPER COLLAGE SCRAPS HOTBAR & UTILITY DOCK (BOTTOM-CENTER) */}
       <div className="fixed bottom-2.5 left-1/2 -translate-x-1/2 z-40 flex items-end gap-2.5 select-none pointer-events-auto">
@@ -256,7 +300,7 @@ export const HUD: React.FC<HUDProps> = ({
         {/* 6.1 WEAPONS SCRAPS DOCK [1] - [6]                         */}
         {/* ========================================================= */}
         <div className="flex items-end -space-x-1.5 p-1">
-          {WEAPONS_LIST.map((w, i) => {
+          {weaponsList.map((w, i) => {
             const isActive = activeGunType === w.type;
             return (
               <button
@@ -418,7 +462,7 @@ export const HUD: React.FC<HUDProps> = ({
                 ? 'z-25 bg-gradient-to-tr from-amber-400 to-yellow-300 text-slate-950 font-black shadow-[0_0_20px_rgba(251,191,36,0.9)] ring-2 ring-slate-950'
                 : 'z-10 bg-[#18181B] hover:bg-zinc-800 text-white/85 border-2 border-amber-800/80 hover:border-amber-400 hover:-translate-y-1.5'
             }`}
-            title="Mount [V]"
+            title="Skate / Mount [V] — kickflip onto the board"
           >
             <div className="flex flex-col items-center mt-1">
               <span className="text-lg">🛹</span>
@@ -432,7 +476,7 @@ export const HUD: React.FC<HUDProps> = ({
         {/* ========================================================= */}
         {/* 6.3 UTILITY MODALS [I], [B], [K] (Notepad Tear-Off Scraps) */}
         {/* ========================================================= */}
-        <div className="hidden md:flex items-end -space-x-1.5 p-1">
+        <div className="flex items-end -space-x-1.5 p-1">
           <button
             type="button"
             onClick={() => onOpenModal('inventory')}

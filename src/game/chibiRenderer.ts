@@ -29,22 +29,32 @@ export function drawChibiCharacter(
     spawnBounce = 1,
     attackTimer = 0,
     dodgeTimer = 0,
+    elevationZ = 0,
     jumpZ = 0,
     bhopStreak = 0,
     isSprinting = false,
+    skateTrick = null,
+    skateTrickTimer = 0,
+    skateTrickDuration = 0.5,
   } = player;
 
-  ctx.save();
-  ctx.translate(x, y);
+  const skateTrickProgress =
+    skateTrick && skateTrickTimer > 0 ? 1 - skateTrickTimer / Math.max(0.05, skateTrickDuration) : 1;
+  const doingSkateTrick = !!(skateTrick && skateTrickTimer > 0);
 
-  // Vertical jump offset from ground (bhop / jumping)
-  const jumpOffsetY = -jumpZ;
+  ctx.save();
+  ctx.translate(x + (player.previewOffsetX ?? 0), y + (player.previewOffsetY ?? 0));
+
+  // Vertical offsets for elevation and airborne jump
+  const shadowOffsetY = -elevationZ;
+  const jumpOffsetY = -(elevationZ + jumpZ);
 
   // 1. Draw Drop Shadow (shrinks when player jumps high in the air)
   if (isShadow) {
     ctx.save();
-    const shadowScale = Math.max(0.35, 1 - jumpZ / 140);
-    ctx.fillStyle = `rgba(0, 0, 0, ${0.25 * shadowScale})`;
+    ctx.translate(0, shadowOffsetY);
+    const shadowScale = Math.max(0.35, 1 - jumpZ / 160);
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.28 * shadowScale})`;
     ctx.beginPath();
     ctx.ellipse(0, 18, 20 * shadowScale, 7 * shadowScale, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -95,7 +105,7 @@ export function drawChibiCharacter(
   let scaleY = 1;
   let offsetY = jumpOffsetY;
 
-  if (spawnBounce < 1) {
+  if (spawnBounce < 1 && player.cinematicPose !== 'dive') {
     const t = spawnBounce;
     const bounce = Math.sin(t * Math.PI * 3.5) * (1 - t) * 0.45;
     scaleY = 1 + bounce;
@@ -110,16 +120,30 @@ export function drawChibiCharacter(
   let bobY = isMoving && jumpZ <= 2 ? Math.abs(Math.sin(time * waddleSpeed)) * 4 : Math.sin(time * 2) * 1.5;
   const runTilt = isMoving && jumpZ <= 2 ? (isSprinting ? 0.16 : 0.08) : 0;
   let bodyRot = isMoving ? waddle * 0.1 + runTilt : 0;
+  const skatingNow = isRiding && !!activeVehicleId && (activeVehicleId.includes('skateboard') || activeVehicleId.includes('hoverboard'));
+  if (skatingNow && isMoving && jumpZ <= 2 && !doingSkateTrick) {
+    bodyRot = (facing === 'left' ? -1 : 1) * 0.12;
+    bobY = Math.abs(Math.sin(time * 18)) * 1.4;
+  }
 
   // Cinematic pose body transforms
   const cinematicPose = player.cinematicPose;
-  if (cinematicPose === 'dance') {
-    waddle = Math.sin(time * 8) * 0.8;
-    bobY = Math.abs(Math.sin(time * 6)) * 8;
-    bodyRot = Math.sin(time * 4) * 0.15;
+  const isDancing = cinematicPose === 'dance';
+  const isCute = cinematicPose === 'cute';
+  if (isDancing) {
+    waddle = Math.sin(time * 7) * 1.5;
+    bobY = Math.abs(Math.sin(time * 7)) * 10;
+    bodyRot = Math.sin(time * 7) * 0.18;
+  } else if (isCute) {
+    waddle = Math.sin(time * 9) * 0.6;
+    bobY = Math.abs(Math.sin(time * 9)) * 7;
+    scaleY = 1 + Math.sin(time * 11) * 0.05;
   } else if (cinematicPose === 'dive') {
-    bodyRot = -0.5;
+    scaleX = facing === 'left' ? -1 : 1;
+    scaleY = 1.0;
+    bodyRot = -0.72;
     bobY = 0;
+    offsetY = 0;
   } else if (cinematicPose === 'skid') {
     bodyRot = -0.35;
     offsetY += 8;
@@ -135,10 +159,28 @@ export function drawChibiCharacter(
   } else if (cinematicPose === 'ready') {
     bodyRot = 0;
     bobY = Math.sin(time * 2) * 1;
+  } else if (cinematicPose === 'shy') {
+    bodyRot = (player.eyeLookX ?? 0) > 0.4 ? -0.14 : (player.eyeLookX ?? 0) < -0.4 ? 0.14 : 0;
+    bobY = 1.5;
+    scaleY = 0.94;
+    scaleX = (facing === 'left' ? -1 : 1) * 0.97;
   }
 
-  // Dodge ground slide vs Air Dash rotation
-  if (dodgeTimer > 0) {
+  if (doingSkateTrick && skatingNow) {
+    if (skateTrick === 'treflip') {
+      bodyRot += skateTrickProgress * Math.PI * 2;
+      offsetY -= Math.sin(skateTrickProgress * Math.PI) * 10;
+    } else if (skateTrick === 'kickflip' || skateTrick === 'mount_kickflip') {
+      bodyRot += Math.sin(skateTrickProgress * Math.PI) * 0.55;
+      offsetY -= Math.sin(skateTrickProgress * Math.PI) * 8;
+    } else if (skateTrick === 'ollie') {
+      bodyRot += -0.28 * Math.sin(skateTrickProgress * Math.PI);
+      offsetY -= Math.sin(skateTrickProgress * Math.PI) * 6;
+    }
+  }
+
+  // Dodge ground slide vs Air Dash rotation (skipped during skate tricks — board handles the flair)
+  if (dodgeTimer > 0 && !skatingNow) {
     if (player.isAirDash || jumpZ > 3) {
       // AIR DASH: Forward aerodynamic dive angle with sonic rings
       const diveAngle = 0.38;
@@ -186,7 +228,7 @@ export function drawChibiCharacter(
 
   // 3. Draw Vehicle (if riding and under character)
   if (isRiding && activeVehicleId) {
-    drawVehicleUnder(ctx, activeVehicleId, time, facing, jumpOffsetY);
+    drawVehicleUnder(ctx, activeVehicleId, time, facing, jumpOffsetY, player);
   }
 
   // Apply scales and offsets
@@ -201,11 +243,12 @@ export function drawChibiCharacter(
   drawBackHair(ctx, chibi);
 
   // 5. Draw Body & Outfit
-  drawBody(ctx, chibi, isMoving, waddle, isRiding);
+  drawBody(ctx, chibi, isMoving || isDancing || isCute, waddle, isRiding);
 
   // 6. Draw Head, Face & Ears
   const isDead = player.stats ? player.stats.hp <= 0 : false;
-  drawHeadAndFace(ctx, chibi, time, isDead);
+  const blushBoost = cinematicPose === 'shy' ? 0.32 : 0;
+  drawHeadAndFace(ctx, chibi, time, isDead, player.eyeLookX ?? 0, player.eyeLookY ?? 0, blushBoost);
 
   // 7. Draw Floating Levitating Halo
   drawFloatingHalo(ctx, chibi, time);
@@ -215,24 +258,41 @@ export function drawChibiCharacter(
     drawCinematicPoseEffects(ctx, player, time);
   }
 
-  // 8. Draw Hands & Weapon (skip if hidden during cinematic)
-  if (!player.hideWeapon) {
+  // 8. Draw Hands & Weapon (skip if hidden during cinematic or driving a car)
+  const drivingCar = activeVehicleId === 'police_car' || activeVehicleId === 'punk_car';
+  if (!player.hideWeapon && !drivingCar) {
     drawHandsAndWeapon(ctx, player, time, attackTimer);
   } else {
-    // Draw empty cute chibi hands waving/idle
+    // Draw empty cute chibi hands waving/dancing
     ctx.save();
     ctx.fillStyle = player.chibi?.skinTone || '#FFE4D6';
     ctx.strokeStyle = '#1E1B18';
     ctx.lineWidth = 2.2;
-    const handBob = Math.sin(time * 4) * 2;
-    ctx.beginPath();
-    ctx.arc(-12, 4 + handBob, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(12, 4 - handBob, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    if (isDancing || isCute) {
+      // Joyful rhythmic waving hands during victory dance
+      const leftHandX = -13 + Math.cos(time * 7) * 4;
+      const leftHandY = -4 - Math.sin(time * 7) * 9;
+      const rightHandX = 13 + Math.cos(time * 7 + Math.PI) * 4;
+      const rightHandY = -4 - Math.sin(time * 7 + Math.PI) * 9;
+      ctx.beginPath();
+      ctx.arc(leftHandX, leftHandY, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(rightHandX, rightHandY, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      const handBob = Math.sin(time * 4) * 2;
+      ctx.beginPath();
+      ctx.arc(-12, 4 + handBob, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(12, 4 - handBob, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -388,6 +448,33 @@ function drawCinematicPoseEffects(ctx: CanvasRenderingContext2D, player: Player,
     ctx.beginPath();
     ctx.arc(0, -8, 28 + Math.sin(time * 4) * 3, 0, Math.PI * 2);
     ctx.stroke();
+  } else if (pose === 'cute') {
+    const hearts = ['\u2665', '\u2661', '\u2727'];
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    for (let i = 0; i < 3; i++) {
+      const heartY = -36 - (time * 22 + i * 34) % 52;
+      const heartX = Math.sin(time * 2.8 + i * 1.7) * 14;
+      const alpha = Math.max(0, 1 - ((time * 22 + i * 34) % 52) / 52);
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.fillStyle = i % 2 === 0 ? '#F472B6' : '#FB7185';
+      ctx.fillText(hearts[i % hearts.length], heartX, heartY);
+    }
+  } else if (pose === 'shy') {
+    ctx.globalAlpha = 0.75 + Math.sin(time * 6) * 0.15;
+    ctx.fillStyle = '#7DD3FC';
+    ctx.beginPath();
+    ctx.ellipse(20, -30, 2.2, 3.8, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(19.5, -31.5, 0.9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = 0.55 + Math.sin(time * 4) * 0.2;
+    ctx.fillStyle = '#F9A8D4';
+    ctx.fillText('>.<', 0, -42);
   }
 
   ctx.restore();
@@ -797,6 +884,181 @@ function drawWings(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, time: numb
     };
     drawTendril(-1);
     drawTendril(1);
+  } else if (wingType === 'bee_wings') {
+    // BUZZY BEE WINGS
+    const drawBeeWing = (dir: number) => {
+      ctx.save();
+      ctx.translate(dir * 14, -4);
+      const flapAngle = Math.sin(time * 12) * 0.3;
+      ctx.rotate(dir * (0.4 + flapAngle));
+      ctx.fillStyle = 'rgba(253, 224, 71, 0.55)';
+      ctx.strokeStyle = '#F59E0B';
+      ctx.lineWidth = 1.5;
+      // Upper wing
+      ctx.beginPath();
+      ctx.ellipse(dir * 12, -8, 14, 8, dir * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Lower wing
+      ctx.beginPath();
+      ctx.ellipse(dir * 10, 4, 10, 6, dir * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Vein lines
+      ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(dir * 4, -8);
+      ctx.lineTo(dir * 20, -10);
+      ctx.moveTo(dir * 4, -6);
+      ctx.lineTo(dir * 18, -4);
+      ctx.stroke();
+      ctx.restore();
+    };
+    drawBeeWing(-1);
+    drawBeeWing(1);
+  } else if (wingType === 'steampunk_gears') {
+    // STEAMPUNK MECHANICAL GEAR WINGS
+    const drawGearWing = (dir: number) => {
+      ctx.save();
+      ctx.translate(dir * 20, -2);
+      const spinAngle = time * 2 * dir;
+      // Large gear
+      ctx.save();
+      ctx.rotate(spinAngle);
+      ctx.strokeStyle = wingCol || '#78716C';
+      ctx.fillStyle = 'rgba(120, 113, 108, 0.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Gear teeth
+      for (let t = 0; t < 8; t++) {
+        const ang = (t * Math.PI * 2) / 8;
+        ctx.fillStyle = wingCol || '#78716C';
+        ctx.fillRect(Math.cos(ang) * 12 - 2, Math.sin(ang) * 12 - 2, 4, 4);
+      }
+      // Center hole
+      ctx.fillStyle = '#0F172A';
+      ctx.beginPath();
+      ctx.arc(0, 0, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // Small gear
+      ctx.save();
+      ctx.translate(dir * 16, -12);
+      ctx.rotate(-spinAngle * 1.5);
+      ctx.strokeStyle = wingCol || '#78716C';
+      ctx.fillStyle = 'rgba(120, 113, 108, 0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      for (let t = 0; t < 6; t++) {
+        const ang = (t * Math.PI * 2) / 6;
+        ctx.fillStyle = wingCol || '#78716C';
+        ctx.fillRect(Math.cos(ang) * 7 - 1.5, Math.sin(ang) * 7 - 1.5, 3, 3);
+      }
+      ctx.fillStyle = '#0F172A';
+      ctx.beginPath();
+      ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      ctx.restore();
+    };
+    drawGearWing(-1);
+    drawGearWing(1);
+  } else if (wingType === 'ice_crystal_wings') {
+    // FROZEN ICE CRYSTAL WINGS (Cirno)
+    const drawIceWing = (dir: number) => {
+      ctx.save();
+      ctx.translate(dir * 12, -2);
+      const shimmer = Math.sin(time * 2) * 0.1;
+      ctx.rotate(dir * (0.3 + shimmer));
+      ctx.fillStyle = wingCol || 'rgba(103, 232, 249, 0.65)';
+      ctx.strokeStyle = '#67E8F9';
+      ctx.lineWidth = 1.5;
+      ctx.shadowColor = '#67E8F9';
+      ctx.shadowBlur = 8;
+      // Main crystal blade
+      ctx.beginPath();
+      ctx.moveTo(0, 4);
+      ctx.lineTo(dir * 8, -4);
+      ctx.lineTo(dir * 22, -18);
+      ctx.lineTo(dir * 28, -22);
+      ctx.lineTo(dir * 24, -14);
+      ctx.lineTo(dir * 14, -2);
+      ctx.lineTo(dir * 10, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Branch crystal 1
+      ctx.beginPath();
+      ctx.moveTo(dir * 10, -6);
+      ctx.lineTo(dir * 18, -16);
+      ctx.lineTo(dir * 14, -10);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Branch crystal 2
+      ctx.beginPath();
+      ctx.moveTo(dir * 16, -10);
+      ctx.lineTo(dir * 26, -12);
+      ctx.lineTo(dir * 20, -8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Sparkle
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(dir * 18, -14, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    };
+    drawIceWing(-1);
+    drawIceWing(1);
+  } else if (wingType === 'void_portals') {
+    // SWIRLING VOID PORTAL WINGS
+    const drawPortal = (dir: number) => {
+      ctx.save();
+      ctx.translate(dir * 24, -4);
+      const spin = time * 3;
+      ctx.fillStyle = wingCol || '#312E81';
+      ctx.shadowColor = wingCol || '#7C3AED';
+      ctx.shadowBlur = 12;
+      // Outer ring
+      ctx.strokeStyle = wingCol || '#7C3AED';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 14, 0, Math.PI * 2);
+      ctx.stroke();
+      // Inner spiral
+      ctx.fillStyle = 'rgba(124, 58, 237, 0.4)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 12, 0, Math.PI * 2);
+      ctx.fill();
+      // Swirling particles
+      for (let p = 0; p < 5; p++) {
+        const ang = spin + (p * Math.PI * 2) / 5;
+        const dist = 6 + Math.sin(time * 4 + p) * 3;
+        ctx.fillStyle = '#C084FC';
+        ctx.beginPath();
+        ctx.arc(Math.cos(ang) * dist, Math.sin(ang) * dist, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Center void
+      ctx.fillStyle = '#09090B';
+      ctx.beginPath();
+      ctx.arc(0, 0, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    };
+    drawPortal(-1);
+    drawPortal(1);
   }
 
   ctx.restore();
@@ -1303,6 +1565,90 @@ function drawBackHair(ctx: CanvasRenderingContext2D, chibi: ChibiConfig) {
         ctx.stroke();
       }
     });
+  } else if (style === 'fishtail_braid') {
+    // A braided fishtail going down the back
+    ctx.beginPath();
+    ctx.ellipse(0, -6, 22, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    for(let i=0; i<5; i++) {
+        ctx.beginPath();
+        ctx.moveTo(-10 + i, 8 + i*8);
+        ctx.lineTo(10 - i, 12 + i*8);
+        ctx.lineTo(0, 20 + i*8);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    }
+  } else if (style === 'high_bun') {
+    // Neat round bun on top of head
+    ctx.beginPath();
+    ctx.ellipse(0, -10, 24, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -32, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (style === 'waterfall_curls') {
+    // Long cascading curly hair
+    ctx.beginPath();
+    ctx.ellipse(0, -4, 26, 22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    [-18, -6, 6, 18].forEach(x => {
+        ctx.beginPath();
+        ctx.ellipse(x, 15, 8, 22, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.ellipse(x, 35, 6, 18, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    });
+  } else if (style === 'ribbon_ponytail') {
+    // Ponytail tied with a ribbon bow
+    ctx.beginPath();
+    ctx.ellipse(0, -8, 24, 22, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, 15, 12, 25, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = chibi.ribbonColor || '#F472B6';
+    ctx.beginPath();
+    ctx.ellipse(-8, -12, 10, 6, -0.2, 0, Math.PI * 2);
+    ctx.ellipse(8, -12, 10, 6, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else if (style === 'asymmetric_bob') {
+    // Bob haircut longer on one side
+    ctx.beginPath();
+    ctx.moveTo(-24, -10);
+    ctx.quadraticCurveTo(0, -25, 24, -10);
+    ctx.quadraticCurveTo(28, 5, 26, 15);
+    ctx.lineTo(10, 12);
+    ctx.lineTo(-20, 25);
+    ctx.quadraticCurveTo(-26, 10, -24, -10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else if (style === 'cirno_bob') {
+    // Short ice-crystal-tipped bob
+    ctx.beginPath();
+    ctx.ellipse(0, -8, 24, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    [-20, -10, 0, 10, 20].forEach(x => {
+        ctx.beginPath();
+        ctx.moveTo(x-4, 5);
+        ctx.lineTo(x, 18);
+        ctx.lineTo(x+4, 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    });
   }
 
   ctx.restore();
@@ -1559,6 +1905,96 @@ function drawBody(
     ctx.fillStyle = '#0284C7';
     ctx.beginPath();
     ctx.roundRect(-15, 1, 30, 11, 3);
+    ctx.fill();
+    ctx.stroke();
+  } else if (outfit === 'sailor_uniform') {
+    // Sailor pleated skirt
+    ctx.fillStyle = skirtCol;
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(16, 2);
+    ctx.lineTo(20, 13);
+    ctx.lineTo(-20, 13);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Pleat lines
+    ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+    for (let p = -9; p <= 9; p += 6) {
+      ctx.beginPath();
+      ctx.moveTo(p, 3);
+      ctx.lineTo(p + (p > 0 ? 1 : -1), 13);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = '#1E1B18';
+  } else if (outfit === 'nurse_outfit') {
+    // White nurse skirt
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.moveTo(-14, 2);
+    ctx.lineTo(14, 2);
+    ctx.lineTo(16, 12);
+    ctx.lineTo(-16, 12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else if (outfit === 'china_dress') {
+    // Cheongsam side-slit skirt
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(16, 2);
+    ctx.lineTo(18, 14);
+    ctx.lineTo(12, 14);
+    ctx.lineTo(14, 8);
+    ctx.lineTo(-14, 8);
+    ctx.lineTo(-18, 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Gold trim
+    ctx.strokeStyle = '#FDE047';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(16, 2);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.2;
+  } else if (outfit === 'detective_coat') {
+    // Long detective trench skirt
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(16, 2);
+    ctx.lineTo(20, 16);
+    ctx.lineTo(-20, 16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else if (outfit === 'idol_stage') {
+    // Sparkly idol mini skirt
+    ctx.fillStyle = accentCol;
+    ctx.beginPath();
+    ctx.moveTo(-16, 2);
+    ctx.lineTo(16, 2);
+    ctx.lineTo(20, 11);
+    ctx.lineTo(-20, 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Frilly hem
+    ctx.fillStyle = '#FFFFFF';
+    for (let f = -18; f <= 18; f += 6) {
+      ctx.beginPath();
+      ctx.arc(f, 11, 3, Math.PI, 0);
+      ctx.fill();
+    }
+  } else if (outfit === 'winter_coat') {
+    // Warm winter pants/leggings
+    ctx.fillStyle = skirtCol;
+    ctx.beginPath();
+    ctx.roundRect(-15, 2, 30, 12, 3);
     ctx.fill();
     ctx.stroke();
   } else {
@@ -1961,6 +2397,182 @@ function drawBody(
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+  } else if (outfit === 'sailor_uniform') {
+    // Classic Japanese sailor fuku top
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.roundRect(-14, -12, 28, 15, 3);
+    ctx.fill();
+    ctx.stroke();
+    // Sailor collar
+    ctx.fillStyle = skirtCol;
+    ctx.beginPath();
+    ctx.moveTo(-14, -12);
+    ctx.lineTo(-18, -6);
+    ctx.lineTo(-8, 0);
+    ctx.lineTo(8, 0);
+    ctx.lineTo(18, -6);
+    ctx.lineTo(14, -12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // V-neck stripe
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-14, -10);
+    ctx.lineTo(0, -2);
+    ctx.lineTo(14, -10);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.2;
+    // Ribbon tie
+    ctx.fillStyle = accentCol;
+    ctx.beginPath();
+    ctx.moveTo(0, -7);
+    ctx.lineTo(-4, -3);
+    ctx.lineTo(0, -1);
+    ctx.lineTo(4, -3);
+    ctx.closePath();
+    ctx.fill();
+  } else if (outfit === 'nurse_outfit') {
+    // White nurse uniform top
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.roundRect(-14, -12, 28, 15, 3);
+    ctx.fill();
+    ctx.stroke();
+    // Red cross
+    ctx.fillStyle = '#EF4444';
+    ctx.fillRect(-2, -10, 4, 8);
+    ctx.fillRect(-4, -8, 8, 4);
+    // Collar
+    ctx.strokeStyle = '#E2E8F0';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-6, -12);
+    ctx.lineTo(0, -8);
+    ctx.lineTo(6, -12);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.2;
+  } else if (outfit === 'china_dress') {
+    // Cheongsam mandarin collar top
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.roundRect(-14, -12, 28, 15, 3);
+    ctx.fill();
+    ctx.stroke();
+    // Mandarin collar
+    ctx.beginPath();
+    ctx.moveTo(-6, -12);
+    ctx.lineTo(-6, -16);
+    ctx.quadraticCurveTo(0, -18, 6, -16);
+    ctx.lineTo(6, -12);
+    ctx.fill();
+    ctx.stroke();
+    // Frog button closures
+    ctx.fillStyle = '#FDE047';
+    ctx.beginPath();
+    ctx.arc(4, -8, 1.5, 0, Math.PI * 2);
+    ctx.arc(4, -4, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Dragon embroidery accent
+    ctx.strokeStyle = '#FDE047';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-8, -6);
+    ctx.quadraticCurveTo(-4, -10, -2, -6);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.2;
+  } else if (outfit === 'detective_coat') {
+    // Detective trenchcoat
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.roundRect(-16, -12, 32, 16, 3);
+    ctx.fill();
+    ctx.stroke();
+    // Lapels
+    ctx.fillStyle = skirtCol;
+    ctx.beginPath();
+    ctx.moveTo(-6, -12);
+    ctx.lineTo(-10, -4);
+    ctx.lineTo(-2, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(6, -12);
+    ctx.lineTo(10, -4);
+    ctx.lineTo(2, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Belt
+    ctx.fillStyle = '#78716C';
+    ctx.fillRect(-14, -1, 28, 3);
+    ctx.fillStyle = '#F59E0B';
+    ctx.beginPath();
+    ctx.arc(0, 1, 2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (outfit === 'idol_stage') {
+    // Sparkly idol stage costume
+    ctx.fillStyle = accentCol;
+    ctx.beginPath();
+    ctx.roundRect(-13, -12, 26, 14, 4);
+    ctx.fill();
+    ctx.stroke();
+    // Glitter details
+    ctx.fillStyle = '#FFFFFF';
+    [-8, -3, 2, 7].forEach(sx => {
+      [-9, -5, -1].forEach(sy => {
+        if (Math.abs(sx + sy) % 3 === 0) {
+          ctx.beginPath();
+          ctx.arc(sx, sy, 1, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    });
+    // Bow
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.moveTo(0, -10);
+    ctx.lineTo(-5, -12);
+    ctx.lineTo(0, -8);
+    ctx.lineTo(5, -12);
+    ctx.closePath();
+    ctx.fill();
+  } else if (outfit === 'winter_coat') {
+    // Warm winter coat with fur collar
+    ctx.fillStyle = coatCol;
+    ctx.beginPath();
+    ctx.roundRect(-16, -12, 32, 16, 4);
+    ctx.fill();
+    ctx.stroke();
+    // Fur collar
+    ctx.fillStyle = '#E2E8F0';
+    for (let f = -8; f <= 8; f += 4) {
+      ctx.beginPath();
+      ctx.arc(f, -12, 4, Math.PI, Math.PI * 2);
+      ctx.fill();
+    }
+    // Center zip
+    ctx.strokeStyle = '#A1A1AA';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(0, 2);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.2;
+    // Pockets
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    ctx.roundRect(-12, -2, 8, 4, 1);
+    ctx.roundRect(4, -2, 8, 4, 1);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
   } else {
     // Academy Blazer (Classic Kivotos School Uniform)
     ctx.fillStyle = '#FFFFFF';
@@ -2025,7 +2637,10 @@ function drawHeadAndFace(
   ctx: CanvasRenderingContext2D,
   chibi: ChibiConfig,
   time: number,
-  isDead: boolean
+  isDead: boolean,
+  eyeLookX: number = 0,
+  eyeLookY: number = 0,
+  blushBoost: number = 0
 ) {
   ctx.save();
   ctx.lineWidth = 2.8;
@@ -2052,23 +2667,26 @@ function drawHeadAndFace(
   ctx.stroke();
 
   // 3. Blushing Pink Cheeks
-  ctx.fillStyle = 'rgba(244, 114, 182, 0.48)';
+  const cheekAlpha = 0.48 + blushBoost;
+  const cheekW = 4.5 + blushBoost * 2.5;
+  const cheekH = 2.5 + blushBoost * 1.2;
+  ctx.fillStyle = `rgba(244, 114, 182, ${cheekAlpha})`;
   ctx.beginPath();
-  ctx.ellipse(-15, headY + 11, 4.5, 2.5, 0, 0, Math.PI * 2);
-  ctx.ellipse(15, headY + 11, 4.5, 2.5, 0, 0, Math.PI * 2);
+  ctx.ellipse(-15, headY + 11, cheekW, cheekH, 0, 0, Math.PI * 2);
+  ctx.ellipse(15, headY + 11, cheekW, cheekH, 0, 0, Math.PI * 2);
   ctx.fill();
 
   if (chibi.eyesOverHair) {
     // Render Front Hair Bangs and Headwear under eyes
     drawFrontHair(ctx, chibi, headY);
-    drawHeadwear(ctx, chibi, headY);
+    drawHeadwear(ctx, chibi, headY, time);
     // Draw Eyes on TOP of Bangs (Classic Anime & VTuber style!)
-    drawEyesAndMouth(ctx, chibi, headY, eyeCol, skinTone, time, isDead);
+    drawEyesAndMouth(ctx, chibi, headY, eyeCol, skinTone, time, isDead, eyeLookX, eyeLookY);
   } else {
     // Traditional layering: Eyes drawn first, bangs fall over eyes
-    drawEyesAndMouth(ctx, chibi, headY, eyeCol, skinTone, time, isDead);
+    drawEyesAndMouth(ctx, chibi, headY, eyeCol, skinTone, time, isDead, eyeLookX, eyeLookY);
     drawFrontHair(ctx, chibi, headY);
-    drawHeadwear(ctx, chibi, headY);
+    drawHeadwear(ctx, chibi, headY, time);
   }
 
   ctx.restore();
@@ -2346,6 +2964,110 @@ function drawEars(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY: numb
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+  } else if (earType === 'raccoon') {
+    // TANUKI RACCOON ROUND EARS
+    const drawRaccoonEar = (ex: number) => {
+      ctx.fillStyle = earCol || '#78716C';
+      ctx.beginPath();
+      ctx.arc(ex, headY - 22, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Dark tips
+      ctx.fillStyle = '#1E1B18';
+      ctx.beginPath();
+      ctx.arc(ex, headY - 26, 5, Math.PI, Math.PI * 2);
+      ctx.fill();
+      // Inner ear
+      ctx.fillStyle = innerEarCol;
+      ctx.beginPath();
+      ctx.arc(ex, headY - 21, 4, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    drawRaccoonEar(-22);
+    drawRaccoonEar(22);
+  } else if (earType === 'bat') {
+    // BAT WING EARS (Remilia)
+    const drawBatEar = (ex: number, dir: number) => {
+      ctx.fillStyle = earCol || '#4C1D95';
+      ctx.beginPath();
+      ctx.moveTo(ex, headY - 12);
+      ctx.lineTo(ex + dir * 6, headY - 36);
+      ctx.lineTo(ex + dir * 12, headY - 28);
+      ctx.lineTo(ex + dir * 16, headY - 34);
+      ctx.lineTo(ex + dir * 18, headY - 22);
+      ctx.lineTo(ex + dir * 14, headY - 16);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Membrane lines
+      ctx.strokeStyle = 'rgba(192, 132, 252, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ex + dir * 4, headY - 14);
+      ctx.lineTo(ex + dir * 8, headY - 32);
+      ctx.moveTo(ex + dir * 8, headY - 14);
+      ctx.lineTo(ex + dir * 14, headY - 30);
+      ctx.stroke();
+      ctx.strokeStyle = '#1E1B18';
+      ctx.lineWidth = 2.2;
+    };
+    drawBatEar(-20, -1);
+    drawBatEar(20, 1);
+  } else if (earType === 'cow_horns') {
+    // SHORT CURVED COW HORNS
+    const drawCowHorn = (ex: number, dir: number) => {
+      ctx.fillStyle = '#FEF3C7';
+      ctx.beginPath();
+      ctx.moveTo(ex, headY - 14);
+      ctx.quadraticCurveTo(ex + dir * 14, headY - 28, ex + dir * 10, headY - 36);
+      ctx.quadraticCurveTo(ex + dir * 6, headY - 30, ex, headY - 18);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Dark tip
+      ctx.fillStyle = '#78716C';
+      ctx.beginPath();
+      ctx.arc(ex + dir * 10, headY - 34, 3, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    drawCowHorn(-16, -1);
+    drawCowHorn(16, 1);
+  } else if (earType === 'unicorn_horn') {
+    // SINGLE SPIRAL UNICORN HORN
+    ctx.save();
+    ctx.translate(0, headY - 24);
+    ctx.rotate(-0.05);
+    // Horn body
+    ctx.fillStyle = '#FDE047';
+    ctx.strokeStyle = '#B45309';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-5, 0);
+    ctx.lineTo(-2, -24);
+    ctx.lineTo(2, -24);
+    ctx.lineTo(5, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Spiral lines
+    ctx.strokeStyle = 'rgba(251, 146, 60, 0.6)';
+    ctx.lineWidth = 1.2;
+    for (let s = 0; s < 5; s++) {
+      const sy = -s * 5;
+      ctx.beginPath();
+      ctx.moveTo(-4 + s * 0.7, sy);
+      ctx.lineTo(4 - s * 0.7, sy - 3);
+      ctx.stroke();
+    }
+    // Sparkle tip
+    ctx.fillStyle = '#FFFFFF';
+    ctx.shadowColor = '#FDE047';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(0, -24, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
   }
 
   ctx.restore();
@@ -2358,7 +3080,9 @@ function drawEyesAndMouth(
   eyeCol: string,
   skinTone: string,
   time: number,
-  isDead: boolean
+  isDead: boolean,
+  globalLookX: number = 0,
+  globalLookY: number = 0
 ) {
   const eyeType = chibi.eyeType || 'cat_w';
   const isBlinking =
@@ -2373,6 +3097,8 @@ function drawEyesAndMouth(
     lookX: number = 0,
     lookY: number = 0
   ) => {
+    const totalLookX = lookX + globalLookX;
+    const totalLookY = lookY + globalLookY;
     ctx.save();
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
@@ -2381,11 +3107,11 @@ function drawEyesAndMouth(
 
     const irisR = radius;
     const irisGrad = ctx.createRadialGradient(
-      cx + lookX - irisR * 0.3,
-      cy + lookY - irisR * 0.3,
+      cx + totalLookX - irisR * 0.3,
+      cy + totalLookY - irisR * 0.3,
       0.5,
-      cx + lookX,
-      cy + lookY,
+      cx + totalLookX,
+      cy + totalLookY,
       irisR
     );
     irisGrad.addColorStop(0, '#FFFFFF');
@@ -2395,31 +3121,31 @@ function drawEyesAndMouth(
 
     ctx.fillStyle = irisGrad;
     ctx.beginPath();
-    ctx.arc(cx + lookX, cy + lookY, irisR, 0, Math.PI * 2);
+    ctx.arc(cx + totalLookX, cy + totalLookY, irisR, 0, Math.PI * 2);
     ctx.fill();
 
     // Pupil
     ctx.fillStyle = '#09090B';
     ctx.beginPath();
-    ctx.arc(cx + lookX * 1.2, cy + lookY * 1.2, irisR * 0.52, 0, Math.PI * 2);
+    ctx.arc(cx + totalLookX * 1.2, cy + totalLookY * 1.2, irisR * 0.52, 0, Math.PI * 2);
     ctx.fill();
 
     // Ambient bounce glow
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.55;
     ctx.beginPath();
-    ctx.arc(cx + lookX, cy + lookY + irisR * 0.35, irisR * 0.45, 0, Math.PI * 2);
+    ctx.arc(cx + totalLookX, cy + totalLookY + irisR * 0.35, irisR * 0.45, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1.0;
 
     // Specular highlights
     ctx.fillStyle = '#FFFFFF';
     ctx.beginPath();
-    ctx.arc(cx + lookX - irisR * 0.38, cy + lookY - irisR * 0.38, irisR * 0.38, 0, Math.PI * 2);
+    ctx.arc(cx + totalLookX - irisR * 0.38, cy + totalLookY - irisR * 0.38, irisR * 0.38, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cx + lookX + irisR * 0.38, cy + lookY + irisR * 0.38, irisR * 0.2, 0, Math.PI * 2);
+    ctx.arc(cx + totalLookX + irisR * 0.38, cy + totalLookY + irisR * 0.38, irisR * 0.2, 0, Math.PI * 2);
     ctx.fill();
 
     // Eyelash line
@@ -2757,16 +3483,28 @@ function drawEyesAndMouth(
     ctx.arc(11, headY + 6, 2, 0, Math.PI * 1.6);
     ctx.stroke();
   } else if (eyeType === 'glasses') {
+    // Lens rims behind eyes
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(-11, headY + 6, 7.2, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(11, headY + 6, 7.2, Math.PI * 1.05, Math.PI * 1.95);
+    ctx.stroke();
+
     drawSphericalBallEye(-11, headY + 5.5, 4.8, eyeCol, 0, 0);
     drawSphericalBallEye(11, headY + 5.5, 4.8, eyeCol, 0, 0);
 
-    ctx.strokeStyle = '#0F172A';
+    // Bridge + temples on top
     ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.arc(-11, headY + 6, 7, 0, Math.PI * 2);
-    ctx.arc(11, headY + 6, 7, 0, Math.PI * 2);
     ctx.moveTo(-4, headY + 6);
     ctx.lineTo(4, headY + 6);
+    ctx.moveTo(-18, headY + 5);
+    ctx.lineTo(-16, headY + 6);
+    ctx.moveTo(16, headY + 6);
+    ctx.lineTo(18, headY + 5);
     ctx.stroke();
   } else if (eyeType === 'deadpan') {
     ctx.strokeStyle = '#1A1816';
@@ -2922,6 +3660,93 @@ function drawEyesAndMouth(
     };
     drawDiamondFacet(-11, headY + 5.5);
     drawDiamondFacet(11, headY + 5.5);
+  } else if (eyeType === 'heterochromia') {
+    // Two different colored eyes - left red, right blue
+    drawSphericalBallEye(-11, headY + 5.5, 5.2, '#EF4444', 0, 0);
+    drawSphericalBallEye(11, headY + 5.5, 5.2, '#0EA5E9', 0, 0);
+  } else if (eyeType === '9ball') {
+    // Cirno's iconic ⑨ eyes
+    ctx.fillStyle = eyeCol || '#0EA5E9';
+    ctx.beginPath();
+    ctx.arc(-11, headY + 5.5, 5.5, 0, Math.PI * 2);
+    ctx.arc(11, headY + 5.5, 5.5, 0, Math.PI * 2);
+    ctx.fill();
+    // White ⑨ symbol in each eye
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 7px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('⑨', -11, headY + 6);
+    ctx.fillText('⑨', 11, headY + 6);
+  } else if (eyeType === 'tsurime_sharp') {
+    // Sharp upturned tsurime anime eyes
+    ctx.strokeStyle = '#18181B';
+    ctx.lineWidth = 2.4;
+    // Sharp upward angled eyelids
+    ctx.beginPath();
+    ctx.moveTo(-17, headY + 4);
+    ctx.lineTo(-6, headY + 7);
+    ctx.moveTo(17, headY + 4);
+    ctx.lineTo(6, headY + 7);
+    ctx.stroke();
+    drawSphericalBallEye(-11, headY + 5.5, 4.8, eyeCol, 0, 0);
+    drawSphericalBallEye(11, headY + 5.5, 4.8, eyeCol, 0, 0);
+    // Sharp lower lash
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-16, headY + 3);
+    ctx.lineTo(-18, headY + 1);
+    ctx.moveTo(16, headY + 3);
+    ctx.lineTo(18, headY + 1);
+    ctx.stroke();
+  } else if (eyeType === 'tareme_soft') {
+    // Soft drooping tareme anime eyes
+    ctx.strokeStyle = '#18181B';
+    ctx.lineWidth = 2.2;
+    // Soft downward angled eyelids
+    ctx.beginPath();
+    ctx.moveTo(-16, headY + 3);
+    ctx.quadraticCurveTo(-11, headY + 1, -6, headY + 4);
+    ctx.moveTo(16, headY + 3);
+    ctx.quadraticCurveTo(11, headY + 1, 6, headY + 4);
+    ctx.stroke();
+    drawSphericalBallEye(-11, headY + 6, 5.2, eyeCol, 0, 0);
+    drawSphericalBallEye(11, headY + 6, 5.2, eyeCol, 0, 0);
+  } else if (eyeType === 'closed_smile') {
+    // ^_^ gentle closed smile eyes
+    ctx.strokeStyle = '#18181B';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.arc(-11, headY + 6, 5, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(11, headY + 6, 5, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+  } else if (eyeType === 'sweat_nervous') {
+    // Nervous sweatdrop eyes
+    drawSphericalBallEye(-11, headY + 5.5, 4.5, eyeCol, 0, 0);
+    drawSphericalBallEye(11, headY + 5.5, 4.5, eyeCol, 0, 0);
+    // Sweatdrop
+    ctx.fillStyle = '#67E8F9';
+    ctx.strokeStyle = '#0EA5E9';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(18, headY - 2);
+    ctx.quadraticCurveTo(22, headY + 4, 18, headY + 8);
+    ctx.quadraticCurveTo(14, headY + 4, 18, headY - 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.2;
+    // Nervous brow lines
+    ctx.strokeStyle = '#18181B';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-16, headY + 1);
+    ctx.lineTo(-14, headY + 3);
+    ctx.moveTo(14, headY + 1);
+    ctx.lineTo(16, headY + 3);
+    ctx.stroke();
   } else {
     drawSphericalBallEye(-11, headY + 5.5, 5.2, eyeCol, 0, 0);
     drawSphericalBallEye(11, headY + 5.5, 5.2, eyeCol, 0, 0);
@@ -3004,6 +3829,31 @@ function drawEyesAndMouth(
     ctx.beginPath();
     ctx.arc(0, headY + 14, 3.2, Math.PI * 1.1, Math.PI * 1.9);
     ctx.stroke();
+  } else if (eyeType === 'closed_smile' || eyeType === 'tareme_soft') {
+    // Gentle happy smile
+    ctx.beginPath();
+    ctx.arc(0, headY + 12, 4, 0.1, Math.PI - 0.1);
+    ctx.stroke();
+  } else if (eyeType === 'tsurime_sharp') {
+    // Confident smirk
+    ctx.beginPath();
+    ctx.arc(2, headY + 12, 3.5, 0.2, Math.PI * 0.8);
+    ctx.stroke();
+  } else if (eyeType === '9ball') {
+    // Cirno's confident grin
+    ctx.fillStyle = '#FDA4AF';
+    ctx.beginPath();
+    ctx.arc(0, headY + 13, 4, 0, Math.PI);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else if (eyeType === 'sweat_nervous') {
+    // Nervous wavy mouth
+    ctx.beginPath();
+    ctx.moveTo(-5, headY + 13);
+    ctx.quadraticCurveTo(-2, headY + 11, 0, headY + 13);
+    ctx.quadraticCurveTo(2, headY + 15, 5, headY + 13);
+    ctx.stroke();
   } else {
     // Signature :3 W double curve
     ctx.beginPath();
@@ -3019,6 +3869,7 @@ function drawFrontHair(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY:
   const frontStyle = chibi.frontHairStyle || chibi.hairStyle || 'straight_bangs';
   if (frontStyle === 'none') return;
 
+  const hairCol = chibi.hairColor || '#F6D268';
   ctx.save();
   ctx.fillStyle = chibi.hairColor || '#F6D268';
   ctx.strokeStyle = '#1E1B18';
@@ -3236,6 +4087,256 @@ function drawFrontHair(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY:
     ctx.lineTo(28, headY + 10);
     ctx.lineTo(26, headY - 6);
     ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'wispy_bangs') {
+    // Thin delicate wispy strands across forehead
+    ctx.moveTo(-26, headY - 6);
+    ctx.quadraticCurveTo(-24, headY + 2, -20, headY + 8);
+    ctx.lineTo(-16, headY - 1);
+    ctx.quadraticCurveTo(-12, headY + 6, -6, headY + 10);
+    ctx.lineTo(-2, headY - 2);
+    ctx.quadraticCurveTo(4, headY + 8, 8, headY + 12);
+    ctx.lineTo(12, headY);
+    ctx.quadraticCurveTo(18, headY + 6, 22, headY + 10);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'zigzag_bangs') {
+    // Sharp zigzag pattern bangs
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-24, headY + 6);
+    ctx.lineTo(-18, headY - 4);
+    ctx.lineTo(-12, headY + 8);
+    ctx.lineTo(-6, headY - 4);
+    ctx.lineTo(0, headY + 10);
+    ctx.lineTo(6, headY - 4);
+    ctx.lineTo(12, headY + 8);
+    ctx.lineTo(18, headY - 4);
+    ctx.lineTo(24, headY + 6);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'twin_antenna') {
+    // Two ahoge antenna strands sticking up from parted bangs
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-26, headY + 6);
+    ctx.lineTo(-14, headY + 2);
+    ctx.lineTo(-4, headY + 8);
+    ctx.lineTo(4, headY + 8);
+    ctx.lineTo(14, headY + 2);
+    ctx.lineTo(26, headY + 6);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'thick_eyebrow_bangs') {
+    // Thick heavy bangs that nearly cover the eyes
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-28, headY + 14);
+    ctx.lineTo(-22, headY + 10);
+    ctx.lineTo(-14, headY + 16);
+    ctx.lineTo(-6, headY + 12);
+    ctx.lineTo(0, headY + 16);
+    ctx.lineTo(6, headY + 12);
+    ctx.lineTo(14, headY + 16);
+    ctx.lineTo(22, headY + 10);
+    ctx.lineTo(28, headY + 14);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'ojou_ringlets') {
+    // Elegant curling ringlet bangs on sides
+    ctx.moveTo(-26, headY - 6);
+    ctx.bezierCurveTo(-30, headY + 4, -28, headY + 16, -22, headY + 20);
+    ctx.bezierCurveTo(-18, headY + 14, -20, headY + 6, -16, headY + 2);
+    ctx.lineTo(-6, headY + 6);
+    ctx.lineTo(0, headY - 2);
+    ctx.lineTo(6, headY + 6);
+    ctx.lineTo(16, headY + 2);
+    ctx.bezierCurveTo(20, headY + 6, 18, headY + 14, 22, headY + 20);
+    ctx.bezierCurveTo(28, headY + 16, 30, headY + 4, 26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'cirno_fringe') {
+    // Cirno's characteristic short icy bangs
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-26, headY + 4);
+    ctx.lineTo(-20, headY + 8);
+    ctx.lineTo(-14, headY + 2);
+    ctx.lineTo(-8, headY + 6);
+    ctx.lineTo(-2, headY);
+    ctx.lineTo(4, headY + 6);
+    ctx.lineTo(10, headY + 2);
+    ctx.lineTo(16, headY + 8);
+    ctx.lineTo(22, headY + 4);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'straight_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 2);
+    ctx.lineTo(-20, headY + 3);
+    ctx.lineTo(-14, headY - 4);
+    ctx.lineTo(-6, headY - 1);
+    ctx.lineTo(0, headY - 5);
+    ctx.lineTo(6, headY - 1);
+    ctx.lineTo(14, headY - 4);
+    ctx.lineTo(20, headY + 3);
+    ctx.lineTo(27, headY + 2);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'teto_arched_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 3);
+    ctx.lineTo(-22, headY + 5);
+    ctx.lineTo(-17, headY - 2);
+    ctx.lineTo(-7, headY + 1);
+    ctx.lineTo(0, headY - 4);
+    ctx.lineTo(7, headY + 1);
+    ctx.lineTo(17, headY - 2);
+    ctx.lineTo(22, headY + 5);
+    ctx.lineTo(27, headY + 3);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'miku_fringe_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 4);
+    ctx.lineTo(-21, headY + 5);
+    ctx.lineTo(-19, headY - 2);
+    ctx.lineTo(-5, headY + 1);
+    ctx.lineTo(0, headY - 4);
+    ctx.lineTo(5, headY + 1);
+    ctx.lineTo(19, headY - 2);
+    ctx.lineTo(21, headY + 5);
+    ctx.lineTo(27, headY + 4);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'curtain_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 3);
+    ctx.lineTo(-18, headY + 2);
+    ctx.lineTo(-5, headY - 5);
+    ctx.lineTo(0, headY - 2);
+    ctx.lineTo(5, headY - 5);
+    ctx.lineTo(18, headY + 2);
+    ctx.lineTo(27, headY + 3);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'v_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 3);
+    ctx.lineTo(-18, headY - 1);
+    ctx.lineTo(0, headY + 4);
+    ctx.lineTo(18, headY - 1);
+    ctx.lineTo(27, headY + 3);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'blunt_fringe_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 1);
+    ctx.bezierCurveTo(-14, headY + 3, 14, headY + 3, 27, headY + 1);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'wispy_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.quadraticCurveTo(-24, headY - 2, -20, headY + 2);
+    ctx.lineTo(-16, headY - 4);
+    ctx.quadraticCurveTo(-10, headY, -4, headY + 2);
+    ctx.lineTo(-2, headY - 4);
+    ctx.quadraticCurveTo(4, headY, 8, headY + 2);
+    ctx.lineTo(12, headY - 4);
+    ctx.quadraticCurveTo(18, headY, 22, headY + 2);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'side_swept_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 4);
+    ctx.lineTo(-19, headY + 4);
+    ctx.lineTo(-12, headY - 2);
+    ctx.lineTo(2, headY + 1);
+    ctx.lineTo(14, headY - 2);
+    ctx.lineTo(22, headY + 2);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'feathered_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 4);
+    ctx.lineTo(-22, headY + 1);
+    ctx.lineTo(-14, headY + 3);
+    ctx.lineTo(-6, headY - 2);
+    ctx.lineTo(2, headY + 2);
+    ctx.lineTo(10, headY - 3);
+    ctx.lineTo(18, headY + 2);
+    ctx.lineTo(27, headY + 4);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'hime_sidelocks_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 6);
+    ctx.lineTo(-20, headY + 6);
+    ctx.lineTo(-20, headY - 2);
+    ctx.lineTo(20, headY - 2);
+    ctx.lineTo(20, headY + 6);
+    ctx.lineTo(27, headY + 6);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'sailor_crescent_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 4);
+    ctx.lineTo(-21, headY + 4);
+    ctx.lineTo(-16, headY - 3);
+    ctx.lineTo(-6, headY + 1);
+    ctx.lineTo(0, headY - 5);
+    ctx.lineTo(6, headY + 1);
+    ctx.lineTo(16, headY - 3);
+    ctx.lineTo(21, headY + 4);
+    ctx.lineTo(27, headY + 4);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'spiky_bangs_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-28, headY + 1);
+    ctx.lineTo(-22, headY - 2);
+    ctx.lineTo(-15, headY + 3);
+    ctx.lineTo(-8, headY - 4);
+    ctx.lineTo(0, headY + 2);
+    ctx.lineTo(8, headY - 4);
+    ctx.lineTo(15, headY + 3);
+    ctx.lineTo(22, headY - 2);
+    ctx.lineTo(28, headY + 1);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'emo_fringe_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 4);
+    ctx.lineTo(-16, headY + 5);
+    ctx.lineTo(8, headY - 1);
+    ctx.lineTo(22, headY - 4);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'messy_curly_short') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.quadraticCurveTo(-20, headY + 4, -14, headY - 1);
+    ctx.quadraticCurveTo(-8, headY + 3, -2, headY);
+    ctx.quadraticCurveTo(4, headY + 4, 10, headY - 1);
+    ctx.quadraticCurveTo(18, headY + 3, 26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'forehead_peek') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY + 1);
+    ctx.lineTo(-22, headY - 2);
+    ctx.lineTo(-10, headY - 5);
+    ctx.lineTo(0, headY - 7);
+    ctx.lineTo(10, headY - 5);
+    ctx.lineTo(22, headY - 2);
+    ctx.lineTo(27, headY + 1);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'buzz_fringe') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.lineTo(-27, headY - 2);
+    ctx.bezierCurveTo(-14, headY, 14, headY, 27, headY - 2);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
+  } else if (frontStyle === 'swept_back_bangs') {
+    ctx.moveTo(-26, headY - 6);
+    ctx.quadraticCurveTo(-18, headY - 14, -8, headY - 12);
+    ctx.lineTo(0, headY - 10);
+    ctx.quadraticCurveTo(8, headY - 12, 18, headY - 14);
+    ctx.lineTo(26, headY - 6);
+    ctx.bezierCurveTo(22, headY - 24, -22, headY - 24, -26, headY - 6);
   } else {
     // Classic straight soft bangs
     ctx.moveTo(-26, headY - 6);
@@ -3284,6 +4385,21 @@ function drawFrontHair(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY:
     ctx.fillStyle = '#FDE047';
     ctx.fillRect(-21, headY - 7, 7, 7);
     ctx.strokeRect(-21, headY - 7, 7, 7);
+  } else if (frontStyle === 'twin_antenna') {
+    // Draw two ahoge antenna strands
+    ctx.strokeStyle = hairCol;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-8, headY - 22);
+    ctx.quadraticCurveTo(-12, headY - 40, -6, headY - 44);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(8, headY - 22);
+    ctx.quadraticCurveTo(12, headY - 40, 6, headY - 44);
+    ctx.stroke();
+    ctx.lineWidth = 2.2;
+    ctx.strokeStyle = '#1E1B18';
   } else {
     // Cute side hair ribbon
     ctx.fillStyle = chibi.ribbonColor || '#F472B6';
@@ -3296,7 +4412,7 @@ function drawFrontHair(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY:
   ctx.restore();
 }
 
-function drawHeadwear(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY: number) {
+function drawHeadwear(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY: number, time: number = 0) {
   const hatType = chibi.hatType || 'none';
   if (hatType === 'none') return;
 
@@ -3317,16 +4433,25 @@ function drawHeadwear(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY: 
     ctx.fill();
     ctx.stroke();
 
-    // Cap Visor Bill
+    // Cap Visor Bill - wide flat brim
     ctx.fillStyle = '#0F172A';
     ctx.beginPath();
-    ctx.moveTo(12, headY - 10);
-    ctx.lineTo(34, headY - 6);
-    ctx.lineTo(30, headY - 1);
-    ctx.lineTo(12, headY - 4);
+    ctx.moveTo(10, headY - 14);
+    ctx.lineTo(38, headY - 12);
+    ctx.quadraticCurveTo(40, headY - 9, 36, headY - 6);
+    ctx.lineTo(10, headY - 8);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    // Visor highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.beginPath();
+    ctx.moveTo(12, headY - 13);
+    ctx.lineTo(34, headY - 12);
+    ctx.lineTo(32, headY - 10);
+    ctx.lineTo(12, headY - 11);
+    ctx.closePath();
+    ctx.fill();
 
     // Cyber LED Logo
     ctx.fillStyle = '#38BDF8';
@@ -3543,16 +4668,49 @@ function drawHeadwear(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY: 
     ctx.fill();
     ctx.stroke();
 
+    // Flat top crown
+    ctx.fillStyle = hatCol || '#0F172A';
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 26, 28, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
     ctx.fillStyle = '#FDE047';
     ctx.beginPath();
     ctx.arc(0, headY - 19, 5, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#000000';
+    // Patent leather peaked visor - solid and flush
+    ctx.fillStyle = '#0A0A0A';
     ctx.beginPath();
-    ctx.ellipse(0, headY - 8, 22, 6, 0.1, 0, Math.PI);
+    ctx.moveTo(-24, headY - 12);
+    ctx.lineTo(-28, headY - 10);
+    ctx.quadraticCurveTo(-30, headY - 6, -24, headY - 4);
+    ctx.lineTo(24, headY - 4);
+    ctx.quadraticCurveTo(30, headY - 6, 28, headY - 10);
+    ctx.lineTo(24, headY - 12);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    // Visor shine
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.beginPath();
+    ctx.moveTo(-20, headY - 11);
+    ctx.lineTo(20, headY - 11);
+    ctx.lineTo(18, headY - 8);
+    ctx.lineTo(-18, headY - 8);
+    ctx.closePath();
+    ctx.fill();
+
+    // Gold chinstrap detail
+    ctx.strokeStyle = '#FDE047';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-22, headY - 11);
+    ctx.lineTo(22, headY - 11);
+    ctx.stroke();
+    ctx.strokeStyle = '#1E1B18';
+    ctx.lineWidth = 2.4;
   } else if (hatType === 'kitsune_mask') {
     // JAPANESE KITSUNE FOX MASK (Perched diagonally on side of head)
     ctx.save();
@@ -3754,6 +4912,138 @@ function drawHeadwear(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, headY: 
       ctx.arc(fx, fy, 1.5, 0, Math.PI * 2);
       ctx.fill();
     });
+  } else if (hatType === 'bandana') {
+    // Rebel bandana tied around head, dark colored with knot on side
+    ctx.fillStyle = hatCol || '#0F172A';
+    ctx.beginPath();
+    ctx.arc(0, headY - 14, 25, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 14, 25, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // knot
+    ctx.beginPath();
+    ctx.arc(22, headY - 14, 5, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(25, headY - 12);
+    ctx.lineTo(35, headY - 5);
+    ctx.lineTo(30, headY - 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  } else if (hatType === 'headphones') {
+    // Over-ear headphones with cushions and headband
+    ctx.strokeStyle = hatCol || '#1E293B';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, headY - 14, 26, Math.PI, 0);
+    ctx.stroke();
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#1E1B18';
+    
+    // cushions
+    [-26, 26].forEach(x => {
+        ctx.fillStyle = '#0F172A';
+        ctx.beginPath();
+        ctx.ellipse(x, headY - 8, 5, 12, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#38BDF8';
+        ctx.beginPath();
+        ctx.ellipse(x, headY - 8, 2, 8, 0, 0, Math.PI*2);
+        ctx.fill();
+    });
+  } else if (hatType === 'tiara') {
+    // Elegant princess tiara with gems
+    ctx.strokeStyle = '#FDE047';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, headY - 14, 22, Math.PI*1.1, Math.PI*1.9);
+    ctx.stroke();
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = '#1E1B18';
+    
+    ctx.fillStyle = '#FDE047';
+    ctx.beginPath();
+    ctx.moveTo(-10, headY - 18);
+    ctx.lineTo(-5, headY - 26);
+    ctx.lineTo(0, headY - 16);
+    ctx.lineTo(5, headY - 26);
+    ctx.lineTo(10, headY - 18);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // gem
+    ctx.fillStyle = '#EC4899';
+    ctx.beginPath();
+    ctx.arc(0, headY - 20, 3, 0, Math.PI*2);
+    ctx.fill();
+  } else if (hatType === 'aviator_goggles') {
+    // Steampunk goggles pushed up on forehead
+    ctx.fillStyle = '#78350F';
+    ctx.beginPath();
+    ctx.rect(-24, headY - 22, 48, 6);
+    ctx.fill();
+    ctx.stroke();
+    
+    // lenses
+    [-10, 10].forEach(x => {
+        ctx.fillStyle = '#B45309';
+        ctx.beginPath();
+        ctx.arc(x, headY - 22, 10, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.fillStyle = '#38BDF8';
+        ctx.beginPath();
+        ctx.arc(x, headY - 22, 7, 0, Math.PI*2);
+        ctx.fill();
+        ctx.stroke();
+        
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.beginPath();
+        ctx.arc(x-2, headY - 24, 2, 0, Math.PI*2);
+        ctx.fill();
+    });
+  } else if (hatType === 'nurse_cap') {
+    // Classic white nurse cap with red cross
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.moveTo(-16, headY - 16);
+    ctx.lineTo(-20, headY - 30);
+    ctx.lineTo(20, headY - 30);
+    ctx.lineTo(16, headY - 16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // cross
+    ctx.fillStyle = '#EF4444';
+    ctx.fillRect(-2, headY - 27, 4, 8);
+    ctx.fillRect(-4, headY - 25, 8, 4);
+  } else if (hatType === 'military_cap') {
+    // Garrison/side cap (envelope cap)
+    ctx.fillStyle = hatCol || '#166534';
+    ctx.beginPath();
+    ctx.moveTo(-20, headY - 14);
+    ctx.lineTo(-15, headY - 28);
+    ctx.lineTo(0, headY - 22);
+    ctx.lineTo(15, headY - 28);
+    ctx.lineTo(20, headY - 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    ctx.fillStyle = '#FDE047';
+    ctx.beginPath();
+    ctx.arc(-10, headY - 20, 3, 0, Math.PI*2);
+    ctx.fill();
   }
 
   ctx.restore();
@@ -3763,6 +5053,7 @@ function drawFloatingHalo(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, tim
   const haloType = chibi.haloType || 'star';
   if (haloType === 'none') return;
 
+  const haloCol = chibi.haloColor || '#E65D8C';
   ctx.save();
   const haloBob = Math.sin(time * 2.5) * 3;
   ctx.translate(0, -66 + haloBob);
@@ -3896,6 +5187,99 @@ function drawFloatingHalo(ctx: CanvasRenderingContext2D, chibi: ChibiConfig, tim
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+  } else if (haloType === 'diamond') {
+    // FLOATING DIAMOND SHAPE
+    ctx.beginPath();
+    ctx.moveTo(0, -14);
+    ctx.lineTo(12, 0);
+    ctx.lineTo(0, 14);
+    ctx.lineTo(-12, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    // Inner facet
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, -8);
+    ctx.lineTo(6, 0);
+    ctx.lineTo(0, 8);
+    ctx.lineTo(-6, 0);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (haloType === 'infinity') {
+    // INFINITY SYMBOL
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(8, -10, 18, -10, 18, 0);
+    ctx.bezierCurveTo(18, 10, 8, 10, 0, 0);
+    ctx.bezierCurveTo(-8, -10, -18, -10, -18, 0);
+    ctx.bezierCurveTo(-18, 10, -8, 10, 0, 0);
+    ctx.stroke();
+    ctx.fill();
+  } else if (haloType === 'saturn_rings') {
+    // SATURN-LIKE TILTED RINGS
+    // Planet core
+    ctx.beginPath();
+    ctx.arc(0, 0, 6, 0, Math.PI * 2);
+    ctx.fill();
+    // Tilted ring 1
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 18, 5, 0.3, 0, Math.PI * 2);
+    ctx.stroke();
+    // Tilted ring 2
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 14, 4, -0.2, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (haloType === 'music_notes') {
+    // ORBITING MUSIC NOTES
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 16, 5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let n = 0; n < 3; n++) {
+      const ang = (n * Math.PI * 2) / 3 + time * 2.5;
+      const nx = Math.cos(ang) * 16;
+      const ny = Math.sin(ang) * 5;
+      ctx.fillStyle = haloCol;
+      // Note head
+      ctx.beginPath();
+      ctx.ellipse(nx, ny, 3, 2, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      // Note stem
+      ctx.strokeStyle = haloCol;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(nx + 2, ny);
+      ctx.lineTo(nx + 2, ny - 6);
+      ctx.stroke();
+    }
+  } else if (haloType === 'snowflake') {
+    // CRYSTALLINE SNOWFLAKE (Cirno)
+    const spokes = 6;
+    for (let s = 0; s < spokes; s++) {
+      const ang = (s * Math.PI * 2) / spokes + time * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      const ex = Math.cos(ang) * 14;
+      const ey = Math.sin(ang) * 5;
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      // Branch crystals
+      const mx = Math.cos(ang) * 8;
+      const my = Math.sin(ang) * 3;
+      const bAng1 = ang + 0.6;
+      const bAng2 = ang - 0.6;
+      ctx.beginPath();
+      ctx.moveTo(mx, my);
+      ctx.lineTo(mx + Math.cos(bAng1) * 5, my + Math.sin(bAng1) * 2);
+      ctx.moveTo(mx, my);
+      ctx.lineTo(mx + Math.cos(bAng2) * 5, my + Math.sin(bAng2) * 2);
+      ctx.stroke();
+    }
+    // Center crystal
+    ctx.beginPath();
+    ctx.arc(0, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   ctx.restore();
@@ -3928,7 +5312,11 @@ export function drawFrontHairThumbnail(
     skinTone,
     ribbonColor,
     earType: 'none',
+    earColor: '#2B272C',
     haloType: 'none',
+    haloColor: '#E65D8C',
+    coatColor: '#FFFFFF',
+    skirtColor: '#3A3640',
     eyeType: 'happy',
   };
 
@@ -3959,7 +5347,11 @@ export function drawBackHairThumbnail(
     skinTone,
     ribbonColor,
     earType: 'none',
+    earColor: '#2B272C',
     haloType: 'none',
+    haloColor: '#E65D8C',
+    coatColor: '#FFFFFF',
+    skirtColor: '#3A3640',
     eyeType: 'happy',
   };
 
@@ -4001,7 +5393,11 @@ export function drawHatThumbnail(
     skinTone: '#FFE4D6',
     ribbonColor: '#F43F5E',
     earType: 'none',
+    earColor: '#2B272C',
     haloType: 'none',
+    haloColor: '#E65D8C',
+    coatColor: '#FFFFFF',
+    skirtColor: '#3A3640',
     eyeType: 'happy',
   };
 
@@ -4042,7 +5438,11 @@ export function drawWingThumbnail(
     skinTone: '#FFE4D6',
     ribbonColor: '#F472B6',
     earType: 'none',
+    earColor: '#2B272C',
     haloType: 'none',
+    haloColor: '#E65D8C',
+    coatColor: '#FFFFFF',
+    skirtColor: '#3A3640',
     eyeType: 'happy',
   };
 
@@ -4287,8 +5687,16 @@ function drawHandsAndWeapon(
 
   const isSword = gunType === 'katana';
   const isSledge = gunType === 'sledgehammer';
+  const isKnives = gunType === 'throwing_knives';
+  const isScythe = gunType === 'scythe';
+  const isGreatsword = gunType === 'greatsword';
+  const isStaff = gunType === 'staff';
+  const isWand = gunType === 'wand';
+  const isGrimoire = gunType === 'grimoire';
+  const isTotem = gunType === 'totem';
   const isAttacking = attackTimer > 0;
-  const attackProgress = isAttacking ? 1 - attackTimer / 0.25 : 0;
+  const swingDur = isGreatsword ? 0.65 : isScythe ? 0.48 : 0.28;
+  const attackProgress = isAttacking ? Math.max(0, Math.min(1, 1 - attackTimer / swingDur)) : 0;
 
   // 1. MELEE WEAPONS: KATANA & SLEDGEHAMMER
   if (isSword) {
@@ -4357,6 +5765,145 @@ function drawHandsAndWeapon(
     ctx.fillStyle = '#EA580C';
     ctx.fillRect(24, -8, 8, 16);
     ctx.restore();
+  } else if (isKnives) {
+    ctx.save();
+    ctx.translate(10, 0);
+    const toss = isAttacking ? -0.5 + attackProgress * 0.8 : 0.15;
+    ctx.rotate(toss);
+    ctx.fillStyle = '#CBD5E1';
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 3; i++) {
+      ctx.save();
+      ctx.translate(-4 + i * 5, -i * 3);
+      ctx.rotate(-0.2 * i);
+      ctx.beginPath();
+      ctx.moveTo(14, 0);
+      ctx.lineTo(-4, -2.5);
+      ctx.lineTo(-2, 0);
+      ctx.lineTo(-4, 2.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  } else if (isScythe) {
+    ctx.save();
+    ctx.translate(8, 2);
+    const sweep = isAttacking ? Math.PI * (attackProgress * 1.7 - 0.55) : -0.55;
+    ctx.rotate(sweep);
+    ctx.fillStyle = '#44403C';
+    ctx.fillRect(-8, -2, 46, 4);
+    ctx.strokeRect(-8, -2, 46, 4);
+    ctx.fillStyle = '#A3E635';
+    ctx.strokeStyle = '#365314';
+    ctx.beginPath();
+    ctx.moveTo(34, -2);
+    ctx.quadraticCurveTo(58, -28, 28, -22);
+    ctx.quadraticCurveTo(48, -8, 34, 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    if (isAttacking) {
+      ctx.strokeStyle = '#84CC16';
+      ctx.lineWidth = 4;
+      ctx.shadowColor = '#84CC16';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(10, 0, 52, -Math.PI * 0.6, Math.PI * 0.15);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (isGreatsword) {
+    ctx.save();
+    ctx.translate(6, 4);
+    const slam = isAttacking ? Math.PI * (attackProgress * 1.5 - 0.7) : -0.85;
+    ctx.rotate(slam);
+    ctx.fillStyle = '#94A3B8';
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(4, -4);
+    ctx.lineTo(72, -2);
+    ctx.lineTo(76, 0);
+    ctx.lineTo(72, 3);
+    ctx.lineTo(4, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#1E293B';
+    ctx.fillRect(-10, -5, 16, 11);
+    ctx.fillStyle = '#F59E0B';
+    ctx.fillRect(2, -6, 4, 13);
+    if (isAttacking) {
+      ctx.strokeStyle = '#F8FAFC';
+      ctx.lineWidth = 5;
+      ctx.shadowColor = '#E2E8F0';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.arc(8, 0, 70, -0.2, 0.9);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (isStaff || isWand || isGrimoire || isTotem) {
+    ctx.save();
+    ctx.translate(10, 0);
+    let aimRot = 0;
+    if (player.aimAngle !== undefined) {
+      if (player.facing === 'left') {
+        let rel = Math.PI - player.aimAngle;
+        while (rel > Math.PI) rel -= Math.PI * 2;
+        while (rel < -Math.PI) rel += Math.PI * 2;
+        aimRot = Math.max(-Math.PI * 0.48, Math.min(Math.PI * 0.48, rel));
+      } else {
+        let rel = player.aimAngle;
+        while (rel > Math.PI) rel -= Math.PI * 2;
+        while (rel < -Math.PI) rel += Math.PI * 2;
+        aimRot = Math.max(-Math.PI * 0.48, Math.min(Math.PI * 0.48, rel));
+      }
+    }
+    ctx.rotate(aimRot);
+    if (isStaff) {
+      ctx.fillStyle = '#78350F';
+      ctx.fillRect(-4, -2, 36, 4);
+      ctx.fillStyle = '#F97316';
+      ctx.shadowColor = '#F97316';
+      ctx.shadowBlur = isAttacking ? 16 : 8;
+      ctx.beginPath();
+      ctx.arc(34, 0, 7, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (isWand) {
+      ctx.fillStyle = '#C084FC';
+      ctx.fillRect(-2, -1.5, 22, 3);
+      ctx.fillStyle = '#FDE047';
+      ctx.shadowColor = '#FDE047';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(22, 0, 4 + (isAttacking ? 2 : 0), 0, Math.PI * 2);
+      ctx.fill();
+    } else if (isGrimoire) {
+      ctx.fillStyle = '#4C1D95';
+      ctx.fillRect(4, -10, 16, 20);
+      ctx.strokeStyle = '#F59E0B';
+      ctx.strokeRect(4, -10, 16, 20);
+      ctx.fillStyle = '#F97316';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillText('*', 10, 2);
+    } else {
+      ctx.fillStyle = '#292524';
+      ctx.beginPath();
+      ctx.moveTo(8, 8);
+      ctx.lineTo(18, -12);
+      ctx.lineTo(28, 8);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#EF4444';
+      ctx.beginPath();
+      ctx.arc(18, -2, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   } else {
     // 2. FIREARMS: PISTOL, REVOLVER, MAC10, AK47, SHOTGUN, CHEYTAC
     ctx.save();
@@ -4388,6 +5935,31 @@ function drawHandsAndWeapon(
     // Dynamic Recoil angle and slide kick
     const recoil = isAttacking ? -0.32 * Math.sin(attackProgress * Math.PI) : 0;
     ctx.rotate(aimRot + recoil);
+
+    const reloadDur =
+      gunType === 'ak47' ? 1.3 :
+      gunType === 'mac10' ? 1.05 :
+      gunType === 'cheytac' ? 1.8 :
+      gunType === 'pistol' ? 0.85 : 1.0;
+    const reloadProgress = player.isReloading
+      ? Math.max(0, Math.min(1, 1 - (player.reloadTimer ?? 0) / reloadDur))
+      : 0;
+    let magOffY = 0;
+    let magOffR = 0;
+    let magAlpha = 1;
+    if (player.isReloading) {
+      if (reloadProgress < 0.4) {
+        const p1 = reloadProgress / 0.4;
+        magOffY = p1 * 16;
+        magOffR = p1 * 0.45;
+        magAlpha = Math.max(0, 1 - p1 * 1.4);
+      } else if (reloadProgress < 0.8) {
+        const p2 = (reloadProgress - 0.4) / 0.4;
+        magOffY = (1 - p2) * 14;
+        magOffR = 0;
+        magAlpha = 1;
+      }
+    }
 
     if (gunType === 'cheytac') {
       // ==========================================
@@ -4466,18 +6038,25 @@ function drawHandsAndWeapon(
       ctx.fillRect(20, -3, 10, 3.5);
       ctx.fillRect(28, -6, 2, 3); // front post
 
-      // Curved Banana Magazine (Bakelite Orange/Brown) (if no custom mag)
+      // Banana mag swap (same eject/insert as MAC-10)
       if (!player.weaponAttachments?.magazine) {
-        ctx.fillStyle = '#9A3412';
+        ctx.save();
+        ctx.translate(4, 2.5 + magOffY);
+        ctx.rotate(magOffR);
+        ctx.globalAlpha = magAlpha;
+        ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#1E293B' : '#9A3412';
         ctx.strokeStyle = '#451A03';
         ctx.beginPath();
-        ctx.moveTo(4, 2.5);
-        ctx.quadraticCurveTo(12, 10, 10, 15);
-        ctx.lineTo(6, 15);
-        ctx.quadraticCurveTo(7, 9, 0, 2.5);
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(8, 8, 6, 14);
+        ctx.lineTo(2, 14);
+        ctx.quadraticCurveTo(3, 7, -4, 0);
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#22C55E' : '#F59E0B';
+        ctx.fillRect(0, 12, 5, 2);
+        ctx.restore();
       }
 
       // Wooden Stock
@@ -4505,11 +6084,18 @@ function drawHandsAndWeapon(
       ctx.fillRect(16, -3, 5, 5);
       ctx.strokeRect(16, -3, 5, 5);
 
-      // Long Extended Magazine Stick (if no custom mag)
+      // Stick mag eject / insert
       if (!player.weaponAttachments?.magazine) {
-        ctx.fillStyle = '#3F3F46';
+        ctx.save();
+        ctx.translate(0, magOffY);
+        ctx.rotate(magOffR);
+        ctx.globalAlpha = magAlpha;
+        ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#1E293B' : '#3F3F46';
         ctx.fillRect(4, 4, 4, 13);
         ctx.strokeRect(4, 4, 4, 13);
+        ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#22C55E' : '#F59E0B';
+        ctx.fillRect(4, 15, 4, 2);
+        ctx.restore();
       }
 
       // Front Nylon Strap (if no underbarrel grip)
@@ -4613,7 +6199,7 @@ function drawHandsAndWeapon(
 
     // DRAW EQUIPPED WEAPON ATTACHMENTS (Muzzle, Optic, Underbarrel, Magazine)
     if (player.weaponAttachments) {
-      drawWeaponAttachments(ctx, gunType, player.weaponAttachments, isAttacking, attackProgress, time);
+      drawWeaponAttachments(ctx, gunType, player.weaponAttachments, isAttacking, attackProgress, time, magOffY, magOffR, magAlpha);
     }
 
     ctx.restore();
@@ -4662,7 +6248,10 @@ function drawWeaponAttachments(
   attachments: NonNullable<Player['weaponAttachments']>,
   isAttacking: boolean,
   attackProgress: number,
-  time: number
+  time: number,
+  magOffY = 0,
+  magOffR = 0,
+  magAlpha = 1,
 ) {
   const attachPoints: Record<string, { optic: { x: number; y: number }; muzzle: { x: number; y: number }; underbarrel: { x: number; y: number }; magazine: { x: number; y: number } }> = {
     cheytac: { optic: { x: 8, y: -10 }, muzzle: { x: 42, y: -1.5 }, underbarrel: { x: 20, y: 1 }, magazine: { x: 2, y: 10 } },
@@ -4837,6 +6426,9 @@ function drawWeaponAttachments(
     const magId = attachments.magazine.id;
     const { x, y } = pts.magazine;
     ctx.save();
+    ctx.translate(0, magOffY);
+    ctx.rotate(magOffR);
+    ctx.globalAlpha *= magAlpha;
 
     if (magId === 'mag_extended') {
       // Extended High-Cap Magazine
@@ -4887,15 +6479,36 @@ function drawVehicleUnder(
   vehicleId: string,
   time: number,
   facing: 'left' | 'right',
-  jumpOffsetY: number
+  jumpOffsetY: number,
+  player?: Player
 ) {
   ctx.save();
   ctx.translate(0, 14 + jumpOffsetY);
 
+  const trick = player?.skateTrick;
+  const dur = player?.skateTrickDuration || 0.5;
+  const timer = player?.skateTrickTimer || 0;
+  const p = trick && timer > 0 ? Math.max(0, Math.min(1, 1 - timer / dur)) : 1;
+  const isBoard = vehicleId.includes('skateboard') || vehicleId.includes('hoverboard');
+
+  if (isBoard && trick && timer > 0) {
+    const pop = Math.sin(p * Math.PI) * 12;
+    ctx.translate(0, -pop);
+    if (trick === 'ollie') {
+      ctx.rotate(-0.5 * Math.sin(p * Math.PI));
+    } else if (trick === 'kickflip' || trick === 'mount_kickflip') {
+      ctx.scale(1, Math.cos(p * Math.PI * 2));
+      ctx.rotate(0.2 * Math.sin(p * Math.PI * 2));
+    } else if (trick === 'treflip') {
+      ctx.rotate(p * Math.PI * 2);
+      ctx.scale(1, Math.cos(p * Math.PI * 2));
+    }
+  }
+
   ctx.lineWidth = 2.5;
   ctx.strokeStyle = '#1E1B18';
 
-  if (vehicleId.includes('skateboard') || vehicleId.includes('hoverboard')) {
+  if (isBoard) {
     // Neon Cyber Skateboard / Hoverboard
     const isHover = vehicleId.includes('hoverboard');
     ctx.fillStyle = isHover ? '#38BDF8' : '#EC4899';
@@ -4903,6 +6516,12 @@ function drawVehicleUnder(
     ctx.roundRect(-28, isHover ? -2 : 0, 56, 8, 4);
     ctx.fill();
     ctx.stroke();
+
+    // Deck graphic stripe
+    ctx.fillStyle = isHover ? '#E0F2FE' : '#FDE047';
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(-18, isHover ? 1 : 3, 36, 2);
+    ctx.globalAlpha = 1;
 
     if (!isHover) {
       // Skateboard Wheels
@@ -4916,6 +6535,27 @@ function drawVehicleUnder(
       // Glowing Hover Emitter
       ctx.fillStyle = '#67E8F9';
       ctx.fillRect(-22, 6, 44, 3);
+    }
+
+    if (trick && timer > 0) {
+      ctx.save();
+      ctx.globalAlpha = 0.75;
+      ctx.strokeStyle = trick === 'treflip' ? '#C084FC' : trick === 'ollie' ? '#FDE047' : '#38BDF8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(0, 2, 22 + Math.sin(p * Math.PI) * 8, 10, p * Math.PI, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    const rolling = player && (Math.abs(player.vx) > 40 || Math.abs(player.vy) > 40) && (player.jumpZ ?? 0) <= 2;
+    if (rolling && !isHover) {
+      ctx.fillStyle = 'rgba(253, 224, 71, 0.7)';
+      for (let s = 0; s < 3; s++) {
+        ctx.beginPath();
+        ctx.arc(-24 - s * 7 + Math.sin(time * 24 + s) * 3, 8 + Math.cos(time * 20 + s) * 2, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
   } else if (vehicleId.includes('scooter') || vehicleId.includes('bike')) {
     // Moped / Cyber Bike Chassis
@@ -4936,13 +6576,27 @@ function drawVehicleUnder(
     ctx.arc(20, 16, 7, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+  } else if (vehicleId === 'police_car') {
+    ctx.save();
+    if (facing === 'left') {
+      ctx.scale(-1, 1);
+    }
+    drawPoliceCruiser(ctx, -50, -34, time);
+    ctx.restore();
+  } else if (vehicleId === 'punk_car') {
+    ctx.save();
+    if (facing === 'left') {
+      ctx.scale(-1, 1);
+    }
+    drawCyberMuscleCar(ctx, -55, -36, time);
+    ctx.restore();
   }
 
   ctx.restore();
 }
 
 function drawOverheadHUD(ctx: CanvasRenderingContext2D, player: Player, time: number) {
-  const { name, stats, stamina, maxStamina, isSprinting, emote, chatMessage, chatTimer, bhopStreak } = player;
+  const { name, stats, stamina, maxStamina, isSprinting, emote, chatMessage, chatTimer, bhopStreak, skateTrick, skateTrickTimer, coolness, coolStreak } = player;
 
   const curHp = stats?.hp ?? (player as any).hp ?? 100;
   const curMaxHp = stats?.maxHp ?? (player as any).maxHp ?? 100;
@@ -5043,6 +6697,42 @@ function drawOverheadHUD(ctx: CanvasRenderingContext2D, player: Player, time: nu
 
     ctx.fillStyle = '#FFFFFF';
     ctx.fillText(bhopText, 0, bhopY);
+  } else if (coolStreak && coolStreak >= 2) {
+    const coolY = pillY - 18;
+    const coolText = `🔥 COOL x${coolStreak}  ${coolness ?? 0}`;
+    ctx.font = '900 10px system-ui, -apple-system, sans-serif';
+    const coolW = ctx.measureText(coolText).width + 12;
+    ctx.fillStyle = coolStreak >= 4 ? '#A855F7' : '#EC4899';
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(-coolW / 2, coolY - 8, coolW, 16, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(coolText, 0, coolY);
+  }
+
+  if (skateTrick && skateTrickTimer && skateTrickTimer > 0) {
+    const trickY = pillY - (bhopStreak >= 2 || (coolStreak && coolStreak >= 2) ? 36 : 18);
+    const trickNames: Record<string, string> = {
+      mount_kickflip: '🛹 KICKFLIP MOUNT',
+      kickflip: '🛹 KICKFLIP',
+      ollie: '🛹 OLLIE',
+      treflip: '🌀 TRE FLIP',
+    };
+    const trickText = trickNames[skateTrick] || '🛹 TRICK';
+    ctx.font = '900 11px system-ui, -apple-system, sans-serif';
+    const trickW = ctx.measureText(trickText).width + 14;
+    ctx.fillStyle = skateTrick === 'treflip' ? '#7C3AED' : skateTrick === 'ollie' ? '#CA8A04' : '#DB2777';
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.roundRect(-trickW / 2, trickY - 9, trickW, 18, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(trickText, 0, trickY);
   }
 
   // 5. Emote Bubble
@@ -5110,7 +6800,6 @@ export function drawHumanoidEnemy(
   const {
     isBoss,
     type,
-    name,
     hp,
     maxHp,
     headTilt = 0,
@@ -5540,7 +7229,7 @@ export function drawHumanoidEnemy(
     ctx.restore();
   }
 
-  // 6. Overhead Health Bar, Name & Battle Barks
+  // 6. Overhead Health Bar (nameplates and following speech bubbles removed)
   if (!isDead) {
     const barW = isBossBandit ? 90 : 44;
     const barH = isBossBandit ? 8 : 5;
@@ -5551,46 +7240,6 @@ export function drawHumanoidEnemy(
     ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = isBossBandit ? '#EF4444' : isDummy ? '#F59E0B' : '#38BDF8';
     ctx.fillRect(-barW / 2, barY, barW * hpRatio, barH);
-
-    // Name Tag
-    ctx.font = isBossBandit ? '900 13px Fredoka, sans-serif' : 'bold 11px Fredoka, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillStyle = isBossBandit ? '#FCA5A5' : isDummy ? '#FEF08A' : '#FFFFFF';
-    ctx.fillText(name, 0, barY - 6);
-
-    // Dynamic Comic Battle Bark Speech Bubble
-    if (monster.battleBark && monster.battleBark.timer > 0) {
-      const barkText = monster.battleBark.text;
-      ctx.font = '900 11px Fredoka, sans-serif';
-      const textMetrics = ctx.measureText(barkText);
-      const bubbleW = Math.max(70, textMetrics.width + 16);
-      const bubbleH = 22;
-      const bubbleY = barY - 32;
-
-      ctx.save();
-      ctx.fillStyle = '#FEF08A';
-      ctx.strokeStyle = '#0F172A';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.roundRect(-bubbleW / 2, bubbleY, bubbleW, bubbleH, 6);
-      ctx.fill();
-      ctx.stroke();
-
-      // Comic Bubble Tail
-      ctx.beginPath();
-      ctx.moveTo(-4, bubbleY + bubbleH);
-      ctx.lineTo(0, bubbleY + bubbleH + 6);
-      ctx.lineTo(4, bubbleY + bubbleH);
-      ctx.fillStyle = '#FEF08A';
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = '#0F172A';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(barkText, 0, bubbleY + bubbleH / 2);
-      ctx.restore();
-    }
   } else {
     // Defeated X_X Badge
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
@@ -5605,3 +7254,79 @@ export function drawHumanoidEnemy(
 
   ctx.restore();
 }
+
+export function drawPoliceCruiser(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  ctx.save();
+  // Drop Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+  ctx.beginPath();
+  ctx.roundRect(x - 5, y + 6, 110, 52, 10);
+  ctx.fill();
+
+  // Car Body Base
+  ctx.fillStyle = '#0F172A';
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(x, y, 100, 48, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // White Doors & SWAT Decal
+  ctx.fillStyle = '#F8FAFC';
+  ctx.fillRect(x + 25, y + 2, 50, 44);
+
+  ctx.fillStyle = '#0F172A';
+  ctx.font = '900 10px Fredoka, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('SWAT', x + 50, y + 27);
+
+  // Front / Rear Windshields
+  ctx.fillStyle = '#0284C7';
+  ctx.fillRect(x + 18, y + 6, 10, 36);
+  ctx.fillRect(x + 72, y + 6, 10, 36);
+
+  // Flashing Emergency LED Lightbar on roof
+  const isRed = Math.sin(time * 16) > 0;
+  ctx.fillStyle = isRed ? '#EF4444' : '#0284C7';
+  ctx.shadowColor = isRed ? '#EF4444' : '#38BDF8';
+  ctx.shadowBlur = 12;
+  ctx.fillRect(x + 44, y + 18, 12, 12);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+}
+
+export function drawCyberMuscleCar(ctx: CanvasRenderingContext2D, x: number, y: number, time: number) {
+  ctx.save();
+  // Drop Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
+  ctx.beginPath();
+  ctx.roundRect(x - 5, y + 6, 120, 54, 12);
+  ctx.fill();
+
+  // Widebody Muscle Car Chassis
+  ctx.fillStyle = '#18181B';
+  ctx.strokeStyle = '#DC2626';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(x, y, 110, 50, 8);
+  ctx.fill();
+  ctx.stroke();
+
+  // Twin Racing Stripes in Neon Orange/Yellow
+  ctx.fillStyle = '#F59E0B';
+  ctx.fillRect(x + 5, y + 16, 100, 5);
+  ctx.fillRect(x + 5, y + 28, 100, 5);
+
+  // Hood Supercharger Air Scoop
+  ctx.fillStyle = '#71717A';
+  ctx.fillRect(x + 18, y + 18, 20, 14);
+
+  // Rear Racing Spoiler
+  ctx.fillStyle = '#DC2626';
+  ctx.fillRect(x + 95, y + 4, 8, 42);
+
+  ctx.restore();
+}
+

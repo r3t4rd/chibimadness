@@ -1,7 +1,10 @@
-import { Item, CraftRecipe, Quest, NPC, Monster, ResourceNode, Obstacle, InteractiveObject } from '../types/game';
+import { Item, CraftRecipe, Quest, NPC, Monster, ResourceNode, Obstacle, InteractiveObject, Platform, WorldPOI, CharacterClass, GunType } from '../types/game';
+import { getInteriorRoom } from './buildings';
 
 export const WORLD_WIDTH = 5400;
 export const WORLD_HEIGHT = 4400;
+export const NPC_INTERACT_RANGE = 110;
+export const DAY_CYCLE_SECONDS = 720;
 
 export const ZONES = [
   {
@@ -13,17 +16,17 @@ export const ZONES = [
   },
   {
     id: 'deep_forest',
-    name: 'Dense Emerald Pine Forest',
+    name: 'Dense Ancient Redwood & Pine Forest',
     bounds: { minX: 100, minY: 1600, maxX: 2600, maxY: 3100 },
     bgTheme: 'forest',
-    desc: 'Dense ancient woods with harvestable timber, iron ore veins, crystal deposits, and feral wolves.',
+    desc: 'Dense ancient woods with towering giant trees, forest stream, ranger treehouse, spirit shrine, and harvestable timber.',
   },
   {
     id: 'rocky_canyon',
-    name: 'Jagged Foothills & Canyon Pass',
+    name: 'Redrock Chasm & Suspension Bridges',
     bounds: { minX: 1800, minY: 100, maxX: 5300, maxY: 1600 },
     bgTheme: 'canyon',
-    desc: 'Steep stone ravines and bandit encampments with explosive red barrels and outlaw sniper nests.',
+    desc: 'Steep multi-tiered ravines with aerial rope suspension bridges, geothermal steam geysers, and outlaw sniper nests.',
   },
   {
     id: 'welder_crag',
@@ -53,54 +56,533 @@ export const ZONES = [
     bgTheme: 'warzone',
     desc: 'Active clash line where Cops and Punks engage in constant warfare unless provoked by the player.',
   },
+  {
+    id: 'horde_crucible',
+    name: 'Nullspace Rack (Endless Crucible)',
+    bounds: { minX: -11200, minY: -2400, maxX: -800, maxY: 6800 },
+    bgTheme: 'horde',
+    desc: 'A torn-open server meta-space. Endless slaughter, new horrors every 20 seconds, bosses every minute.',
+  },
 ];
 
-// SOLID OBSTACLES / INVISIBLE WALLS (Walkable vs Non-Walkable Collision Planes)
+// ELEVATED PLATFORMS, BRIDGES, TREEHOUSES & CLIFF PLATEAUS
+export const PLATFORMS: Platform[] = [
+  // 1. Forest Ranger High Treehouse (x: 450, y: 2200, elevation: 90px)
+  {
+    id: 'plat_treehouse_main',
+    name: "Ranger's Treehouse Platform",
+    x: 450,
+    y: 2150,
+    width: 240,
+    height: 190,
+    elevationZ: 90,
+    type: 'treehouse',
+  },
+  // Treehouse access wooden stairs/ramp (leads from ground up to 90px)
+  {
+    id: 'plat_treehouse_ramp',
+    name: 'Treehouse Wooden Ladder Ramp',
+    x: 420,
+    y: 2320,
+    width: 80,
+    height: 90,
+    elevationZ: 90,
+    type: 'ramp',
+    rampDirection: 'up_y',
+    rampElevationStart: 0,
+    rampElevationEnd: 90,
+  },
+
+  // 2. Canyon High North Plateau (x: 2200..3800, y: 120..480, elevation: 140px)
+  {
+    id: 'plat_canyon_north_plateau',
+    name: 'North Eagle Cliff Plateau',
+    x: 2280,
+    y: 120,
+    width: 1550,
+    height: 380,
+    elevationZ: 140,
+    type: 'plateau',
+  },
+  // North Plateau West Stone Ramp (leads from low canyon ground 0 to 140px)
+  {
+    id: 'plat_canyon_north_ramp',
+    name: 'North Cliff Stone Ramp',
+    x: 2120,
+    y: 260,
+    width: 170,
+    height: 140,
+    elevationZ: 140,
+    type: 'ramp',
+    rampDirection: 'up_x',
+    rampElevationStart: 0,
+    rampElevationEnd: 140,
+  },
+
+  // 3. Canyon High South Plateau (x: 2200..3850, y: 1080..1520, elevation: 140px)
+  {
+    id: 'plat_canyon_south_plateau',
+    name: 'South Redrock Plateau',
+    x: 2280,
+    y: 1080,
+    width: 1600,
+    height: 460,
+    elevationZ: 140,
+    type: 'plateau',
+  },
+  // South Plateau East Natural Ramp (leads from 140px down to low canyon ground)
+  {
+    id: 'plat_canyon_south_ramp',
+    name: 'South Plateau Scree Ramp',
+    x: 3850,
+    y: 1140,
+    width: 170,
+    height: 140,
+    elevationZ: 140,
+    type: 'ramp',
+    rampDirection: 'down_x',
+    rampElevationStart: 140,
+    rampElevationEnd: 0,
+  },
+
+  // 4. Aerial Suspension Rope Bridge #1 (West Chasm Span over Gorge)
+  {
+    id: 'plat_suspension_bridge_west',
+    name: 'Skyview Suspension Bridge',
+    x: 2680,
+    y: 490,
+    width: 130,
+    height: 600,
+    elevationZ: 140,
+    type: 'bridge',
+  },
+
+  // 5. Aerial Suspension Rope Bridge #2 (East Chasm Span over Gorge)
+  {
+    id: 'plat_suspension_bridge_east',
+    name: 'Eagle Ridge Suspension Bridge',
+    x: 3420,
+    y: 490,
+    width: 130,
+    height: 600,
+    elevationZ: 140,
+    type: 'bridge',
+  },
+
+  // 6. High Rock Summit Plateau (Welder Boss Arena)
+  {
+    id: 'plat_summit_arena',
+    name: 'Summit Basalt Arena Plateau',
+    x: 2850,
+    y: 1800,
+    width: 1750,
+    height: 1200,
+    elevationZ: 120,
+    type: 'plateau',
+  },
+  // Summit Arena Mountain Ascent Ramp
+  {
+    id: 'plat_summit_ramp',
+    name: 'Summit Ascent Ramp',
+    x: 2650,
+    y: 2280,
+    width: 220,
+    height: 140,
+    elevationZ: 120,
+    type: 'ramp',
+    rampDirection: 'up_x',
+    rampElevationStart: 0,
+    rampElevationEnd: 120,
+  },
+
+  // City skybridges only — building interiors/roofs live in BUILDINGS (hollow volumes).
+  {
+    id: 'plat_metro_skybridge',
+    name: 'Metro Police Skybridge',
+    x: 880,
+    y: 3360,
+    width: 180,
+    height: 75,
+    elevationZ: 210,
+    type: 'bridge',
+  },
+
+  // 7.3. Elevated Monorail Track & Crashed Train Car (elevation: 110px)
+  {
+    id: 'plat_monorail_track',
+    name: 'Elevated Monorail Transit Rail',
+    x: 300,
+    y: 3950,
+    width: 1750,
+    height: 90,
+    elevationZ: 110,
+    type: 'bridge',
+  },
+  {
+    id: 'plat_monorail_train',
+    name: 'Derelict Metro Train Carriage',
+    x: 1050,
+    y: 3930,
+    width: 320,
+    height: 110,
+    elevationZ: 110,
+    type: 'scaffold',
+  },
+  // Monorail Fallen Steel Girder Ascent Ramp
+  {
+    id: 'plat_monorail_ramp',
+    name: 'Fallen Girder Monorail Ramp',
+    x: 280,
+    y: 3930,
+    width: 140,
+    height: 100,
+    elevationZ: 110,
+    type: 'ramp',
+    rampDirection: 'up_x',
+    rampElevationStart: 0,
+    rampElevationEnd: 110,
+  },
+
+  {
+    id: 'plat_punk_pipe_bridge',
+    name: 'Steam Pipe Catwalk',
+    x: 3650,
+    y: 3360,
+    width: 200,
+    height: 75,
+    elevationZ: 210,
+    type: 'bridge',
+  },
+];
+
+// POINTS OF INTEREST (POIs) - Shrines, Geysers, Bouncy Mushrooms, Vending Machines, Hydrants, Caches
+export const WORLD_POIS: WorldPOI[] = [
+  // Forest: Ancient Spirit Shrine
+  {
+    id: 'poi_spirit_shrine',
+    name: 'Ancient Wind Spirit Shrine',
+    type: 'spirit_shrine',
+    x: 1950,
+    y: 2150,
+    radius: 50,
+    buffType: 'speed',
+    buffValue: 0.45,
+    buffDuration: 25,
+    icon: '🎐',
+    description: 'Ancient mossy monolith humming with swift gale energy. Grants +45% Speed!',
+  },
+
+  // Forest: Bouncy Bioluminescent Mushrooms (Launch pads)
+  {
+    id: 'poi_shroom_forest_1',
+    name: 'Bouncy Bio-Mushroom',
+    type: 'bouncy_mushroom',
+    x: 820,
+    y: 1900,
+    radius: 36,
+    icon: '🍄',
+    description: 'Springy giant mushroom cap that launches characters sky-high!',
+  },
+  {
+    id: 'poi_shroom_forest_2',
+    name: 'Bouncy Bio-Mushroom',
+    type: 'bouncy_mushroom',
+    x: 1680,
+    y: 2650,
+    radius: 36,
+    icon: '🍄',
+  },
+
+  // Forest: Ranger Treehouse Secret Weapon Stash
+  {
+    id: 'poi_treehouse_cache',
+    name: "Ranger's Secret Stash",
+    type: 'treehouse_cache',
+    x: 530,
+    y: 2220,
+    elevationZ: 90,
+    radius: 32,
+    isLooted: false,
+    lootTable: [
+      { itemId: 'wpn_bandit_revolver', minQty: 1, maxQty: 1, chance: 1.0 },
+      { itemId: 'mat_lumite_crystal', minQty: 4, maxQty: 8, chance: 1.0 },
+      { itemId: 'pot_hp_large', minQty: 3, maxQty: 5, chance: 1.0 },
+    ],
+    icon: '📦',
+    description: 'Locked tactical crate left behind on the high treehouse platform.',
+  },
+
+  // Canyon: Geothermal High-Pressure Steam Geysers
+  {
+    id: 'poi_geyser_canyon_1',
+    name: 'Volcanic Steam Geyser',
+    type: 'steam_geyser',
+    x: 2745,
+    y: 790,
+    radius: 42,
+    icon: '💨',
+    description: 'Surging geyser blowing pressurized steam straight up to the rope bridge!',
+  },
+  {
+    id: 'poi_geyser_canyon_2',
+    name: 'Volcanic Steam Geyser',
+    type: 'steam_geyser',
+    x: 3485,
+    y: 790,
+    radius: 42,
+    icon: '💨',
+    description: 'High-power geyser launching characters up onto the East suspension bridge!',
+  },
+
+  // Canyon: Derelict Ore Minecart in Low Gorge
+  {
+    id: 'poi_minecart_gorge',
+    name: 'Derelict Gold Minecart',
+    type: 'minecart_cart',
+    x: 3080,
+    y: 830,
+    radius: 38,
+    isLooted: false,
+    lootTable: [
+      { itemId: 'mat_iron_chunk', minQty: 8, maxQty: 14, chance: 1.0 },
+      { itemId: 'mat_refined_steel', minQty: 3, maxQty: 6, chance: 0.9 },
+      { itemId: 'wpn_shotgun', minQty: 1, maxQty: 1, chance: 0.7 },
+    ],
+    icon: '⛏️',
+    description: 'Rusty mining cart packed with heavy ores and explosives.',
+  },
+
+  // Canyon: High Eagle Cliff Weapon Crate
+  {
+    id: 'poi_eagle_cliff_chest',
+    name: 'Eagle Cliff Sniper Cache',
+    type: 'treasure_chest',
+    x: 3620,
+    y: 260,
+    elevationZ: 140,
+    radius: 32,
+    isLooted: false,
+    lootTable: [
+      { itemId: 'wpn_cheytac', minQty: 1, maxQty: 1, chance: 0.75 },
+      { itemId: 'att_muzzle_compensator', minQty: 1, maxQty: 1, chance: 1.0 },
+      { itemId: 'att_optic_holo', minQty: 1, maxQty: 1, chance: 1.0 },
+    ],
+    icon: '🎁',
+    description: 'Mil-spec weapon supply drop sitting atop the highest canyon ledge.',
+  },
+
+  // ==========================================
+  // CITY SECTOR: VENDING MACHINES, HYDRANTS & ROOFTOP VAULTS
+  // ==========================================
+  // Metro Precinct Interactive Cyber Vending Machine
+  {
+    id: 'poi_vending_metro',
+    name: 'Metro Cyber-Cola & Stims Dispenser',
+    type: 'vending_machine',
+    x: 920,
+    y: 3620,
+    radius: 36,
+    icon: '🥤',
+    description: 'Hit or interact to dispense chilled Energy Sodas and 9mm Ammo!',
+    lootTable: [
+      { itemId: 'pot_hp_large', minQty: 1, maxQty: 2, chance: 1.0 },
+      { itemId: 'mat_refined_steel', minQty: 2, maxQty: 4, chance: 0.8 },
+    ],
+  },
+  // Punk Alley Demon-Energy Vending Machine
+  {
+    id: 'poi_vending_punk',
+    name: 'Hellfire Energy Machine',
+    type: 'vending_machine',
+    x: 3250,
+    y: 3650,
+    radius: 36,
+    icon: '⚡',
+    description: 'Battered gang vending machine spitting out fiery stimpacks!',
+    lootTable: [
+      { itemId: 'pot_hp_large', minQty: 1, maxQty: 2, chance: 1.0 },
+      { itemId: 'mat_lumite_crystal', minQty: 2, maxQty: 3, chance: 0.75 },
+    ],
+  },
+
+  // High-Pressure Street Fire Hydrants (Geysers that launch player onto roofs!)
+  {
+    id: 'poi_hydrant_metro_1',
+    name: 'Pressurized Fire Hydrant',
+    type: 'fire_hydrant',
+    x: 1010,
+    y: 3590,
+    radius: 36,
+    icon: '🚰',
+    description: 'Burst fire hydrant blasting a roaring water column straight onto the Noodle roof!',
+  },
+  {
+    id: 'poi_hydrant_metro_2',
+    name: 'Pressurized Fire Hydrant',
+    type: 'fire_hydrant',
+    x: 1750,
+    y: 3590,
+    radius: 36,
+    icon: '🚰',
+  },
+  {
+    id: 'poi_hydrant_punk_1',
+    name: 'Pressurized Fire Hydrant',
+    type: 'fire_hydrant',
+    x: 3550,
+    y: 3590,
+    radius: 36,
+    icon: '🚰',
+  },
+
+  // Police HQ Skyscraper Rooftop Armory Locker (elevation: 200px)
+  {
+    id: 'poi_police_hq_chest',
+    name: 'SWAT Rooftop Armory Locker',
+    type: 'treasure_chest',
+    x: 580,
+    y: 3340,
+    elevationZ: 210,
+    radius: 32,
+    isLooted: false,
+    lootTable: [
+      { itemId: 'wpn_mac10', minQty: 1, maxQty: 1, chance: 1.0 },
+      { itemId: 'att_mag_extended', minQty: 1, maxQty: 1, chance: 1.0 },
+      { itemId: 'pot_hp_large', minQty: 3, maxQty: 5, chance: 1.0 },
+    ],
+    icon: '🛡️',
+    description: 'Locked heavy police supply case atop the HQ Helipad.',
+  },
+
+  // Punk Tower Rooftop Hellfire Boss Vault (elevation: 190px)
+  {
+    id: 'poi_punk_tower_chest',
+    name: 'Hellfire Boss Rooftop Vault',
+    type: 'treasure_chest',
+    x: 4050,
+    y: 3340,
+    elevationZ: 210,
+    radius: 32,
+    isLooted: false,
+    lootTable: [
+      { itemId: 'wpn_ak47', minQty: 1, maxQty: 1, chance: 0.85 },
+      { itemId: 'att_under_laser', minQty: 1, maxQty: 1, chance: 1.0 },
+      { itemId: 'mat_lumite_crystal', minQty: 5, maxQty: 10, chance: 1.0 },
+    ],
+    icon: '👑',
+    description: 'Anarchy syndicate master safe locked on the highest tower roof.',
+  },
+
+  // ==========================================
+  // HOSTINGOVAYA DATA CENTER POIs
+  // ==========================================
+  {
+    id: 'poi_hostingovaya_checkpoint',
+    name: 'HOSTINGOVAYA Security Checkpoint',
+    type: 'spirit_shrine',
+    x: 1880,
+    y: 3580,
+    radius: 50,
+    icon: '🚨',
+    description: 'Turnstiles & laser scanners. Trespassing or smashing servers triggers total security lockdown!',
+  },
+  {
+    id: 'poi_hostingovaya_quantum_vault',
+    name: 'Quantum Core Master Backup Safe',
+    type: 'treasure_chest',
+    x: 1880,
+    y: 3280,
+    elevationZ: 210,
+    radius: 35,
+    isLooted: false,
+    lootTable: [
+      { itemId: 'wpn_cheytac', minQty: 1, maxQty: 1, chance: 0.9 },
+      { itemId: 'mat_refined_steel', minQty: 8, maxQty: 16, chance: 1.0 },
+      { itemId: 'mat_lumite_crystal', minQty: 6, maxQty: 12, chance: 1.0 },
+      { itemId: 'pot_hp_large', minQty: 4, maxQty: 8, chance: 1.0 },
+    ],
+    icon: '💻',
+    description: 'Encrypted master vault containing quantum supercomputing chips and sniper blueprints.',
+  },
+];
+
+// SOLID & VAULTABLE OBSTACLES (Walkable vs Non-Walkable vs Vaultable Planes)
 export const OBSTACLES: Obstacle[] = [
   // Forest Campsite Large Tents (Solid cloth & frame structures)
-  { id: 'tent_main_hq', x: 580, y: 480, width: 140, height: 110, type: 'tent' },
-  { id: 'tent_armory', x: 860, y: 480, width: 130, height: 100, type: 'tent' },
-  { id: 'tent_kitchen', x: 420, y: 720, width: 120, height: 95, type: 'tent' },
-  { id: 'tent_scout', x: 920, y: 740, width: 115, height: 90, type: 'tent' },
+  { id: 'tent_main_hq', x: 580, y: 480, width: 140, height: 110, type: 'tent', obstacleHeight: 120, canVault: false },
+  { id: 'tent_armory', x: 860, y: 480, width: 130, height: 100, type: 'tent', obstacleHeight: 110, canVault: false },
+  { id: 'tent_kitchen', x: 420, y: 720, width: 120, height: 95, type: 'tent', obstacleHeight: 100, canVault: false },
+  { id: 'tent_scout', x: 920, y: 740, width: 115, height: 90, type: 'tent', obstacleHeight: 95, canVault: false },
   
-  // Campsite Campfire Pit (Solid stone ring)
-  { id: 'campfire_pit_obs', x: 680, y: 640, width: 60, height: 60, shape: 'circle', radius: 32, type: 'campfire_base' },
+  // Campsite Campfire Pit (Low stone ring - Vaultable!)
+  { id: 'campfire_pit_obs', x: 680, y: 640, width: 60, height: 60, shape: 'circle', radius: 32, type: 'campfire_base', obstacleHeight: 20, canVault: true },
 
-  // Big Forest Boulders & Rock Formations
-  { id: 'rock_forest_1', x: 260, y: 380, width: 80, height: 70, shape: 'circle', radius: 38, type: 'rock' },
-  { id: 'rock_forest_2', x: 1250, y: 420, width: 100, height: 80, shape: 'circle', radius: 46, type: 'rock' },
-  { id: 'rock_forest_3', x: 1520, y: 920, width: 110, height: 85, shape: 'circle', radius: 50, type: 'rock' },
-  { id: 'rock_forest_4', x: 480, y: 1950, width: 90, height: 75, shape: 'circle', radius: 42, type: 'rock' },
-  { id: 'rock_forest_5', x: 1450, y: 2450, width: 120, height: 95, shape: 'circle', radius: 55, type: 'rock' },
+  // Campsite Perimeter Fences (Vaultable!)
+  { id: 'fence_camp_north_1', x: 320, y: 360, width: 180, height: 18, type: 'fence', obstacleHeight: 30, canVault: true },
+  { id: 'fence_camp_north_2', x: 740, y: 360, width: 180, height: 18, type: 'fence', obstacleHeight: 30, canVault: true },
+  { id: 'fence_camp_west_1', x: 320, y: 380, width: 18, height: 260, type: 'fence', obstacleHeight: 30, canVault: true },
 
-  // Mountain & Canyon Massive Cliffs (Impassable Rock Ridges / Walls)
-  { id: 'cliff_canyon_north_1', x: 2400, y: 250, width: 450, height: 80, type: 'cliff' },
-  { id: 'cliff_canyon_north_2', x: 3100, y: 280, width: 520, height: 85, type: 'cliff' },
-  { id: 'cliff_canyon_mid_divider', x: 2850, y: 720, width: 80, height: 420, type: 'cliff' },
-  { id: 'cliff_canyon_south_ridge', x: 3350, y: 1250, width: 620, height: 90, type: 'cliff' },
+  // Vaultable Mossy Fallen Pine Logs in Deep Forest
+  { id: 'log_forest_1', x: 1020, y: 1780, width: 140, height: 32, type: 'log', obstacleHeight: 24, canVault: true },
+  { id: 'log_forest_2', x: 1380, y: 2320, width: 160, height: 34, type: 'log', obstacleHeight: 24, canVault: true },
+  { id: 'log_forest_3', x: 720, y: 2560, width: 150, height: 32, type: 'log', obstacleHeight: 24, canVault: true },
+  { id: 'log_forest_4', x: 1840, y: 1820, width: 130, height: 32, type: 'log', obstacleHeight: 24, canVault: true },
+
+  // Big Forest Boulders & Rock Formations (High vs Low)
+  { id: 'rock_forest_1', x: 260, y: 380, width: 80, height: 70, shape: 'circle', radius: 38, type: 'rock', obstacleHeight: 50, canVault: true },
+  { id: 'rock_forest_2', x: 1250, y: 420, width: 100, height: 80, shape: 'circle', radius: 46, type: 'rock', obstacleHeight: 60, canVault: true },
+  { id: 'rock_forest_3', x: 1520, y: 920, width: 110, height: 85, shape: 'circle', radius: 50, type: 'rock', obstacleHeight: 65, canVault: true },
+  { id: 'rock_forest_4', x: 480, y: 1950, width: 90, height: 75, shape: 'circle', radius: 42, type: 'rock', obstacleHeight: 55, canVault: true },
+  { id: 'rock_forest_5', x: 1450, y: 2450, width: 120, height: 95, shape: 'circle', radius: 55, type: 'rock', obstacleHeight: 70, canVault: true },
+
+  // Mountain & Canyon Massive Cliffs (Impassable Rock Ridges / Walls unless on plateau)
+  { id: 'cliff_canyon_north_1', x: 2400, y: 460, width: 450, height: 40, type: 'cliff', elevationZ: 0, obstacleHeight: 140, canVault: false },
+  { id: 'cliff_canyon_north_2', x: 3100, y: 460, width: 520, height: 40, type: 'cliff', elevationZ: 0, obstacleHeight: 140, canVault: false },
+  { id: 'cliff_canyon_south_ridge_1', x: 2350, y: 1060, width: 520, height: 40, type: 'cliff', elevationZ: 0, obstacleHeight: 140, canVault: false },
+  { id: 'cliff_canyon_south_ridge_2', x: 3100, y: 1060, width: 620, height: 40, type: 'cliff', elevationZ: 0, obstacleHeight: 140, canVault: false },
 
   // High Mountain Arena Plateau Walls & Summit Ridge
-  { id: 'cliff_summit_wall_left', x: 2900, y: 1800, width: 90, height: 500, type: 'cliff' },
-  { id: 'cliff_summit_wall_right', x: 4350, y: 1750, width: 90, height: 600, type: 'cliff' },
-  { id: 'cliff_summit_wall_back', x: 3100, y: 2920, width: 1150, height: 95, type: 'cliff' },
-  { id: 'boulder_arena_1', x: 3350, y: 2150, width: 90, height: 80, shape: 'circle', radius: 44, type: 'rock' },
-  { id: 'boulder_arena_2', x: 4050, y: 2450, width: 95, height: 85, shape: 'circle', radius: 46, type: 'rock' },
+  { id: 'cliff_summit_wall_left', x: 2840, y: 1800, width: 40, height: 480, type: 'cliff', elevationZ: 0, obstacleHeight: 120, canVault: false },
+  { id: 'cliff_summit_wall_right', x: 4560, y: 1800, width: 40, height: 1100, type: 'cliff', elevationZ: 0, obstacleHeight: 120, canVault: false },
+  { id: 'cliff_summit_wall_back', x: 2850, y: 2980, width: 1720, height: 40, type: 'cliff', elevationZ: 0, obstacleHeight: 120, canVault: false },
+  { id: 'boulder_arena_1', x: 3350, y: 2150, width: 90, height: 80, shape: 'circle', radius: 44, type: 'rock', elevationZ: 120, obstacleHeight: 50, canVault: true },
+  { id: 'boulder_arena_2', x: 4050, y: 2450, width: 95, height: 85, shape: 'circle', radius: 46, type: 'rock', elevationZ: 120, obstacleHeight: 50, canVault: true },
 
-  // Faction Warzone Obstacles (Police Barricades, Sandbags, Concrete Walls)
-  { id: 'cop_barricade_1', x: 2100, y: 3400, width: 40, height: 180, type: 'wall' },
-  { id: 'cop_barricade_2', x: 2100, y: 3800, width: 40, height: 200, type: 'wall' },
-  { id: 'cop_sandbags_1', x: 1900, y: 3250, width: 140, height: 40, type: 'wall' },
-  { id: 'cop_sandbags_2', x: 1900, y: 4050, width: 140, height: 40, type: 'wall' },
-  { id: 'punk_barricade_1', x: 2900, y: 3400, width: 40, height: 180, type: 'wall' },
-  { id: 'punk_barricade_2', x: 2900, y: 3800, width: 40, height: 200, type: 'wall' },
-  { id: 'punk_sandbags_1', x: 3000, y: 3250, width: 140, height: 40, type: 'wall' },
-  { id: 'punk_sandbags_2', x: 3000, y: 4050, width: 140, height: 40, type: 'wall' },
-  { id: 'warzone_middle_bunker', x: 2450, y: 3600, width: 100, height: 80, type: 'wall' },
-  { id: 'warzone_north_pillbox', x: 2450, y: 3250, width: 90, height: 70, type: 'wall' },
-  { id: 'warzone_south_pillbox', x: 2450, y: 4050, width: 90, height: 70, type: 'wall' },
+  // ==========================================
+  // URBAN WARZONE OBSTACLES: CARS, DUMPSTERS, BARRICADES & SKYSCRAPER WALLS
+  // ==========================================
+  // Police Cruiser Squad Cars (Vaultable hoods & roofs!)
+  { id: 'car_police_1', x: 740, y: 3640, width: 100, height: 50, type: 'wall', obstacleHeight: 35, canVault: true },
+  { id: 'car_police_2', x: 1620, y: 3640, width: 100, height: 50, type: 'wall', obstacleHeight: 35, canVault: true },
+
+  // Cyber Gang Muscle Cars (Vaultable!)
+  { id: 'car_punk_1', x: 3550, y: 3670, width: 110, height: 52, type: 'wall', obstacleHeight: 35, canVault: true },
+  { id: 'car_punk_2', x: 4400, y: 3670, width: 110, height: 52, type: 'wall', obstacleHeight: 35, canVault: true },
+
+  // City Heavy Dumpsters (Vaultable!)
+  { id: 'dumpster_1', x: 1520, y: 3580, width: 68, height: 44, type: 'crate', obstacleHeight: 38, canVault: true },
+  { id: 'dumpster_2', x: 3750, y: 3600, width: 68, height: 44, type: 'crate', obstacleHeight: 38, canVault: true },
+
+  // Spiked Tire Barricades (Vaultable!)
+  { id: 'tire_barricade_1', x: 3000, y: 3600, width: 120, height: 30, type: 'fence', obstacleHeight: 28, canVault: true },
+  { id: 'tire_barricade_2', x: 4150, y: 3600, width: 120, height: 30, type: 'fence', obstacleHeight: 28, canVault: true },
+
+  // Faction Barricades, Sandbags, Concrete Walls
+  { id: 'cop_barricade_1', x: 2100, y: 3400, width: 40, height: 180, type: 'wall', obstacleHeight: 36, canVault: true },
+  { id: 'cop_barricade_2', x: 2100, y: 3800, width: 40, height: 200, type: 'wall', obstacleHeight: 36, canVault: true },
+  { id: 'cop_sandbags_1', x: 1900, y: 3250, width: 140, height: 40, type: 'wall', obstacleHeight: 28, canVault: true },
+  { id: 'cop_sandbags_2', x: 1900, y: 4050, width: 140, height: 40, type: 'wall', obstacleHeight: 28, canVault: true },
+  { id: 'punk_barricade_1', x: 2900, y: 3400, width: 40, height: 180, type: 'wall', obstacleHeight: 36, canVault: true },
+  { id: 'punk_barricade_2', x: 2900, y: 3800, width: 40, height: 200, type: 'wall', obstacleHeight: 36, canVault: true },
+  { id: 'punk_sandbags_1', x: 3000, y: 3250, width: 140, height: 40, type: 'wall', obstacleHeight: 28, canVault: true },
+  { id: 'punk_sandbags_2', x: 3000, y: 4050, width: 140, height: 40, type: 'wall', obstacleHeight: 28, canVault: true },
+  { id: 'warzone_middle_bunker', x: 2450, y: 3600, width: 100, height: 80, type: 'wall', obstacleHeight: 90, canVault: false },
+  { id: 'warzone_north_pillbox', x: 2450, y: 3250, width: 90, height: 70, type: 'wall', obstacleHeight: 90, canVault: false },
+  { id: 'warzone_south_pillbox', x: 2450, y: 4050, width: 90, height: 70, type: 'wall', obstacleHeight: 90, canVault: false },
+
 ];
 
-// INTERACTIVE OBJECTS (Explosive Barrels with high kinetic impact)
+// INTERACTIVE OBJECTS (Explosive Barrels, Caches, and HOSTINGOVAYA Smashable Server Racks)
 export const INITIAL_INTERACTIVE_OBJECTS: InteractiveObject[] = [
   // Campsite perimeter defense barrels
   { id: 'barrel_camp_1', type: 'explosive_barrel', x: 1150, y: 620, hp: 30, maxHp: 30, radius: 20 },
@@ -109,6 +591,27 @@ export const INITIAL_INTERACTIVE_OBJECTS: InteractiveObject[] = [
   // Canyon pass ambush barrels
   { id: 'barrel_canyon_1', type: 'explosive_barrel', x: 2250, y: 680, hp: 30, maxHp: 30, radius: 20 },
   { id: 'barrel_canyon_2', type: 'explosive_barrel', x: 2320, y: 650, hp: 30, maxHp: 30, radius: 20 },
+
+  // =========================================================
+  // HOSTINGOVAYA SMASHABLE SERVERS & QUANTUM CORE
+  // =========================================================
+  // HOSTINGOVAYA smashables live on teleport interiors (x ≥ 6800)
+  { id: 'server_f1_1', name: 'Web Server Rack #1', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 0, 'Net closet')?.x ?? 9400) + 50, y: (getInteriorRoom('bldg_hostingovaya', 0, 'Net closet')?.y ?? 350) + 50, elevationZ: 0, rackLevel: 1, buildingId: 'bldg_hostingovaya', floorIndex: 0, hp: 60, maxHp: 60, radius: 24 },
+  { id: 'server_f1_2', name: 'Database Server Rack #2', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 0, 'Net closet')?.x ?? 9400) + 110, y: (getInteriorRoom('bldg_hostingovaya', 0, 'Net closet')?.y ?? 350) + 50, elevationZ: 0, rackLevel: 1, buildingId: 'bldg_hostingovaya', floorIndex: 0, hp: 60, maxHp: 60, radius: 24 },
+  { id: 'server_f1_3', name: 'DNS Router Rack #3', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 0, 'Net closet')?.x ?? 9400) + 50, y: (getInteriorRoom('bldg_hostingovaya', 0, 'Net closet')?.y ?? 350) + 110, elevationZ: 0, rackLevel: 1, buildingId: 'bldg_hostingovaya', floorIndex: 0, hp: 60, maxHp: 60, radius: 24 },
+
+  { id: 'server_f2_1', name: 'Cloud NVMe Storage Rack #4', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle A')?.x ?? 9400) + 50, y: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle A')?.y ?? 1300) + 50, elevationZ: 0, rackLevel: 2, buildingId: 'bldg_hostingovaya', floorIndex: 1, hp: 80, maxHp: 80, radius: 24 },
+  { id: 'server_f2_2', name: '100Gbps Optical Switch Rack #5', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle A')?.x ?? 9400) + 110, y: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle A')?.y ?? 1300) + 50, elevationZ: 0, rackLevel: 2, buildingId: 'bldg_hostingovaya', floorIndex: 1, hp: 80, maxHp: 80, radius: 24 },
+  { id: 'server_f2_3', name: 'Firewall Array Rack #6', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle B')?.x ?? 9400) + 50, y: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle B')?.y ?? 1300) + 50, elevationZ: 0, rackLevel: 2, buildingId: 'bldg_hostingovaya', floorIndex: 1, hp: 80, maxHp: 80, radius: 24 },
+  { id: 'server_f2_4', name: 'Backup SAN Array #7', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle B')?.x ?? 9400) + 110, y: (getInteriorRoom('bldg_hostingovaya', 1, 'Aisle B')?.y ?? 1300) + 50, elevationZ: 0, rackLevel: 2, buildingId: 'bldg_hostingovaya', floorIndex: 1, hp: 80, maxHp: 80, radius: 24 },
+
+  { id: 'server_f3_1', name: 'RTX 5090 AI Node #8', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.x ?? 9400) + 50, y: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.y ?? 2250) + 60, elevationZ: 0, rackLevel: 3, buildingId: 'bldg_hostingovaya', floorIndex: 2, hp: 110, maxHp: 110, radius: 24 },
+  { id: 'server_f3_2', name: 'Deep Learning Cluster #9', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.x ?? 9400) + 110, y: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.y ?? 2250) + 60, elevationZ: 0, rackLevel: 3, buildingId: 'bldg_hostingovaya', floorIndex: 2, hp: 110, maxHp: 110, radius: 24 },
+  { id: 'server_f3_3', name: 'Crypto Farm Rack #10', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.x ?? 9400) + 170, y: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.y ?? 2250) + 60, elevationZ: 0, rackLevel: 3, buildingId: 'bldg_hostingovaya', floorIndex: 2, hp: 110, maxHp: 110, radius: 24 },
+  { id: 'server_f3_4', name: 'H100 Tensor Cluster #11', type: 'server_rack', x: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.x ?? 9400) + 110, y: (getInteriorRoom('bldg_hostingovaya', 2, 'Cluster')?.y ?? 2250) + 160, elevationZ: 0, rackLevel: 3, buildingId: 'bldg_hostingovaya', floorIndex: 2, hp: 110, maxHp: 110, radius: 24 },
+
+  { id: 'quantum_core_main', name: '👑 QUANTUM MAINFRAME SUPERCOMPUTER', type: 'quantum_core', x: (getInteriorRoom('bldg_hostingovaya', 3, 'Core')?.x ?? 9400) + 150, y: (getInteriorRoom('bldg_hostingovaya', 3, 'Core')?.y ?? 3200) + 140, elevationZ: 0, rackLevel: 4, buildingId: 'bldg_hostingovaya', floorIndex: 3, hp: 280, maxHp: 280, radius: 38 },
+
   { id: 'barrel_canyon_3', type: 'explosive_barrel', x: 2750, y: 920, hp: 30, maxHp: 30, radius: 20 },
   { id: 'barrel_canyon_4', type: 'explosive_barrel', x: 3450, y: 850, hp: 30, maxHp: 30, radius: 20 },
   { id: 'barrel_canyon_5', type: 'explosive_barrel', x: 3520, y: 890, hp: 30, maxHp: 30, radius: 20 },
@@ -244,14 +747,91 @@ export const ITEMS_DATABASE: Record<string, Item> = {
   },
   'wpn_neon_katana': {
     id: 'wpn_neon_katana',
-    name: 'Machete / Trench Blade',
+    name: 'Muramasa Katana',
     type: 'weapon',
     gunType: 'katana',
     rarity: 'rare',
     icon: '🗡️',
-    description: 'Tempered steel survival blade for high-speed melee sweeps.',
-    stats: { atk: 32, speed: 8, crit: 15 },
+    description: 'Folded-steel katana. Fast slashes, tight arcs, and bleeding follow-through.',
+    stats: { atk: 36, speed: 9, crit: 18 },
     price: 320,
+  },
+  'wpn_throwing_knives': {
+    id: 'wpn_throwing_knives',
+    name: 'Kunai Fan',
+    type: 'weapon',
+    gunType: 'throwing_knives',
+    rarity: 'rare',
+    icon: '🔪',
+    description: 'A belt of throwing knives. Snap them at range — they fly fast and stick deep.',
+    stats: { atk: 28, speed: 11, crit: 22 },
+    price: 280,
+  },
+  'wpn_reaper_scythe': {
+    id: 'wpn_reaper_scythe',
+    name: 'Reaper Scythe',
+    type: 'weapon',
+    gunType: 'scythe',
+    rarity: 'epic',
+    icon: '🪓',
+    description: 'A huge hooked axe-scythe. Slow crescent sweeps that yank a whole crowd.',
+    stats: { atk: 52, speed: 4, crit: 14 },
+    price: 720,
+  },
+  'wpn_greatsword': {
+    id: 'wpn_greatsword',
+    name: 'Zweihander',
+    type: 'weapon',
+    gunType: 'greatsword',
+    rarity: 'legendary',
+    icon: '⚔️',
+    description: 'Absurdly long two-handed greatsword. Heavy overhead slams with a crushing reach.',
+    stats: { atk: 78, speed: 2, crit: 20 },
+    price: 1100,
+  },
+  'wpn_arcane_staff': {
+    id: 'wpn_arcane_staff',
+    name: 'Inferno Staff',
+    type: 'weapon',
+    gunType: 'staff',
+    rarity: 'rare',
+    icon: '🔥',
+    description: 'Channels compact fireballs that detonate on impact.',
+    stats: { atk: 34, speed: 6, crit: 12 },
+    price: 400,
+  },
+  'wpn_chaos_wand': {
+    id: 'wpn_chaos_wand',
+    name: 'Spark Wand',
+    type: 'weapon',
+    gunType: 'wand',
+    rarity: 'rare',
+    icon: '✨',
+    description: 'Automatic particle sprayer. Holds the beam and vomits glittering shards.',
+    stats: { atk: 18, speed: 12, crit: 10 },
+    price: 360,
+  },
+  'wpn_grimoire': {
+    id: 'wpn_grimoire',
+    name: 'Meteor Grimoire',
+    type: 'weapon',
+    gunType: 'grimoire',
+    rarity: 'epic',
+    icon: '☄️',
+    description: 'Drops a flaming meteor on the cursor. Slow, loud, and very unfair.',
+    stats: { atk: 64, speed: 3, crit: 16 },
+    price: 880,
+  },
+  'wpn_summon_totem': {
+    id: 'wpn_summon_totem',
+    name: 'Hex Totem',
+    type: 'weapon',
+    gunType: 'totem',
+    rarity: 'epic',
+    icon: '💀',
+    description: 'Cracks chain lightning between the nearest souls in front of you.',
+    stats: { atk: 40, speed: 5, crit: 14 },
+    price: 640,
   },
 
   // Headwear & Survival Gear
@@ -315,7 +895,7 @@ export const ITEMS_DATABASE: Record<string, Item> = {
     type: 'vehicle',
     rarity: 'common',
     icon: '🛹',
-    description: 'Cruiser board with rugged all-terrain wheels.',
+    description: 'Kickflip on [V] to hop on. Jump = kickflip, dash = ollie, air dash = tre flip. Style points pay gold.',
     vehicleSpeed: 25,
     vehicleType: 'skateboard',
     price: 100,
@@ -333,6 +913,17 @@ export const ITEMS_DATABASE: Record<string, Item> = {
   },
 
   // Consumables
+  'item_soul_ember': {
+    id: 'item_soul_ember',
+    name: 'Soul Ember',
+    type: 'material',
+    rarity: 'uncommon',
+    icon: '◆',
+    description: 'A condensed soul spark. Magnetizes to the survivor and grants EXP.',
+    price: 0,
+    stackable: true,
+  },
+
   'item_hp_potion_s': {
     id: 'item_hp_potion_s',
     name: 'Military Field Medkit',
@@ -609,6 +1200,35 @@ export const NPCS_DATABASE: Record<string, NPC> = {
       ],
     },
     shopItemIds: ['item_ramen_bowl', 'item_hp_potion_s', 'item_hp_potion_l', 'veh_skateboard', 'veh_hoverboard'],
+  },
+
+  'npc_nyx_crucible': {
+    id: 'npc_nyx_crucible',
+    name: 'Nyx',
+    title: 'Nullspace Gatekeeper',
+    avatarChibi: {
+      hairStyle: 'hime_cut',
+      hairColor: '#6D28D9',
+      earType: 'none',
+      earColor: '#1E1B4B',
+      haloType: 'circle',
+      haloColor: '#C4B5FD',
+      coatColor: '#1E1B4B',
+      skirtColor: '#4C1D95',
+      eyeType: 'determined',
+      ribbonColor: '#A855F7',
+    },
+    role: 'guide',
+    x: 980,
+    y: 620,
+    dialogue: {
+      greeting: "За костром дыра в стойку. Не волны — бесконечное мясо. Каждые 20 секунд в грид вползает новый тип. Каждую минуту — босс. Лазеры чертят пол, с неба сыпется кластер, иногда кто-то выключает тебе глаза. Выйдешь по [T] с добычей. Сдохнешь — обратно к костру. Готов?",
+      options: [
+        { text: 'Войти в Nullspace', action: 'enter_horde' },
+        { text: 'Как это работает?', action: 'talk', dialogueText: 'Это карман серверной: провалы, утечки, стойки. Мобы идут нон-стопом, каждые 20 сек новый вид, каждую минуту босс. Жёлтые души магнитятся. Луч рисуется заранее — отойди. Метки с неба — выйди из круга. Если мир погас — убей кастера или пережди пару секунд. [T] эвакуация после ~24 сек. Опыт с гемов остаётся даже если сдохнешь.' },
+        { text: 'Позже', action: 'close' },
+      ],
+    },
   },
 };
 
@@ -2562,7 +3182,7 @@ export const CLASS_DEFAULTS = {
   },
   swordmaster: {
     name: 'Survival Blade Fighter',
-    desc: 'Melee fighter executing crescent slashes, flash step teleport strikes, and blade storm.',
+    desc: 'Melee fighter with throwing knives, katana, scythe, and a colossal zweihander.',
     baseHp: 400,
     baseMp: 80,
     baseAtk: 30,
@@ -2571,107 +3191,117 @@ export const CLASS_DEFAULTS = {
     starterWeapon: 'wpn_neon_katana',
     starterSkills: [
       {
-        id: 'skill_crescent_slash',
-        name: 'Whirlwind Blade Sweep',
-        icon: '🗡️',
-        description: 'Performs a sweeping 360-degree whirlwind slash knocking enemies back.',
+        id: 'skill_spinning_blade',
+        name: 'Sawblade Throw',
+        icon: '🌀',
+        description: 'Hurls a huge spinning blade that rips through everything in a straight line.',
         costMp: 0,
-        cooldown: 2.0,
+        cooldown: 2.4,
+        lastUsed: 0,
+        unlockLevel: 1,
+        level: 1,
+        maxLevel: 5,
+        type: 'damage' as const,
+        damageMult: 2.8,
+        range: 900,
+      },
+      {
+        id: 'skill_slash_scatter',
+        name: 'Slash Scatter',
+        icon: '💥',
+        description: 'Fan of crescent slash waves that shred a wide cone in front of you.',
+        costMp: 0,
+        cooldown: 3.6,
+        lastUsed: 0,
+        unlockLevel: 2,
+        level: 1,
+        maxLevel: 5,
+        type: 'aoe' as const,
+        damageMult: 2.4,
+        range: 520,
+      },
+      {
+        id: 'skill_blade_storm',
+        name: 'Blade Storm',
+        icon: '⚔️',
+        description: 'Rain of falling swords that impale everything around the cursor.',
+        costMp: 0,
+        cooldown: 7.5,
+        lastUsed: 0,
+        unlockLevel: 3,
+        level: 1,
+        maxLevel: 5,
+        type: 'ultimate' as const,
+        damageMult: 5.2,
+        range: 420,
+      },
+    ],
+  },
+  cybermage: {
+    name: 'Hellfire Mage',
+    desc: 'Caster of fireballs, meteors, particle storms, demon hounds, and a titan golem.',
+    baseHp: 290,
+    baseMp: 140,
+    baseAtk: 26,
+    baseDef: 12,
+    baseSpd: 4.6,
+    starterWeapon: 'wpn_arcane_staff',
+    starterSkills: [
+      {
+        id: 'skill_meteor_rain',
+        name: 'Meteor Rain',
+        icon: '☄️',
+        description: 'Calls a volley of meteors onto the cursor. Each one explodes into fire.',
+        costMp: 0,
+        cooldown: 3.0,
         lastUsed: 0,
         unlockLevel: 1,
         level: 1,
         maxLevel: 5,
         type: 'aoe' as const,
         damageMult: 2.6,
-        range: 200,
+        range: 900,
       },
       {
-        id: 'skill_flash_step',
-        name: 'Flash Step Dash Strike',
-        icon: '💨',
-        description: 'Dashes forward with invulnerability frames, slashing all targets in your path.',
-        costMp: 0,
-        cooldown: 3.5,
-        lastUsed: 0,
-        unlockLevel: 2,
-        level: 1,
-        maxLevel: 5,
-        type: 'dash' as const,
-        damageMult: 3.0,
-        range: 300,
-      },
-      {
-        id: 'skill_blade_storm',
-        name: 'Blade Storm & Falling Swords',
-        icon: '⚔️',
-        description: 'Calls down radiant blades from above, impaling all nearby enemies.',
-        costMp: 0,
-        cooldown: 7.0,
-        lastUsed: 0,
-        unlockLevel: 3,
-        level: 1,
-        maxLevel: 5,
-        type: 'ultimate' as const,
-        damageMult: 5.0,
-        range: 400,
-      },
-    ],
-  },
-  cybermage: {
-    name: 'Field Tactician',
-    desc: 'Support caster with explosive energy orbs, gravity vortex, and orbital laser barrage.',
-    baseHp: 290,
-    baseMp: 140,
-    baseAtk: 26,
-    baseDef: 12,
-    baseSpd: 4.6,
-    starterWeapon: 'wpn_starter_pistol',
-    starterSkills: [
-      {
-        id: 'skill_arcane_burst',
-        name: 'Explosive Energy Orb',
-        icon: '🔮',
-        description: 'Launches a pulsing energy sphere that detonates on impact.',
-        costMp: 0,
-        cooldown: 2.0,
-        lastUsed: 0,
-        unlockLevel: 1,
-        level: 1,
-        maxLevel: 5,
-        type: 'damage' as const,
-        damageMult: 2.4,
-        range: 1200,
-      },
-      {
-        id: 'skill_gravity_well',
-        name: 'Gravity Vortex Pull',
-        icon: '🌀',
-        description: 'Creates a gravitational anomaly that pulls enemies together.',
-        costMp: 0,
-        cooldown: 4.5,
-        lastUsed: 0,
-        unlockLevel: 2,
-        level: 1,
-        maxLevel: 5,
-        type: 'aoe' as const,
-        damageMult: 2.2,
-        range: 600,
-      },
-      {
-        id: 'skill_orbital_strike',
-        name: 'Tactical Artillery Bombardment',
-        icon: '☄️',
-        description: 'Orders high-explosive artillery strikes at your cursor location.',
+        id: 'skill_hellhounds',
+        name: 'Hellhound Pack',
+        icon: '🐺',
+        description: 'Summons a pack of demon dogs that hunt and maul nearby enemies.',
         costMp: 0,
         cooldown: 8.0,
         lastUsed: 0,
+        unlockLevel: 2,
+        level: 1,
+        maxLevel: 5,
+        type: 'buff' as const,
+        damageMult: 1.8,
+        range: 700,
+      },
+      {
+        id: 'skill_titan_golem',
+        name: 'Titan Golem',
+        icon: '🗿',
+        description: 'Rips a colossal stone golem out of the ground. It slams whole crowds.',
+        costMp: 0,
+        cooldown: 16.0,
+        lastUsed: 0,
         unlockLevel: 3,
         level: 1,
         maxLevel: 5,
         type: 'ultimate' as const,
-        damageMult: 5.5,
-        range: 800,
+        damageMult: 6.0,
+        range: 280,
       },
     ],
   },
 };
+
+export const CLASS_HOTBAR: Record<CharacterClass, GunType[]> = {
+  gunslinger: ['pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac'],
+  swordmaster: ['throwing_knives', 'katana', 'scythe', 'greatsword'],
+  cybermage: ['staff', 'wand', 'grimoire', 'totem'],
+};
+
+export const AUTO_FIRE_GUNS: GunType[] = ['mac10', 'ak47', 'wand'];
+
+export const AMMO_GUNS: GunType[] = ['pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac', 'throwing_knives'];

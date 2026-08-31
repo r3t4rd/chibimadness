@@ -4,6 +4,7 @@ import { Sword, Zap, Footprints, Crosshair, Wrench } from 'lucide-react';
 interface MobileControlsProps {
   onJoystickMove: (vector: { x: number; y: number }) => void;
   onAttack: () => void;
+  onAttackHoldEnd?: () => void;
   onJump?: () => void;
   onToggleSprint?: () => void;
   isSprinting?: boolean;
@@ -20,6 +21,7 @@ interface MobileControlsProps {
 export const MobileControls: React.FC<MobileControlsProps> = ({
   onJoystickMove,
   onAttack,
+  onAttackHoldEnd,
   onJump,
   onToggleSprint,
   isSprinting = false,
@@ -176,6 +178,12 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
           {/* Main Attack Button */}
           <button
             type="button"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              onAttack();
+            }}
+            onPointerUp={() => onAttackHoldEnd?.()}
+            onPointerCancel={() => onAttackHoldEnd?.()}
             onClick={onAttack}
             className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-rose-500 via-pink-500 to-red-600 border-2 border-white text-white font-bold text-sm shadow-xl flex items-center justify-center active:scale-90 transition-transform cursor-pointer"
           >

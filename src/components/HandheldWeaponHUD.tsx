@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Player, GunType } from '../types/game';
 import { WEAPON_CONFIGS } from '../game/useGameEngine';
 
@@ -35,6 +35,25 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
   // Recoil kick on shoot
   const isShooting = attackTimer > 0;
   const [shotEffect, setShotEffect] = useState(false);
+  const prevAttackTimer = useRef(attackTimer);
+
+  type FlyingCasing = {
+    id: number;
+    x: number;
+    y: number;
+    rot: number;
+    vx: number;
+    vy: number;
+    vr: number;
+    life: number;
+    color: string;
+    rim: string;
+  };
+  const [casings, setCasings] = useState<FlyingCasing[]>([]);
+  const casingId = useRef(0);
+
+  const FIREARM_GUNS: GunType[] = ['pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac'];
+  const isFirearm = FIREARM_GUNS.includes(activeGunType);
 
   useEffect(() => {
     if (isShooting) {
@@ -43,6 +62,54 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
       return () => clearTimeout(t);
     }
   }, [isShooting, attackTimer]);
+
+  useEffect(() => {
+    const justFired = attackTimer > prevAttackTimer.current && isFirearm && !isReloading;
+    prevAttackTimer.current = attackTimer;
+    if (!justFired) return;
+
+    const shotgun = activeGunType === 'shotgun';
+    const count = shotgun ? 2 : 1;
+    const spawned: FlyingCasing[] = [];
+    for (let i = 0; i < count; i++) {
+      casingId.current += 1;
+      spawned.push({
+        id: casingId.current,
+        x: 78,
+        y: 38,
+        rot: (Math.random() - 0.5) * 40,
+        vx: 1.6 + Math.random() * 2.4,
+        vy: -4.2 - Math.random() * 3.2,
+        vr: 8 + Math.random() * 14,
+        life: 0,
+        color: shotgun ? '#EF4444' : '#D97706',
+        rim: shotgun ? '#FDE047' : '#FBBF24',
+      });
+    }
+    setCasings((prev) => [...prev.slice(-18), ...spawned]);
+  }, [attackTimer, isFirearm, isReloading, activeGunType]);
+
+  useEffect(() => {
+    if (casings.length === 0) return;
+    let raf = 0;
+    const tick = () => {
+      setCasings((prev) =>
+        prev
+          .map((c) => ({
+            ...c,
+            x: c.x + c.vx,
+            y: c.y + c.vy,
+            vy: c.vy + 0.42,
+            rot: c.rot + c.vr,
+            life: c.life + 1,
+          }))
+          .filter((c) => c.life < 42 && c.y < 160)
+      );
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [casings.length > 0]);
 
   // Attachments check
   const hasOptic = !!weaponAttachments?.optic;
@@ -153,13 +220,14 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
         return (
           <g>
             <path
-              d="M 10 0 C 2 28 -12 56 -24 76 L -12 80 C 4 60 18 28 26 0 Z"
-              fill={isDrumMag ? '#1E293B' : isFresh ? '#9A3412' : '#78350F'}
-              stroke="#1E1B18"
+              d="M 2 0 L 22 0 L 18 48 C 10 68 -4 86 -16 96 L -28 90 C -12 78 4 58 8 48 Z"
+              fill={isDrumMag ? '#1E293B' : isFresh ? '#1E293B' : '#18181B'}
+              stroke="#0F172A"
               strokeWidth="2.5"
             />
+            <rect x="-8" y="88" width="22" height="6" rx="1" fill={isFresh ? '#22C55E' : '#F59E0B'} transform="rotate(-28 -8 88)" />
             {isDrumMag && (
-              <circle cx="0" cy="38" r="20" fill="#18181B" stroke="#0F172A" strokeWidth="2.5" />
+              <circle cx="6" cy="42" r="18" fill="#18181B" stroke="#0F172A" strokeWidth="2.5" />
             )}
           </g>
         );
@@ -178,7 +246,7 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
     const basePositions: Record<string, { x: number; y: number }> = {
       pistol: { x: 62, y: 95 },
       mac10: { x: 60, y: 90 },
-      ak47: { x: 32, y: 85 },
+      ak47: { x: 48, y: 88 },
       cheytac: { x: 68, y: 90 },
     };
 
@@ -211,116 +279,22 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
 
   return (
     <div className="fixed bottom-3 right-3 z-40 select-none pointer-events-none flex flex-col items-end">
-      {/* CLEAN WEAPON PREVIEW CARD & AMMO DISPLAY (No hands, just clean weapon image & ammo counter) */}
-      <div className="pointer-events-auto flex items-center gap-3 bg-black/85 border-2 border-slate-700/80 hover:border-amber-500/70 backdrop-blur-md p-3 rounded-2xl shadow-[0_10px_35px_rgba(0,0,0,0.85)] transition-all">
-        {/* ========================================================================= */}
-        {/* 1. LEFT SIDE: AMMO COUNTER & RELOAD ACTIONS                              */}
-        {/* ========================================================================= */}
-        <div className="flex flex-col items-start gap-1 min-w-[130px] border-r border-white/10 pr-3">
-          {/* Weapon Name & Gunsmith button */}
-          <div className="flex items-center justify-between w-full gap-2">
-            <span className="text-xs font-black font-mono tracking-wider uppercase text-white truncate max-w-[95px] block">
-              {equipment.weapon?.name || 'Standard 9mm'}
-            </span>
-            <button
-              type="button"
-              onClick={onOpenGunsmith}
-              className="px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 border border-amber-500/50 text-[9px] font-mono font-bold text-amber-300 transition-colors cursor-pointer"
-              title="Customize Weapon [C]"
-            >
-              [C] MODS
-            </button>
-          </div>
-
-          {/* Big Ammo Number */}
-          <div className="flex items-baseline gap-1.5 font-mono my-0.5">
-            <span
-              className={`text-3xl md:text-4xl font-black tracking-tighter ${
-                isEmptyAmmo
-                  ? 'text-red-500 animate-pulse'
-                  : isLowAmmo
-                  ? 'text-amber-400 animate-pulse'
-                  : isReloading
-                  ? 'text-yellow-300'
-                  : 'text-white drop-shadow-md'
-              }`}
-            >
-              {isReloading ? '--' : ammo}
-            </span>
-            <span className="text-xs font-bold text-zinc-400">/ {maxAmmo}</span>
-          </div>
-
-          {/* Reload Status or Action Button */}
-          <div className="w-full mt-0.5">
-            {isReloading ? (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/60">
-                <div className="w-2.5 h-2.5 rounded-full border-2 border-amber-400 border-t-transparent animate-spin" />
-                <span className="text-[9px] font-mono font-black text-amber-300 tracking-wider animate-pulse truncate">
-                  {reloadStatusText || 'RELOADING...'}
-                </span>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={onReload}
-                className={`w-full py-1 px-2 text-[10px] font-mono font-black rounded transition-all cursor-pointer shadow-sm text-center ${
-                  isEmptyAmmo
-                    ? 'bg-red-600 hover:bg-red-500 text-white animate-bounce'
-                    : isLowAmmo
-                    ? 'bg-amber-600 hover:bg-amber-500 text-white'
-                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-600'
-                }`}
-                title="Reload Weapon [R]"
-              >
-                [R] RELOAD
-              </button>
-            )}
-          </div>
-
-          {/* Compact Cartridge Pips */}
-          <div className="mt-1 flex flex-wrap items-center gap-1 max-w-[125px]">
-            {Array.from({ length: Math.min(24, maxAmmo) }).map((_, i) => {
-              const isFilled = i < ammo && !isReloading;
-              return (
-                <div
-                  key={i}
-                  className={`h-2.5 w-1 rounded-xs transition-all duration-100 ${
-                    isFilled
-                      ? activeGunType === 'shotgun'
-                        ? 'bg-rose-500 shadow-[0_0_3px_rgba(244,63,94,0.8)]'
-                        : activeGunType === 'cheytac'
-                        ? 'bg-sky-400 shadow-[0_0_3px_rgba(56,189,248,0.9)]'
-                        : 'bg-amber-400 shadow-[0_0_3px_rgba(251,191,36,0.8)]'
-                      : 'bg-zinc-800 border border-zinc-700 opacity-30'
-                  }`}
-                  title={`Round ${i + 1}`}
-                />
-              );
-            })}
-            {maxAmmo > 24 && (
-              <span className="text-[8px] font-mono text-zinc-500 font-bold">
-                +{maxAmmo - 24}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* ========================================================================= */}
-        {/* 2. RIGHT SIDE: PURE WEAPON PREVIEW PICTURE (NO HANDS)                    */}
-        {/* ========================================================================= */}
+      <div className="pointer-events-auto flex flex-col items-center drop-shadow-[0_6px_10px_rgba(0,0,0,0.85)]">
         <div className="relative w-44 h-24 md:w-52 md:h-28 flex items-center justify-center overflow-visible">
-          {/* Recoil Flash Burst */}
-          {(isShooting || shotEffect) && (
-            <div className="absolute top-4 left-2 z-20 pointer-events-none animate-ping">
-              <svg width="40" height="40" viewBox="0 0 100 100">
-                <polygon
-                  points="50,0 62,35 98,35 68,58 80,95 50,72 20,95 32,58 2,35 38,35"
-                  fill="#FEF08A"
-                  stroke="#EA580C"
-                  strokeWidth="3"
-                />
-              </svg>
-            </div>
+          {casings.length > 0 && (
+            <svg
+              className="absolute inset-0 z-30 pointer-events-none overflow-visible"
+              viewBox="0 0 208 112"
+              width="100%"
+              height="100%"
+            >
+              {casings.map((c) => (
+                <g key={c.id} transform={`translate(${c.x}, ${c.y}) rotate(${c.rot})`} opacity={Math.max(0, 1 - c.life / 42)}>
+                  <rect x="-3" y="-7" width="6" height="14" rx="1.2" fill={c.color} stroke="#78350F" strokeWidth="0.8" />
+                  <rect x="-3" y="-7" width="6" height="3.5" rx="1" fill={c.rim} />
+                </g>
+              ))}
+            </svg>
           )}
 
           {/* Pure Weapon SVG Vector Preview Container */}
@@ -572,6 +546,80 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
               )}
             </svg>
           </div>
+        </div>
+
+        <div className="flex items-center gap-2 -mt-1">
+          <span className="text-[11px] font-black font-mono tracking-wider uppercase text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] truncate max-w-[140px]">
+            {equipment.weapon?.name || 'Standard 9mm'}
+          </span>
+          <button
+            type="button"
+            onClick={onOpenGunsmith}
+            className="text-[9px] font-mono font-bold text-amber-300/90 hover:text-amber-200 cursor-pointer"
+            title="Customize Weapon [C]"
+          >
+            [C]
+          </button>
+        </div>
+
+        <div className="flex items-baseline gap-1 font-mono leading-none mt-0.5">
+          <span
+            className={`text-3xl font-black tracking-tighter drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] ${
+              isEmptyAmmo
+                ? 'text-red-500 animate-pulse'
+                : isLowAmmo
+                ? 'text-amber-400 animate-pulse'
+                : isReloading
+                ? 'text-yellow-300'
+                : 'text-white'
+            }`}
+          >
+            {isReloading ? '--' : ammo}
+          </span>
+          <span className="text-xs font-bold text-zinc-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">/ {maxAmmo}</span>
+        </div>
+
+        <div className="mt-1 flex flex-wrap items-center justify-center gap-0.5 max-w-[160px]">
+          {Array.from({ length: Math.min(24, maxAmmo) }).map((_, i) => {
+            const isFilled = i < ammo && !isReloading;
+            return (
+              <div
+                key={i}
+                className={`h-3 w-[5px] rounded-sm transition-all duration-100 ${
+                  isFilled
+                    ? activeGunType === 'shotgun'
+                      ? 'bg-rose-500'
+                      : activeGunType === 'cheytac'
+                      ? 'bg-sky-400'
+                      : 'bg-amber-400'
+                    : 'bg-zinc-700/70'
+                }`}
+                title={`Round ${i + 1}`}
+              />
+            );
+          })}
+          {maxAmmo > 24 && (
+            <span className="text-[8px] font-mono text-zinc-400 font-bold">+{maxAmmo - 24}</span>
+          )}
+        </div>
+
+        <div className="mt-1">
+          {isReloading ? (
+            <span className="text-[9px] font-mono font-black text-amber-300 tracking-wider animate-pulse drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+              {reloadStatusText || 'RELOADING...'}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={onReload}
+              className={`text-[9px] font-mono font-black cursor-pointer ${
+                isEmptyAmmo ? 'text-red-400 animate-bounce' : isLowAmmo ? 'text-amber-300' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="Reload Weapon [R]"
+            >
+              [R] RELOAD
+            </button>
+          )}
         </div>
       </div>
     </div>

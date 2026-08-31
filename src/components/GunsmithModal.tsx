@@ -9,7 +9,7 @@ interface GunsmithModalProps {
   onEquipAttachment: (slot: AttachmentSlot, attachment: WeaponAttachment | null) => void;
 }
 
-export const ATTACHMENTS_CATALOG: Record<AttachmentSlot, WeaponAttachment[]> = {
+const ATTACHMENTS_CATALOG: Record<AttachmentSlot, WeaponAttachment[]> = {
   optic: [
     {
       id: 'optic_holo',
