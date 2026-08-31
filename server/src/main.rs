@@ -38,6 +38,13 @@ const HORDE_MAX_X: f64 = -800.0;
 const HORDE_MAX_Y: f64 = 6_800.0;
 const HORDE_CENTER_X: f64 = -6_000.0;
 const HORDE_CENTER_Y: f64 = 2_200.0;
+const HORDE_BOSS_ARENAS: [(f64, f64); 4] = [
+    (-6_000.0, 900.0),
+    (-9_200.0, 2_200.0),
+    (-2_800.0, 2_200.0),
+    (-6_000.0, 4_200.0),
+];
+const HORDE_BOSS_INTERVAL: f64 = 60.0;
 // Nullspace is one shared server run, not a private instance. Keep a short
 // admission window for players who enter together, then close it so a late
 // click cannot drop someone into an elapsed run with extract/boss already up.
@@ -92,6 +99,8 @@ struct HordeRun {
     next_boss_at: f64,
     unlocked_count: usize,
     boss_index: usize,
+    boss_id: Option<String>,
+    boss_warp: u64,
     sequence: u64,
 }
 
@@ -629,9 +638,11 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
                 elapsed: 0.0,
                 spawn_accumulator: 0.0,
                 next_unlock_at: 20.0,
-                next_boss_at: 60.0,
+                next_boss_at: HORDE_BOSS_INTERVAL,
                 unlocked_count: 1,
                 boss_index: 0,
+                boss_id: None,
+                boss_warp: 0,
                 sequence: 1,
             });
             println!("Nullspace: {player_id} started a shared run");
@@ -903,6 +914,74 @@ fn tick_horde_director(state: &mut WorldState) {
         return;
     }
 
+    let step = WORLD_TICK.as_secs_f64();
+    state
+        .horde
+        .as_mut()
+        .expect("participants checked above")
+        .elapsed += step;
+
+    // A boss is a server-owned phase transition, not just another mob. The
+    // client receives bossWarp in snapshots and applies the authoritative
+    // transform even though both locations are inside Nullspace.
+    if let Some(boss_id) = state
+        .horde
+        .as_ref()
+        .and_then(|horde| horde.boss_id.clone())
+    {
+        let boss_is_alive = state
+            .combat_world
+            .as_ref()
+            .and_then(|world| world.monsters.get(&boss_id))
+            .is_some_and(|boss| number(boss, "hp", 0.0) > 0.0);
+        if boss_is_alive {
+            return;
+        }
+
+        let horde = state.horde.as_mut().expect("run exists");
+        horde.boss_id = None;
+        horde.boss_warp = horde.boss_warp.wrapping_add(1);
+        move_horde_participants(state, &participant_ids, HORDE_CENTER_X, HORDE_CENTER_Y);
+        // Recompute normal-wave targets on the next tick after all players
+        // have reached the plaza; never spawn one stray wave in the old rift.
+        return;
+    }
+
+    let boss_start = {
+        let horde = state.horde.as_mut().expect("run exists");
+        if horde.elapsed >= horde.next_boss_at {
+            let boss_kind = horde_boss_kind(horde.boss_index);
+            let arena = HORDE_BOSS_ARENAS[horde.boss_index % HORDE_BOSS_ARENAS.len()];
+            horde.next_boss_at += HORDE_BOSS_INTERVAL;
+            horde.boss_index += 1;
+            Some((boss_kind, arena))
+        } else {
+            None
+        }
+    };
+    if let Some((boss_kind, (arena_x, arena_y))) = boss_start {
+        move_horde_participants(state, &participant_ids, arena_x, arena_y);
+        let boss_targets = participant_ids
+            .iter()
+            .map(|id| (id.clone(), arena_x, arena_y))
+            .collect::<Vec<_>>();
+        let (horde, world) = (
+            state.horde.as_mut().expect("run exists"),
+            state.combat_world.as_mut().expect("world exists"),
+        );
+        world.monsters.retain(|_, monster| !is_horde_monster(monster));
+        world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
+        let mut boss = spawn_horde_monster(horde, &boss_targets, boss_kind);
+        set_number(&mut boss, "x", arena_x + 170.0);
+        set_number(&mut boss, "y", arena_y);
+        let boss_id = boss["id"].as_str().expect("server id").to_owned();
+        world.monsters.insert(boss_id.clone(), boss);
+        horde.boss_id = Some(boss_id);
+        horde.boss_warp = horde.boss_warp.wrapping_add(1);
+        println!("Nullspace boss phase started: {boss_kind}");
+        return;
+    }
+
     let (horde, world) = (
         state.horde.as_mut().expect("participants checked above"),
         state
@@ -910,8 +989,6 @@ fn tick_horde_director(state: &mut WorldState) {
             .as_mut()
             .expect("world checked before tick"),
     );
-    let step = WORLD_TICK.as_secs_f64();
-    horde.elapsed += step;
     world
         .monsters
         .retain(|_, monster| !is_horde_monster(monster) || number(monster, "hp", 0.0) > 0.0);
@@ -945,13 +1022,18 @@ fn tick_horde_director(state: &mut WorldState) {
             monster,
         );
     }
-    if horde.elapsed >= horde.next_boss_at {
-        horde.next_boss_at += 60.0;
-        let boss = spawn_horde_monster(horde, &targets, horde_boss_kind(horde.boss_index));
-        horde.boss_index += 1;
-        world
-            .monsters
-            .insert(boss["id"].as_str().expect("server id").to_owned(), boss);
+}
+
+fn move_horde_participants(state: &mut WorldState, participant_ids: &[String], x: f64, y: f64) {
+    for player_id in participant_ids {
+        if let Some(player) = state.players.get_mut(player_id) {
+            set_number(&mut player.value, "x", x);
+            set_number(&mut player.value, "y", y);
+            set_number(&mut player.value, "vx", 0.0);
+            set_number(&mut player.value, "vy", 0.0);
+            player.value["currentZone"] = json!("horde_crucible");
+            player.immune_until = Some(Instant::now() + HORDE_ENTRY_GRACE);
+        }
     }
 }
 
@@ -1491,6 +1573,7 @@ fn horde_snapshot(state: &WorldState) -> Value {
         "nextUnlockIn": (horde.next_unlock_at - horde.elapsed).max(0.0),
         "nextBossIn": (horde.next_boss_at - horde.elapsed).max(0.0),
         "bossIndex": horde.boss_index,
+        "bossWarp": horde.boss_warp,
         "participants": horde.participants.keys().collect::<Vec<_>>(),
         "hazards": [],
     })
@@ -2025,6 +2108,24 @@ mod tests {
         tick_horde_director(&mut state);
         let world = state.combat_world.as_ref().expect("world");
         assert!(world.monsters.values().any(is_horde_monster));
+
+        state.horde.as_mut().expect("horde run").elapsed = HORDE_BOSS_INTERVAL;
+        tick_horde_director(&mut state);
+        let horde = state.horde.as_ref().expect("horde run");
+        let boss_id = horde.boss_id.as_ref().expect("active boss").clone();
+        assert_eq!(horde.boss_warp, 1);
+        let boss = state
+            .combat_world
+            .as_ref()
+            .expect("world")
+            .monsters
+            .get(&boss_id)
+            .expect("boss in world");
+        assert_eq!(number(boss, "x", 0.0), HORDE_BOSS_ARENAS[0].0 + 170.0);
+        assert_eq!(number(boss, "y", 0.0), HORDE_BOSS_ARENAS[0].1);
+        let player = state.players.get("pilot").expect("participant");
+        assert_eq!(number(&player.value, "x", 0.0), HORDE_BOSS_ARENAS[0].0);
+        assert_eq!(number(&player.value, "y", 0.0), HORDE_BOSS_ARENAS[0].1);
     }
 
     #[tokio::test]
@@ -2327,9 +2428,11 @@ mod tests {
             elapsed: 8.0,
             spawn_accumulator: 0.0,
             next_unlock_at: 20.0,
-            next_boss_at: 60.0,
+            next_boss_at: HORDE_BOSS_INTERVAL,
             unlocked_count: 1,
             boss_index: 0,
+            boss_id: None,
+            boss_warp: 0,
             sequence: 1,
         });
         let mut monsters = HashMap::new();
