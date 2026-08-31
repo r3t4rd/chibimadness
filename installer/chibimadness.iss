@@ -9,8 +9,12 @@
   #define MyAppVersion "dev"
 #endif
 
-#ifndef SourceExe
-  #define SourceExe "..\\desktop\\target\\x86_64-pc-windows-msvc\\release\\chibimadness-desktop.exe"
+#ifndef SourceLauncher
+  #define SourceLauncher "..\\desktop\\target\\x86_64-pc-windows-msvc\\release\\chibimadness-desktop.exe"
+#endif
+
+#ifndef SourceGame
+  #define SourceGame "..\\desktop\\target\\x86_64-pc-windows-msvc\\release\\chibimadness-game.exe"
 #endif
 
 [Setup]
@@ -37,7 +41,10 @@ UninstallDisplayName={#MyAppName}
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "{#SourceExe}"; DestDir: "{app}"; Flags: ignoreversion
+; The launcher stays in the install directory. It downloads future native game
+; hosts into LocalAppData, where a per-user installation can always update them.
+Source: "{#SourceLauncher}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceGame}"; DestDir: "{app}\\runtime"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -48,3 +55,4 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\ChibiMadness\web-patches"
+Type: filesandordirs; Name: "{localappdata}\ChibiMadness\native-versions"
