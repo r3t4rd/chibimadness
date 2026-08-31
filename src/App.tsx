@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld, getCameraState, type RenderQuality } from './game/worldRenderer';
+import { drawWorld, screenToWorld, getCameraState } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -104,15 +104,10 @@ export function App() {
     setContentBuild(getContentBuildInfo());
   }), []);
 
-  useEffect(() => perfMonitor.observeLongTasks(), []);
-
   // Main Canvas Render Loop
   useEffect(() => {
     let animationId: number;
     let lastRenderedAt: number | null = null;
-    let nextRenderAt = 0;
-    let quality: RenderQuality = 'high';
-    let stableFrames = 0;
     const canvas = canvasRef.current;
     if (!canvas || !createdPlayer) return;
 
@@ -128,27 +123,15 @@ export function App() {
     window.addEventListener('resize', handleResize);
 
     const render = (time: number) => {
-      const minFrameMs = quality === 'high' ? 1000 / 120 : quality === 'medium' ? 1000 / 90 : 1000 / 60;
-      if (time < nextRenderAt) {
-        animationId = requestAnimationFrame(render);
-        return;
-      }
-      nextRenderAt = time + minFrameMs;
       const frameIntervalMs = lastRenderedAt === null ? 1000 / 60 : time - lastRenderedAt;
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      const replicatedCombat = net.hasSharedWorld()
-        ? curEngine.combatRenderStateRef.current
-        : null;
-      const renderMonsters = replicatedCombat?.monsters ?? curEngine.monsters;
-      const renderProjectiles = replicatedCombat?.projectiles ?? curEngine.projectiles;
 
       perfMonitor.setExtras({
-        monsters: renderMonsters.filter((m) => m.state !== 'dead').length,
+        monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
         particles: curEngine.particles.length,
-        projectiles: renderProjectiles.length,
-        quality,
+        projectiles: curEngine.projectiles.length,
         zoom: getCameraState().zoom,
         canvasW: canvas.width,
         canvasH: canvas.height,
@@ -161,10 +144,10 @@ export function App() {
         canvas.height,
         curEngine.player,
         curEngine.remotePlayers,
-        renderMonsters,
+        curEngine.monsters,
         curEngine.resourceNodes,
         curEngine.dropItems,
-        renderProjectiles,
+        curEngine.projectiles,
         curEngine.particles,
         curEngine.damagePopups,
         curEngine.screenShake,
@@ -174,39 +157,9 @@ export function App() {
         curEngine.worldPois,
         curEngine.cars,
         curEngine.summons,
-        curEngine.gameTimePhase,
-        quality
+        curEngine.gameTimePhase
       );
-      const drawMs = performance.now() - drawStart;
-      perfMonitor.recordDraw(drawMs);
-      // Canvas draw time only covers JavaScript submitting work. The remaining
-      // frame interval includes WebView/GPU/compositor scheduling, which is
-      // exactly where the desktop client can miss frames under entity load.
-      const frameGapMs = Math.max(0, frameIntervalMs - drawMs);
-      perfMonitor.recordFrameGap(frameGapMs);
-      const frameMissesLowBudget = frameIntervalMs > 25;
-      const frameMissesMediumBudget = frameIntervalMs > 16.7;
-      if (drawMs > 18 || frameMissesLowBudget) {
-        quality = 'low';
-        stableFrames = 0;
-      } else if ((drawMs > 10 || frameMissesMediumBudget) && quality === 'high') {
-        quality = 'medium';
-        stableFrames = 0;
-      } else {
-        const canRecover = quality === 'low'
-          ? drawMs < 7 && frameIntervalMs < 20
-          : drawMs < 5 && frameIntervalMs < 12;
-        if (!canRecover) {
-          stableFrames = 0;
-        } else {
-          stableFrames += 1;
-          if (stableFrames >= 180) {
-            quality = quality === 'low' ? 'medium' : 'high';
-            stableFrames = 0;
-          }
-        }
-      }
-      perfMonitor.setExtras({ quality });
+      perfMonitor.recordDraw(performance.now() - drawStart);
       perfMonitor.recordFrame(frameIntervalMs);
       animationId = requestAnimationFrame(render);
     };

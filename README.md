@@ -13,7 +13,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-В Release публикуются portable `ChibiMadness-Portable-<version>.zip` и рекомендуемый `ChibiMadness-Setup-<version>.exe`. Setup позволяет выбрать папку установки, создаёт Start Menu/опциональный desktop shortcut и удаляется из Windows Apps. Это per-user установщик без UAC; стандартная папка — `%LOCALAPPDATA%\Programs\ChibiMadness`.
+В Release публикуются portable `chibimadness-desktop.exe` и рекомендуемый `ChibiMadness-Setup-<version>.exe`. Setup позволяет выбрать папку установки, создаёт Start Menu/опциональный desktop shortcut и удаляется из Windows Apps. Это per-user установщик без UAC; стандартная папка — `%LOCALAPPDATA%\Programs\ChibiMadness`.
 
 Также workflow можно запустить вручную во вкладке **Actions**: в этом случае `.exe` будет доступен как artifact запуска. Чтобы вручную указать другой сервер при старте, используй:
 
@@ -23,11 +23,9 @@ git push origin v0.1.0
 
 ### Hot updates без замены `.exe`
 
-Начиная с desktop-клиента с updater, каждый GitHub Release содержит `web-patch.zip` и `patch-manifest.json`. При запуске game host берёт последнюю проверенную web-версию: TS/JS-логику, карту, объекты, UI и ассеты можно менять последующими релизами без новой загрузки native runtime.
+Начиная с desktop-клиента с updater, каждый GitHub Release содержит `web-patch.zip` и `patch-manifest.json`. При запуске клиент берёт последнюю проверенную web-версию: TS/JS-логику, карту, объекты, UI и ассеты можно менять последующими релизами без новой загрузки `.exe`.
 
-Patch cache находится в `%LOCALAPPDATA%\ChibiMadness\web-patches`. Bundle проверяется по списку файлов, размеру и SHA-256 перед запуском; неполная загрузка игнорируется, а после успешного обновления остаётся только активная версия cache.
-
-Нативная часть разделена на стабильный `chibimadness-desktop.exe` launcher и обновляемый Rust game host. Launcher при старте проверяет `native-patch-manifest.json`, скачивает и SHA-256-проверяет `native-patch.zip`, затем запускает проверенный host из `%LOCALAPPDATA%\ChibiMadness\native-versions`. Поэтому изменения Rust desktop-host применяются без повторного installer. Первый переход на эту схему требует установить один такой release поверх старой версии.
+Patch cache находится в `%LOCALAPPDATA%\ChibiMadness\web-patches`. Bundle проверяется по списку файлов, размеру и SHA-256 перед запуском; неполная загрузка игнорируется, а после успешного обновления остаётся только активная версия cache. Изменения Rust desktop-host всё ещё требуют нового `.exe`.
 
 ## Production multiplayer
 

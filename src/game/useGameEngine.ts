@@ -47,7 +47,6 @@ import {
 } from './constants';
 import { sound } from './audioEngine';
 import { net } from './multiplayerClient';
-import { perfMonitor } from './performanceMonitor';
 import { screenToWorld } from './worldRenderer';
 import {
   BUILDINGS,
@@ -182,32 +181,8 @@ type ReplicationFrame<T> = {
 
 type ReplicationHistory<T> = Record<string, ReplicationFrame<T>[]>;
 
-type CombatRenderState = {
-  monsters: Monster[];
-  projectiles: Projectile[];
-};
-
-type PredictedProjectile = Projectile & {
-  clientShotId: string;
-  expiresAt: number;
-  lastSimulatedAt: number;
-};
-
 const REPLICATION_INTERPOLATION_DELAY_MS = 100;
 const MAX_REPLICATION_EXTRAPOLATION_MS = 150;
-const MAX_LOCAL_PROJECTILE_PREDICTION_MS = 1_500;
-
-function reconcilePredictedProjectiles(
-  predicted: PredictedProjectile[],
-  authoritative: Projectile[],
-) {
-  const confirmed = new Set(
-    authoritative
-      .map((projectile) => (projectile as Projectile & { clientShotId?: unknown }).clientShotId)
-      .filter((id): id is string => typeof id === 'string'),
-  );
-  return predicted.filter((projectile) => !confirmed.has(projectile.clientShotId));
-}
 
 function recordReplicationSnapshot<T extends { id: string }>(
   history: ReplicationHistory<T>,
@@ -225,27 +200,6 @@ function recordReplicationSnapshot<T extends { id: string }>(
     if (frames.length > 3) frames.shift();
     history[entity.id] = frames;
   });
-}
-
-function applyReplicationDelta<T extends { id: string }>(
-  entities: Record<string, T>,
-  delta: unknown,
-): T[] {
-  if (!delta || typeof delta !== 'object') return Object.values(entities);
-  const value = delta as { upsert?: unknown; remove?: unknown };
-  if (Array.isArray(value.upsert)) {
-    value.upsert.forEach((entity) => {
-      if (entity && typeof entity === 'object' && typeof (entity as T).id === 'string') {
-        entities[(entity as T).id] = entity as T;
-      }
-    });
-  }
-  if (Array.isArray(value.remove)) {
-    value.remove.forEach((id) => {
-      if (typeof id === 'string') delete entities[id];
-    });
-  }
-  return Object.values(entities);
 }
 
 function interpolatedMonsterState(
@@ -840,13 +794,7 @@ export function useGameEngine(initialPlayer: Player) {
   const remoteHistoryRef = useRef<Record<string, { x: number; y: number; vx: number; vy: number; timestamp: number }[]>>({});
   const monsterReplicationHistoryRef = useRef<ReplicationHistory<Monster>>({});
   const projectileReplicationHistoryRef = useRef<ReplicationHistory<Projectile>>({});
-  const authoritativeMonstersRef = useRef<Record<string, Monster>>({});
-  const authoritativeProjectilesRef = useRef<Record<string, Projectile>>({});
-  const authoritativePlayersRef = useRef<Record<string, Player>>({});
-  const predictedProjectilesRef = useRef<PredictedProjectile[]>([]);
-  const clientShotSequenceRef = useRef(0);
   const replicationFrameReceivedRef = useRef(false);
-  const combatRenderStateRef = useRef<CombatRenderState>({ monsters: [], projectiles: [] });
   const addPlayerHistory = (id: string, x: number, y: number, vx: number, vy: number) => {
     const now = performance.now();
     if (!remoteHistoryRef.current[id]) {
@@ -876,12 +824,7 @@ export function useGameEngine(initialPlayer: Player) {
     if (type === 'init_world' && Array.isArray(data.players)) {
       monsterReplicationHistoryRef.current = {};
       projectileReplicationHistoryRef.current = {};
-      authoritativeMonstersRef.current = {};
-      authoritativeProjectilesRef.current = {};
-      authoritativePlayersRef.current = {};
-      predictedProjectilesRef.current = [];
       replicationFrameReceivedRef.current = false;
-      combatRenderStateRef.current = { monsters: [], projectiles: [] };
       const players = data.players
         .map(remotePlayerFromWire)
         .filter((player): player is Player => player !== null && player.id !== initialPlayer.id);
@@ -913,88 +856,12 @@ export function useGameEngine(initialPlayer: Player) {
         // converges toward this target instead of snapping at packet cadence.
         return { ...current, [data.id]: { ...moved, x: existing.x, y: existing.y } };
       });
-    } else if (type === 'world_delta' && data.ready === true) {
-      const deltaApplyStartedAt = performance.now();
-      const authoritativeMonsters = applyReplicationDelta(authoritativeMonstersRef.current, data.monsters);
-      const authoritativeProjectiles = applyReplicationDelta<Projectile>(authoritativeProjectilesRef.current, data.projectiles);
-      predictedProjectilesRef.current = reconcilePredictedProjectiles(
-        predictedProjectilesRef.current,
-        authoritativeProjectiles,
-      );
-      const receivedAt = performance.now();
-      perfMonitor.recordReplication(data.sequence);
-      const hasMonsterHistory = Object.keys(monsterReplicationHistoryRef.current).length > 0;
-      const hasProjectileHistory = Object.keys(projectileReplicationHistoryRef.current).length > 0;
-      recordReplicationSnapshot(monsterReplicationHistoryRef.current, authoritativeMonsters, receivedAt);
-      recordReplicationSnapshot(projectileReplicationHistoryRef.current, authoritativeProjectiles, receivedAt);
-      replicationFrameReceivedRef.current = true;
-      monstersRef.current = authoritativeMonsters;
-      projectilesRef.current = authoritativeProjectiles;
-      if (!hasMonsterHistory) combatRenderStateRef.current.monsters = authoritativeMonsters;
-      if (!hasProjectileHistory) combatRenderStateRef.current.projectiles = authoritativeProjectiles;
-
-      const authoritativePlayers = applyReplicationDelta<Player>(authoritativePlayersRef.current, data.players);
-      const deltaHorde = data.horde && typeof data.horde === 'object' ? data.horde : null;
-      const selfInServerHorde = deltaHorde?.active === true
-        && Array.isArray(deltaHorde.participants)
-        && deltaHorde.participants.includes(initialPlayer.id);
-      const serverBossWarp = typeof deltaHorde?.bossWarp === 'number' ? deltaHorde.bossWarp : null;
-      const serverHordeWarped = selfInServerHorde
-        && serverBossWarp !== null
-        && serverBossWarp !== lastServerBossWarpRef.current;
-      if (deltaHorde) lastServerBossWarpRef.current = selfInServerHorde ? serverBossWarp : null;
-      const self = authoritativePlayers.find((player) => player.id === initialPlayer.id);
-      if (self) {
-        const current = playerRef.current;
-        const serverSaysDead = self.stats.hp <= 0 || self.state === 'dead';
-        const serverRespawned = !serverSaysDead && (current.isRespawning || current.state === 'dead');
-        const selfInHorde = isInHordeArena(self.x, self.y);
-        const currentInHorde = isInHordeArena(current.x, current.y);
-        const shouldApplyServerTransform = serverRespawned || selfInHorde !== currentInHorde || serverHordeWarped;
-        const next = shouldApplyServerTransform
-          ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...current.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: serverSaysDead ? 'dead' : self.state, isRespawning: serverSaysDead }
-          : { ...current, stats: { ...current.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: serverSaysDead ? 'dead' : self.state, isRespawning: serverSaysDead };
-        playerRef.current = next;
-        setPlayer(next);
-      }
-
-      if (deltaHorde) {
-        const horde = deltaHorde;
-        if (selfInServerHorde) {
-          const previous = hordeRunRef.current;
-          const next: HordeRunState = {
-            ...createEmptyHordeRun(),
-            ...previous,
-            active: true,
-            elapsed: typeof horde.elapsed === 'number' ? horde.elapsed : previous.elapsed,
-            canExtract: horde.canExtract === true,
-            unlockedCount: typeof horde.unlockedCount === 'number' ? horde.unlockedCount : previous.unlockedCount,
-            nextUnlockIn: typeof horde.nextUnlockIn === 'number' ? horde.nextUnlockIn : previous.nextUnlockIn,
-            nextBossIn: typeof horde.nextBossIn === 'number' ? horde.nextBossIn : previous.nextBossIn,
-            bossIndex: typeof horde.bossIndex === 'number' ? horde.bossIndex : previous.bossIndex,
-          };
-          hordeRunRef.current = next;
-          setHordeRun(next);
-        } else if (horde.active === false && hordeRunRef.current.active) {
-          const empty = createEmptyHordeRun();
-          hordeRunRef.current = empty;
-          setHordeRun(empty);
-        }
-      }
-      perfMonitor.recordSnapshotApply(performance.now() - deltaApplyStartedAt);
     } else if (type === 'world_snapshot' && data.ready === true && Array.isArray(data.monsters) && Array.isArray(data.projectiles)) {
-      const snapshotApplyStartedAt = performance.now();
       const authoritativeMonsters = data.monsters.filter((monster: unknown): monster is Monster =>
         typeof monster === 'object' && monster !== null && typeof (monster as Monster).id === 'string'
       );
       const authoritativeProjectiles = data.projectiles.filter((projectile: unknown): projectile is Projectile =>
         typeof projectile === 'object' && projectile !== null && typeof (projectile as Projectile).id === 'string'
-      );
-      authoritativeMonstersRef.current = Object.fromEntries(authoritativeMonsters.map((monster) => [monster.id, monster]));
-      authoritativeProjectilesRef.current = Object.fromEntries(authoritativeProjectiles.map((projectile) => [projectile.id, projectile]));
-      predictedProjectilesRef.current = reconcilePredictedProjectiles(
-        predictedProjectilesRef.current,
-        authoritativeProjectiles,
       );
       // Detect newly defeated horde monsters from snapshot difference
       monstersRef.current.forEach((prevMonster) => {
@@ -1017,19 +884,21 @@ export function useGameEngine(initialPlayer: Player) {
       });
 
       const receivedAt = performance.now();
-      perfMonitor.recordReplication();
       const hasMonsterHistory = Object.keys(monsterReplicationHistoryRef.current).length > 0;
       const hasProjectileHistory = Object.keys(projectileReplicationHistoryRef.current).length > 0;
       recordReplicationSnapshot(monsterReplicationHistoryRef.current, authoritativeMonsters, receivedAt);
       recordReplicationSnapshot(projectileReplicationHistoryRef.current, authoritativeProjectiles, receivedAt);
       replicationFrameReceivedRef.current = true;
-      // Gameplay consumes the latest authority immediately. The canvas reads
-      // a separate interpolation ref, so network snapshots never force React
-      // to reconcile an entity array on the render path.
-      monstersRef.current = authoritativeMonsters;
-      projectilesRef.current = authoritativeProjectiles;
-      if (!hasMonsterHistory) combatRenderStateRef.current.monsters = authoritativeMonsters;
-      if (!hasProjectileHistory) combatRenderStateRef.current.projectiles = authoritativeProjectiles;
+      // Render the first authoritative frame immediately. Every following
+      // snapshot is consumed by the render-side interpolation loop below.
+      if (!hasMonsterHistory) {
+        monstersRef.current = authoritativeMonsters;
+        setMonsters(authoritativeMonsters);
+      }
+      if (!hasProjectileHistory) {
+        projectilesRef.current = authoritativeProjectiles;
+        setProjectiles(authoritativeProjectiles);
+      }
 
       const selfInServerHorde = data.horde?.active === true
         && Array.isArray(data.horde.participants)
@@ -1073,7 +942,6 @@ export function useGameEngine(initialPlayer: Player) {
         const players = data.players
           .map(remotePlayerFromWire)
           .filter((player): player is Player => player !== null);
-        authoritativePlayersRef.current = Object.fromEntries(players.map((player) => [player.id, player]));
         const self = players.find((player) => player.id === initialPlayer.id);
         if (self) {
           const current = playerRef.current;
@@ -1116,7 +984,6 @@ export function useGameEngine(initialPlayer: Player) {
           return [id, previous ? { ...target, x: previous.x, y: previous.y } : target];
         })));
       }
-      perfMonitor.recordSnapshotApply(performance.now() - snapshotApplyStartedAt);
     } else if (type === 'horde_join_rejected') {
       hordeJoinPendingRef.current = false;
       const retryIn = typeof data.retryIn === 'number' ? Math.max(0, Math.ceil(data.retryIn)) : null;
@@ -1287,7 +1154,7 @@ export function useGameEngine(initialPlayer: Player) {
   });
 
   const monstersRef = useRef<Monster[]>(monsters);
-  if (!net.hasSharedWorld()) monstersRef.current = monsters;
+  monstersRef.current = monsters;
 
   const handleMonsterDefeatedRef = useRef<((m: Monster, killedByPlayer?: boolean) => void) | null>(null);
 
@@ -1304,22 +1171,7 @@ export function useGameEngine(initialPlayer: Player) {
   worldPoisRef.current = worldPois;
 
   const projectilesRef = useRef<Projectile[]>(projectiles);
-  if (!net.hasSharedWorld()) projectilesRef.current = projectiles;
-
-  const sendPredictedProjectile = (projectile: Projectile) => {
-    const now = performance.now();
-    const clientShotId = `shot_${Math.floor(now)}_${clientShotSequenceRef.current++}`;
-    const speed = Math.max(1, Math.hypot(projectile.vx, projectile.vy));
-    const travelMs = (Math.max(1, projectile.range) / (speed * 60)) * 1_000;
-    predictedProjectilesRef.current.push({
-      ...projectile,
-      id: `predicted_${clientShotId}`,
-      clientShotId,
-      expiresAt: now + Math.min(MAX_LOCAL_PROJECTILE_PREDICTION_MS, Math.max(250, travelMs + 150)),
-      lastSimulatedAt: now,
-    });
-    net.fireProjectile({ ...projectile, clientShotId } as Projectile);
-  };
+  projectilesRef.current = projectiles;
 
   // Authoritative combat snapshots arrive at 20 Hz, but the canvas renders
   // every animation frame. Keep a small visual delay so most frames can be
@@ -1338,26 +1190,10 @@ export function useGameEngine(initialPlayer: Player) {
           .filter((frames) => frames.length > 0)
           .map((frames) => interpolatedProjectileState(frames, renderAt));
 
-        const predictedProjectiles = predictedProjectilesRef.current.flatMap((projectile) => {
-          const elapsedMs = Math.min(50, Math.max(0, time - projectile.lastSimulatedAt));
-          const travel = elapsedMs / 1_000 * 60;
-          const distance = Math.hypot(projectile.vx, projectile.vy) * travel;
-          const next = {
-            ...projectile,
-            x: projectile.x + projectile.vx * travel,
-            y: projectile.y + projectile.vy * travel,
-            distanceTraveled: projectile.distanceTraveled + distance,
-            lastSimulatedAt: time,
-          };
-          if (time >= next.expiresAt || next.distanceTraveled >= next.range) return [];
-          return [next];
-        });
-        predictedProjectilesRef.current = predictedProjectiles;
-
-        combatRenderStateRef.current = {
-          monsters: nextMonsters,
-          projectiles: [...nextProjectiles, ...predictedProjectiles],
-        };
+        monstersRef.current = nextMonsters;
+        projectilesRef.current = nextProjectiles;
+        setMonsters(nextMonsters);
+        setProjectiles(nextProjectiles);
       }
       animationFrameId = requestAnimationFrame(renderReplicatedWorld);
     };
@@ -2471,7 +2307,7 @@ export function useGameEngine(initialPlayer: Player) {
         ? proj
         : { ...proj, visualOffsetY: visualLaunchOffsetY };
       if (net.hasSharedWorld()) {
-        sendPredictedProjectile(launchedProjectile);
+        net.fireProjectile(launchedProjectile);
         return;
       }
       projectilesRef.current = [...projectilesRef.current, launchedProjectile];
@@ -2907,7 +2743,7 @@ export function useGameEngine(initialPlayer: Player) {
       // Adding the projectile locally made it disappear at the next snapshot
       // and, worse, never sent any Q/E/F skill projectile to the server.
       if (net.hasSharedWorld()) {
-        sendPredictedProjectile(proj);
+        net.fireProjectile(proj);
         return;
       }
       projectilesRef.current = [...projectilesRef.current, proj];
@@ -3262,11 +3098,6 @@ export function useGameEngine(initialPlayer: Player) {
     endHordeRunRef.current = endHordeNow;
 
     const tick = (time: number) => {
-      const updateStartedAt = performance.now();
-      const scheduleNextTick = () => {
-        perfMonitor.recordUpdate(performance.now() - updateStartedAt);
-        animationFrameId = requestAnimationFrame(tick);
-      };
       const dt = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
 
@@ -3274,7 +3105,7 @@ export function useGameEngine(initialPlayer: Player) {
 
       // Skip tick updates entirely during character creation (so default player doesn't get attacked)
       if (curPlayer.id === 'default') {
-        scheduleNextTick();
+        animationFrameId = requestAnimationFrame(tick);
         return;
       }
 
@@ -3330,7 +3161,7 @@ export function useGameEngine(initialPlayer: Player) {
               playerRef.current = waitingPlayer;
               setPlayer(waitingPlayer);
             }
-            scheduleNextTick();
+            animationFrameId = requestAnimationFrame(tick);
             return;
           }
           if (nextTimer <= 0) {
@@ -3370,7 +3201,7 @@ export function useGameEngine(initialPlayer: Player) {
             setPlayer(deathPlayer);
           }
         }
-        scheduleNextTick();
+        animationFrameId = requestAnimationFrame(tick);
         return;
       }
 
@@ -3608,13 +3439,13 @@ export function useGameEngine(initialPlayer: Player) {
 
         // During cinematic, skip normal player update
         if (nextPhase !== 'complete') {
-          scheduleNextTick();
+          animationFrameId = requestAnimationFrame(tick);
           return;
         }
       }
 
       if ((curPlayer.pendingEvolutionPicks ?? 0) > 0) {
-        scheduleNextTick();
+        animationFrameId = requestAnimationFrame(tick);
         return;
       }
 
@@ -6267,7 +6098,7 @@ export function useGameEngine(initialPlayer: Player) {
         .filter((dp) => dp.life > 0);
       setDamagePopups(damagePopupsRef.current);
 
-      scheduleNextTick();
+      animationFrameId = requestAnimationFrame(tick);
     };
 
     animationFrameId = requestAnimationFrame(tick);
@@ -6755,7 +6586,6 @@ export function useGameEngine(initialPlayer: Player) {
     hordeRun,
     worldFade,
     monsters,
-    combatRenderStateRef,
     resourceNodes,
     dropItems,
     interactiveObjects,

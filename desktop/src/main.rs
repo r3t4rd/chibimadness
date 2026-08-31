@@ -21,19 +21,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
 use yuyib::{
-    platform::{
-        Window, WindowConfig, WindowMode,
-        winit::{
-            application::ApplicationHandler,
-            event::WindowEvent,
-            event_loop::{ActiveEventLoop, EventLoop},
-            window::WindowId,
-        },
-    },
+    app::{Application, ApplicationWebView, ApplicationWebViewHandle, RenderLoop},
+    platform::{WindowConfig, WindowMode},
     webview::{
         AssetBundle, AssetLimits, AssetPath, BridgeLimits, BridgeRouter, EndpointName, LocalCsp,
         LocalPage, MimePolicy, PageEvent, PageSessionId, TypedEndpoint, WebSocketOrigin,
-        WebViewBounds, WebViewBuilder, WebViewHost,
+        WebViewBuilder,
     },
 };
 
@@ -67,7 +60,7 @@ struct PatchFile {
 #[derive(Deserialize)]
 struct GameReady {}
 
-#[derive(Clone, Serialize)]
+#[derive(Serialize)]
 struct GameConfiguration {
     server_url: Option<String>,
     content_version: String,
@@ -92,89 +85,6 @@ struct LaunchAssets {
     source: ContentSource,
 }
 
-/// A WebView-only native host.  Do not put this opaque child over
-/// `yuyib::app::Application`: that facade creates a WGPU surface which adds a
-/// second present/compositor path even though this client has no native draw.
-struct DesktopApp {
-    window: Option<Window>,
-    webview: Rc<RefCell<Option<WebViewHost>>>,
-    builder: Option<WebViewBuilder>,
-}
-
-impl DesktopApp {
-    fn resize_webview(&self) {
-        let webview_guard = self.webview.borrow();
-        let (Some(window), Some(webview)) = (&self.window, webview_guard.as_ref()) else {
-            return;
-        };
-        let physical = window.physical_size();
-        let logical = physical.to_logical::<f64>(window.raw().scale_factor());
-        let Ok(bounds) = WebViewBounds::new(0.0, 0.0, logical.width.max(1.0), logical.height.max(1.0)) else {
-            return;
-        };
-        if let Err(error) = webview.set_bounds(bounds) {
-            eprintln!("ChibiMadness WebView resize ignored: {error}");
-        }
-    }
-}
-
-impl ApplicationHandler for DesktopApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-        let window = match Window::create(
-            event_loop,
-            &WindowConfig {
-                title: "ChibiMadness — Yuyib Desktop".to_owned(),
-                width: 1_600,
-                height: 900,
-                resizable: true,
-                decorations: true,
-                mode: WindowMode::Windowed,
-            },
-        ) {
-            Ok(window) => window,
-            Err(error) => {
-                eprintln!("ChibiMadness window creation failed: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
-        let Some(builder) = self.builder.take() else {
-            event_loop.exit();
-            return;
-        };
-        let webview = match builder.build(&window) {
-            Ok(webview) => webview,
-            Err(error) => {
-                eprintln!("ChibiMadness WebView creation failed: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
-        *self.webview.borrow_mut() = Some(webview);
-        self.window = Some(window);
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::Resized(_) => self.resize_webview(),
-            WindowEvent::CloseRequested => {
-                self.webview.borrow_mut().take();
-                self.window.take();
-                event_loop.exit();
-            }
-            _ => {}
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     let server = configured_server()?;
     let csp = match &server {
@@ -186,7 +96,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let session = PageSessionId::parse("b9c9f5bbfae14dbdb3f5e2356b74d0aa")?;
     let limits = BridgeLimits::default();
-    let outbound = Rc::new(RefCell::new(None::<WebViewHost>));
+    let outbound = Rc::new(RefCell::new(None::<ApplicationWebViewHandle>));
     let outbound_for_endpoint = Rc::clone(&outbound);
     let server_url = server.map(|server| server.websocket_url);
     let content_version = launch_assets.version;
@@ -195,8 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("game.ready")?,
         move |_message: GameReady| {
-            let webview_guard = outbound_for_endpoint.borrow();
-            let Some(webview) = webview_guard.as_ref() else {
+            let Some(handle) = outbound_for_endpoint.borrow().clone() else {
                 return;
             };
             let event = PageEvent::from_typed(
@@ -211,20 +120,28 @@ fn main() -> Result<(), Box<dyn Error>> {
                 limits,
             );
             if let Ok(event) = event {
-                let _ = webview.emit_event(&event);
+                let _ = handle.enqueue(event);
             }
         },
     ))?;
     let builder = WebViewBuilder::new()
         .with_local_page(page)
         .with_bridge_router(bridge);
-    let event_loop = EventLoop::new()?;
-    let mut app = DesktopApp {
-        window: None,
-        webview: outbound,
-        builder: Some(builder),
-    };
-    event_loop.run_app(&mut app)?;
+    let (webview, handle) = ApplicationWebView::new(builder).with_event_queue(8)?;
+    *outbound.borrow_mut() = Some(handle);
+
+    Application::new()
+        .window(WindowConfig {
+            title: "ChibiMadness — Yuyib Desktop".to_owned(),
+            width: 1_600,
+            height: 900,
+            resizable: true,
+            decorations: true,
+            mode: WindowMode::Windowed,
+        })
+        .render_loop(RenderLoop::OnDemand)
+        .webview(webview)
+        .run()?;
     Ok(())
 }
 

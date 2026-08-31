@@ -12,7 +12,6 @@ let smoothedCameraX = 650;
 let smoothedCameraY = 750;
 let smoothedZoom = 1.0;
 let lastRenderTimestamp = 0;
-export type RenderQuality = 'high' | 'medium' | 'low';
 
 export function getCameraState() {
   return {
@@ -67,8 +66,7 @@ export function drawWorld(
   worldPois: WorldPOI[] = WORLD_POIS,
   cars: CarEntity[] = [],
   summons: SummonedAlly[] = [],
-  gameTimePhase: number = 0.35,
-  quality: RenderQuality = 'high'
+  gameTimePhase: number = 0.35
 ) {
   // Screen shake offset calculation with smooth decay
   let shakeX = 0;
@@ -157,8 +155,7 @@ export function drawWorld(
     worldPois,
     cars,
     summons,
-    gameTimePhase,
-    quality
+    gameTimePhase
   );
 }
 
@@ -183,8 +180,7 @@ export function renderWorld(
   worldPois: WorldPOI[] = WORLD_POIS,
   cars: CarEntity[] = [],
   summons: SummonedAlly[] = [],
-  gameTimePhase: number = 0.35,
-  quality: RenderQuality = 'high'
+  gameTimePhase: number = 0.35
 ) {
   ctx.save();
   // Clear screen — tinted by time of day
@@ -304,7 +300,7 @@ export function renderWorld(
       drawNPCs(ctx, npcs.filter((n) => inView(n.x, n.y)), time);
       drawWorldCars(ctx, cars.filter((c) => inView(c.x + 50, c.y + 24)), localPlayer, time);
     }
-    const visibleMonsterCandidates = monsters.filter((m) => {
+    const visibleMonsters = monsters.filter((m) => {
       if (m.state === 'dead' || !inView(m.x, m.y)) return false;
       if (!blinded) return true;
       if (m.id === blindness.casterId) return true;
@@ -312,19 +308,11 @@ export function renderWorld(
       if (m.battleBark && m.battleBark.timer > 0) return true;
       return false;
     });
-    const monsterBudget = quality === 'high' ? 300 : quality === 'medium' ? 160 : 80;
-    const visibleMonsters = visibleMonsterCandidates.length <= monsterBudget
-      ? visibleMonsterCandidates
-      : visibleMonsterCandidates
-        .map((monster) => ({ monster, distance: (monster.x - playerX) ** 2 + (monster.y - playerY) ** 2 }))
-        .sort((left, right) => left.distance - right.distance)
-        .slice(0, monsterBudget)
-        .map(({ monster }) => monster);
-    if (!blinded && quality !== 'low') {
+    if (!blinded) {
       drawMonsterTelegraphs(ctx, visibleMonsters, time);
     }
     drawHordeHazards(ctx, getHordeHazards().filter((h) => inView(h.x, h.y)), time);
-    drawMonsters(ctx, visibleMonsters, time, quality);
+    drawMonsters(ctx, visibleMonsters, time);
     if (blinded) {
       drawBlindScreams(ctx, monsters.filter((m) => m.battleBark && m.battleBark.timer > 0 && inView(m.x, m.y)), time);
     }
@@ -560,11 +548,9 @@ export function renderWorld(
   }
 
   // 9. Draw Projectiles (Bullets, Lasers, Shotgun pellets, Slash waves)
-  const projectileBudget = quality === 'high' ? 512 : quality === 'medium' ? 192 : 80;
-  const particleBudget = quality === 'high' ? 900 : quality === 'medium' ? 360 : 120;
-  const visProj = projectiles.filter((p) => inView(p.x, p.y)).slice(0, projectileBudget);
-  drawProjectiles(ctx, visProj, quality);
-  drawParticles(ctx, particles.filter((p) => inView(p.x, p.y)).slice(0, particleBudget));
+  const visProj = projectiles.filter((p) => inView(p.x, p.y));
+  drawProjectiles(ctx, visProj);
+  drawParticles(ctx, particles.filter((p) => inView(p.x, p.y)));
   drawDamagePopups(ctx, damagePopups.filter((p) => inView(p.x, p.y)));
 
   if (!indoors && !inHorde) {
@@ -4342,22 +4328,13 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   }
 }
 
-function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number, quality: RenderQuality) {
+function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
     if (m.hp <= 0 && (m.deathProgress === undefined || m.deathProgress >= 1.0)) return;
 
     ctx.save();
     ctx.translate(m.x, m.y);
-
-    if (quality === 'low' && !m.isBoss) {
-      ctx.fillStyle = m.hordeKind ? '#8B5CF6' : '#EF4444';
-      ctx.beginPath();
-      ctx.arc(0, 0, m.hordeKind === 'mite' ? 7 : 13, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
 
     if (m.hordeKind) {
       drawHordeMob(ctx, m, time);
@@ -4501,7 +4478,7 @@ function drawSummons(ctx: CanvasRenderingContext2D, summons: SummonedAlly[], tim
   });
 }
 
-function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[], quality: RenderQuality) {
+function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[]) {
   projectiles.forEach((p) => {
     ctx.save();
     // Launch effects from an elevated muzzle, then smoothly converge with the
@@ -4510,17 +4487,6 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[
     ctx.translate(p.x, p.y + launchOffset);
     const angle = Math.atan2(p.vy, p.vx);
     ctx.rotate(angle);
-
-    if (quality === 'low') {
-      ctx.strokeStyle = p.color || '#FDE047';
-      ctx.lineWidth = Math.max(1.2, p.tracerWidth ?? 2);
-      ctx.beginPath();
-      ctx.moveTo(-(p.tracerLength ?? 12), 0);
-      ctx.lineTo(5, 0);
-      ctx.stroke();
-      ctx.restore();
-      return;
-    }
 
     if (p.type === 'laser' || p.range > 1800) {
       const trailLength = p.tracerLength ?? 72;

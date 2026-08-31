@@ -6,7 +6,7 @@
 //! simulation before they can safely become shared state.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     env,
     error::Error,
     net::SocketAddr,
@@ -59,10 +59,6 @@ const WORLD_TICK: Duration = Duration::from_millis(20);
 const WORLD_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_WORLD_MONSTERS: usize = 256;
 const MAX_WORLD_PROJECTILES: usize = 1_024;
-// AOI is deliberately hysteretic. A single radius makes entities flicker at
-// its edge as either the player or a monster moves one simulation step.
-const REPLICATION_INTEREST_ENTER_RADIUS: f64 = 1_700.0;
-const REPLICATION_INTEREST_EXIT_RADIUS: f64 = 2_050.0;
 const MAX_TRAVEL_PER_SECOND: f64 = 600.0;
 const TRAVEL_BURST_ALLOWANCE: f64 = 60.0;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
@@ -86,7 +82,6 @@ struct WorldState {
     chat_history: VecDeque<Value>,
     combat_world: Option<CombatWorld>,
     horde: Option<HordeRun>,
-    replication_sequence: u64,
 }
 
 struct CombatWorld {
@@ -113,15 +108,6 @@ struct Session {
     sender: mpsc::Sender<Outbound>,
     player_id: Option<String>,
     last_position: Instant,
-    replication: ReplicationCursor,
-}
-
-#[derive(Default)]
-struct ReplicationCursor {
-    monsters: HashMap<String, Value>,
-    projectiles: HashMap<String, Value>,
-    players: HashMap<String, Value>,
-    horde: Option<Value>,
 }
 
 enum Outbound {
@@ -223,7 +209,6 @@ async fn handle_connection(
                 sender,
                 player_id: None,
                 last_position: Instant::now() - POSITION_INTERVAL,
-                replication: ReplicationCursor::default(),
             },
         );
     }
@@ -311,14 +296,17 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             return;
         }
 
-        let existing_session = state.players.get(&player_id).map(|record| {
-            (
-                record.session_id,
-                record.resume_token.clone(),
-                record.value.clone(),
-                record.respawn_at,
-            )
-        });
+        let existing_session = state
+            .players
+            .get(&player_id)
+            .map(|record| {
+                (
+                    record.session_id,
+                    record.resume_token.clone(),
+                    record.value.clone(),
+                    record.respawn_at,
+                )
+            });
         if let Some((_, expected_token, _, _)) = &existing_session
             && requested_resume_token.as_deref() != Some(expected_token.as_str())
         {
@@ -553,28 +541,35 @@ async fn world_bootstrap(server: &Arc<Server>, session_id: u64, message: Value) 
 }
 
 async fn world_fire(server: &Arc<Server>, session_id: u64, message: Value) {
-    let mut state = server.state.lock().await;
-    let Some(player_id) = state
-        .sessions
-        .get(&session_id)
-        .and_then(|session| session.player_id.clone())
-    else {
-        return;
+    let (recipients, payload) = {
+        let mut state = server.state.lock().await;
+        let Some(player_id) = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.player_id.clone())
+        else {
+            return;
+        };
+        let Some(player) = state.players.get(&player_id) else {
+            return;
+        };
+        let Some(projectile) =
+            sanitize_player_projectile(message.get("projectile"), &player_id, &player.value)
+        else {
+            return;
+        };
+        {
+            let Some(world) = state.combat_world.as_mut() else {
+                return;
+            };
+            if world.projectiles.len() >= MAX_WORLD_PROJECTILES {
+                return;
+            }
+            world.projectiles.push(projectile);
+        }
+        (recipients_except(&state, 0), world_snapshot(&state))
     };
-    let Some(player) = state.players.get(&player_id) else {
-        return;
-    };
-    let Some(projectile) =
-        sanitize_player_projectile(message.get("projectile"), &player_id, &player.value)
-    else {
-        return;
-    };
-    let Some(world) = state.combat_world.as_mut() else {
-        return;
-    };
-    if world.projectiles.len() < MAX_WORLD_PROJECTILES {
-        world.projectiles.push(projectile);
-    }
+    send_to(recipients, payload);
 }
 
 async fn enter_horde(server: &Arc<Server>, session_id: u64) {
@@ -618,10 +613,7 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
                     "retryIn": retry_in,
                 })
                 .to_string();
-                println!(
-                    "Nullspace join rejected for {player_id}: run already at {:.1}s",
-                    active_run.elapsed
-                );
+                println!("Nullspace join rejected for {player_id}: run already at {:.1}s", active_run.elapsed);
                 drop(state);
                 send_to(vec![sender], rejection);
                 return;
@@ -719,20 +711,29 @@ async fn heal_player(server: &Arc<Server>, session_id: u64, message: Value) {
     if amount <= 0.0 || amount > 100_000.0 {
         return;
     }
-    let mut state = server.state.lock().await;
-    let Some(player_id) = state
-        .sessions
-        .get(&session_id)
-        .and_then(|session| session.player_id.clone())
-    else {
-        return;
+    let snapshot = {
+        let mut state = server.state.lock().await;
+        let Some(player_id) = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.player_id.clone())
+        else {
+            return;
+        };
+        let Some(player) = state.players.get_mut(&player_id) else {
+            return;
+        };
+        let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+        let hp = number(&player.value, "hp", 100.0);
+        let next_hp = (hp + amount).min(max_hp);
+        set_number(&mut player.value, "hp", next_hp);
+
+        // Health is authoritative once combat starts. Confirm a successful
+        // heal immediately instead of making the UI wait for the next periodic
+        // world snapshot and appear to roll the heal back.
+        (recipients_except(&state, 0), world_snapshot(&state))
     };
-    let Some(player) = state.players.get_mut(&player_id) else {
-        return;
-    };
-    let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
-    let hp = number(&player.value, "hp", 100.0);
-    set_number(&mut player.value, "hp", (hp + amount).min(max_hp));
+    send_to(snapshot.0, snapshot.1);
 }
 
 async fn teleport(server: &Arc<Server>, session_id: u64, message: Value) {
@@ -804,7 +805,7 @@ async fn world_tick_loop(server: Arc<Server>) {
     let mut last_snapshot = Instant::now() - WORLD_SNAPSHOT_INTERVAL;
     loop {
         interval.tick().await;
-        let updates = {
+        let snapshot = {
             let mut state = server.state.lock().await;
             if state.combat_world.is_none() || state.players.is_empty() {
                 continue;
@@ -816,11 +817,11 @@ async fn world_tick_loop(server: Arc<Server>) {
                 None
             } else {
                 last_snapshot = Instant::now();
-                Some(replication_payloads(&mut state))
+                Some((recipients_except(&state, 0), world_snapshot(&state)))
             }
         };
-        if let Some(updates) = updates {
-            send_payloads(updates);
+        if let Some((recipients, payload)) = snapshot {
+            send_to(recipients, payload);
         }
     }
 }
@@ -869,12 +870,8 @@ fn tick_player_respawns(state: &mut WorldState) {
     if close_horde {
         state.horde = None;
         if let Some(world) = state.combat_world.as_mut() {
-            world
-                .monsters
-                .retain(|_, monster| !is_horde_monster(monster));
-            world
-                .projectiles
-                .retain(|projectile| !is_horde_projectile(projectile));
+            world.monsters.retain(|_, monster| !is_horde_monster(monster));
+            world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
         }
     }
 
@@ -927,7 +924,11 @@ fn tick_horde_director(state: &mut WorldState) {
     // A boss is a server-owned phase transition, not just another mob. The
     // client receives bossWarp in snapshots and applies the authoritative
     // transform even though both locations are inside Nullspace.
-    if let Some(boss_id) = state.horde.as_ref().and_then(|horde| horde.boss_id.clone()) {
+    if let Some(boss_id) = state
+        .horde
+        .as_ref()
+        .and_then(|horde| horde.boss_id.clone())
+    {
         let boss_is_alive = state
             .combat_world
             .as_ref()
@@ -968,12 +969,8 @@ fn tick_horde_director(state: &mut WorldState) {
             state.horde.as_mut().expect("run exists"),
             state.combat_world.as_mut().expect("world exists"),
         );
-        world
-            .monsters
-            .retain(|_, monster| !is_horde_monster(monster));
-        world
-            .projectiles
-            .retain(|projectile| !is_horde_projectile(projectile));
+        world.monsters.retain(|_, monster| !is_horde_monster(monster));
+        world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
         let mut boss = spawn_horde_monster(horde, &boss_targets, boss_kind);
         set_number(&mut boss, "x", arena_x + 170.0);
         set_number(&mut boss, "y", arena_y);
@@ -1498,10 +1495,7 @@ fn sanitize_player_projectile(
     } else {
         (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
     };
-    let requested_type = value
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("bullet");
+    let requested_type = value.get("type").and_then(Value::as_str).unwrap_or("bullet");
     let x = bounded_number(&Value::Object(value.clone()), "x", min_x, max_x)?;
     let y = bounded_number(&Value::Object(value.clone()), "y", min_y, max_y)?;
     // Most projectiles originate at the caster. Targeted meteor and falling
@@ -1511,7 +1505,9 @@ fn sanitize_player_projectile(
         "meteor" | "falling_sword" => 1_000.0,
         _ => 100.0,
     };
-    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0)) > max_origin_distance {
+    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0))
+        > max_origin_distance
+    {
         return None;
     }
     let kind = match requested_type {
@@ -1524,35 +1520,19 @@ fn sanitize_player_projectile(
     let vx = bounded_number(&Value::Object(value.clone()), "vx", -50.0, 50.0)?;
     let vy = bounded_number(&Value::Object(value.clone()), "vy", -50.0, 50.0)?;
     let size = bounded_number(&Value::Object(value.clone()), "size", 2.0, 32.0).unwrap_or(5.0);
-    let visual_offset_y =
-        bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0).unwrap_or(0.0);
+    let visual_offset_y = bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0)
+        .unwrap_or(0.0);
     let color = value
         .get("color")
         .and_then(Value::as_str)
         .filter(|color| color.len() <= 16)
         .unwrap_or("#38BDF8");
-    let mut projectile = json!({
+    Some(json!({
         "id": format!("srv_projectile_{}", NEXT_PROJECTILE_ID.fetch_add(1, Ordering::Relaxed)),
         "ownerId": owner_id, "type": kind.0, "x": x, "y": y, "vx": vx, "vy": vy,
         "damage": kind.1, "range": kind.2, "distanceTraveled": 0.0, "color": color,
         "size": size, "piercing": kind.0 == "laser", "visualOffsetY": visual_offset_y,
-    });
-    // This opaque id is generated by the owning client and is only used to
-    // reconcile its short-lived visual prediction with this validated entity.
-    // Keep the wire value bounded; it must never become a general echo field.
-    if let Some(client_shot_id) = value
-        .get("clientShotId")
-        .and_then(Value::as_str)
-        .filter(|id| {
-            id.len() <= 96
-                && id
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-        })
-    {
-        projectile["clientShotId"] = json!(client_shot_id);
-    }
-    Some(projectile)
+    }))
 }
 
 fn make_enemy_projectile(monster: &Value, target_x: &f64, target_y: &f64) -> Value {
@@ -1599,197 +1579,6 @@ fn horde_snapshot(state: &WorldState) -> Value {
         "participants": horde.participants.keys().collect::<Vec<_>>(),
         "hazards": [],
     })
-}
-
-struct ReplicationView {
-    monsters: Vec<Value>,
-    projectiles: Vec<Value>,
-    players: Vec<Value>,
-    horde: Value,
-}
-
-fn within_replication_interest(value: &Value, x: f64, y: f64, was_replicated: bool) -> bool {
-    (number(value, "x", x) - x).hypot(number(value, "y", y) - y)
-        <= if was_replicated {
-            REPLICATION_INTEREST_EXIT_RADIUS
-        } else {
-            REPLICATION_INTEREST_ENTER_RADIUS
-        }
-}
-
-fn replication_view(
-    state: &WorldState,
-    player_id: &str,
-    known_monsters: &HashSet<String>,
-    known_projectiles: &HashSet<String>,
-    known_players: &HashSet<String>,
-) -> Option<ReplicationView> {
-    let player = state.players.get(player_id)?;
-    let x = number(&player.value, "x", WORLD_MIN_X);
-    let y = number(&player.value, "y", WORLD_MIN_Y);
-    let player_in_horde = state
-        .horde
-        .as_ref()
-        .is_some_and(|horde| horde.participants.contains_key(player_id));
-    let world = state.combat_world.as_ref()?;
-    let monsters = world
-        .monsters
-        .values()
-        .filter(|monster| {
-            is_horde_monster(monster) == player_in_horde
-                && within_replication_interest(
-                    monster,
-                    x,
-                    y,
-                    monster
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| known_monsters.contains(id)),
-                )
-        })
-        .cloned()
-        .collect();
-    let projectiles = world
-        .projectiles
-        .iter()
-        .filter(|projectile| {
-            is_horde_projectile(projectile) == player_in_horde
-                && within_replication_interest(
-                    projectile,
-                    x,
-                    y,
-                    projectile
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .is_some_and(|id| known_projectiles.contains(id)),
-                )
-        })
-        .cloned()
-        .collect();
-    let players = state
-        .players
-        .iter()
-        .filter(|(id, other)| {
-            if id.as_str() == player_id {
-                return true;
-            }
-            let other_in_horde = state
-                .horde
-                .as_ref()
-                .is_some_and(|horde| horde.participants.contains_key(id.as_str()));
-            other_in_horde == player_in_horde
-                && within_replication_interest(
-                    &other.value,
-                    x,
-                    y,
-                    known_players.contains(id.as_str()),
-                )
-        })
-        .map(|(_, other)| other.value.clone())
-        .collect();
-    Some(ReplicationView {
-        monsters,
-        projectiles,
-        players,
-        horde: horde_snapshot(state),
-    })
-}
-
-fn entity_delta(previous: &mut HashMap<String, Value>, current: Vec<Value>) -> Value {
-    let next = current
-        .into_iter()
-        .filter_map(|entity| {
-            let id = entity
-                .get("id")
-                .and_then(Value::as_str)
-                .map(str::to_owned)?;
-            Some((id, entity))
-        })
-        .collect::<HashMap<_, _>>();
-    let upsert = next
-        .iter()
-        .filter(|(id, entity)| previous.get(*id) != Some(*entity))
-        .map(|(_, entity)| entity.clone())
-        .collect::<Vec<_>>();
-    let remove = previous
-        .keys()
-        .filter(|id| !next.contains_key(*id))
-        .cloned()
-        .collect::<Vec<_>>();
-    *previous = next;
-    json!({ "upsert": upsert, "remove": remove })
-}
-
-fn replication_payloads(state: &mut WorldState) -> Vec<(mpsc::Sender<Outbound>, String)> {
-    state.replication_sequence = state.replication_sequence.wrapping_add(1);
-    let sequence = state.replication_sequence;
-    let session_players = state
-        .sessions
-        .iter()
-        .filter_map(|(session_id, session)| {
-            session.player_id.as_ref().map(|id| {
-                (
-                    *session_id,
-                    id.clone(),
-                    session
-                        .replication
-                        .monsters
-                        .keys()
-                        .cloned()
-                        .collect::<HashSet<_>>(),
-                    session
-                        .replication
-                        .projectiles
-                        .keys()
-                        .cloned()
-                        .collect::<HashSet<_>>(),
-                    session
-                        .replication
-                        .players
-                        .keys()
-                        .cloned()
-                        .collect::<HashSet<_>>(),
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    let views = session_players
-        .into_iter()
-        .filter_map(
-            |(session_id, player_id, known_monsters, known_projectiles, known_players)| {
-                replication_view(
-                    state,
-                    &player_id,
-                    &known_monsters,
-                    &known_projectiles,
-                    &known_players,
-                )
-                .map(|view| (session_id, view))
-            },
-        )
-        .collect::<Vec<_>>();
-    let mut payloads = Vec::with_capacity(views.len());
-    for (session_id, view) in views {
-        let Some(session) = state.sessions.get_mut(&session_id) else {
-            continue;
-        };
-        let monsters = entity_delta(&mut session.replication.monsters, view.monsters);
-        let projectiles = entity_delta(&mut session.replication.projectiles, view.projectiles);
-        let players = entity_delta(&mut session.replication.players, view.players);
-        let horde = if session.replication.horde.as_ref() == Some(&view.horde) {
-            Value::Null
-        } else {
-            session.replication.horde = Some(view.horde.clone());
-            view.horde
-        };
-        let payload = json!({
-            "type": "world_delta", "ready": true, "sequence": sequence,
-            "monsters": monsters, "projectiles": projectiles, "players": players, "horde": horde,
-        })
-        .to_string();
-        payloads.push((session.sender.clone(), payload));
-    }
-    payloads
 }
 
 fn number(value: &Value, field: &str, fallback: f64) -> f64 {
@@ -1968,12 +1757,6 @@ fn send_to(recipients: Vec<mpsc::Sender<Outbound>>, payload: String) {
     }
 }
 
-fn send_payloads(payloads: Vec<(mpsc::Sender<Outbound>, String)>) {
-    for (recipient, payload) in payloads {
-        let _ = recipient.try_send(Outbound::Text(payload));
-    }
-}
-
 fn reject_join(sender: mpsc::Sender<Outbound>, reason: &str) {
     let payload = json!({ "type": "join_rejected", "reason": reason }).to_string();
     let _ = sender.try_send(Outbound::Text(payload));
@@ -2018,100 +1801,9 @@ mod tests {
                 sender,
                 player_id: None,
                 last_position: Instant::now() - POSITION_INTERVAL,
-                replication: ReplicationCursor::default(),
             },
         );
         receiver
-    }
-
-    #[test]
-    fn replication_delta_is_interest_scoped_and_omits_unchanged_entities() {
-        let (sender, _receiver) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
-        let mut state = WorldState::default();
-        state.sessions.insert(
-            1,
-            Session {
-                sender,
-                player_id: Some("near".into()),
-                last_position: Instant::now(),
-                replication: ReplicationCursor::default(),
-            },
-        );
-        state.players.insert(
-            "near".into(),
-            PlayerRecord {
-                session_id: 1,
-                value: player("near", 600.0, 700.0),
-                respawn_at: None,
-                immune_until: None,
-                resume_token: "test".into(),
-            },
-        );
-        state.combat_world = Some(CombatWorld {
-            monsters: HashMap::from([
-                (
-                    "near_mob".into(),
-                    json!({ "id": "near_mob", "x": 700.0, "y": 700.0, "hp": 10.0 }),
-                ),
-                (
-                    "far_mob".into(),
-                    json!({ "id": "far_mob", "x": 5_000.0, "y": 4_000.0, "hp": 10.0 }),
-                ),
-            ]),
-            projectiles: Vec::new(),
-        });
-
-        let first = replication_payloads(&mut state);
-        assert_eq!(first.len(), 1);
-        let first = serde_json::from_str::<Value>(&first[0].1).expect("delta JSON");
-        assert_eq!(first["type"], "world_delta");
-        assert_eq!(
-            first["monsters"]["upsert"]
-                .as_array()
-                .expect("upserts")
-                .len(),
-            1
-        );
-        assert_eq!(first["monsters"]["upsert"][0]["id"], "near_mob");
-
-        let second = replication_payloads(&mut state);
-        let second = serde_json::from_str::<Value>(&second[0].1).expect("delta JSON");
-        assert!(
-            second["monsters"]["upsert"]
-                .as_array()
-                .expect("upserts")
-                .is_empty()
-        );
-
-        // Known entities stay replicated through the exit radius, preventing
-        // an AOI-boundary step from removing and recreating them every tick.
-        state
-            .combat_world
-            .as_mut()
-            .expect("combat world")
-            .monsters
-            .get_mut("near_mob")
-            .expect("near monster")["x"] = json!(2_400.0);
-        let retained = serde_json::from_str::<Value>(&replication_payloads(&mut state)[0].1)
-            .expect("delta JSON");
-        assert!(
-            retained["monsters"]["remove"]
-                .as_array()
-                .expect("removals")
-                .is_empty()
-        );
-        assert_eq!(retained["monsters"]["upsert"][0]["id"], "near_mob");
-
-        state
-            .combat_world
-            .as_mut()
-            .expect("combat world")
-            .monsters
-            .get_mut("near_mob")
-            .expect("near monster")["x"] = json!(2_700.0);
-        let removed = serde_json::from_str::<Value>(&replication_payloads(&mut state)[0].1)
-            .expect("delta JSON");
-        assert_eq!(removed["monsters"]["remove"][0], "near_mob");
     }
 
     async fn recv_text(receiver: &mut mpsc::Receiver<Outbound>, description: &str) -> String {
@@ -2203,23 +1895,20 @@ mod tests {
         assert_eq!(projectile["type"], "magic_orb");
         assert_eq!(projectile["visualOffsetY"], -42.0);
 
-        assert!(
-            sanitize_player_projectile(
-                Some(&json!({
-                    "type": "meteor", "x": 1_700.0, "y": 750.0,
-                    "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
-                })),
-                "caster",
-                &player,
-            )
-            .is_none()
-        );
+        assert!(sanitize_player_projectile(
+            Some(&json!({
+                "type": "meteor", "x": 1_700.0, "y": 750.0,
+                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
+            })),
+            "caster",
+            &player,
+        )
+        .is_none());
     }
 
     #[test]
     fn server_revives_dead_player_at_camp() {
-        let (_, mut value) =
-            sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
+        let (_, mut value) = sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
         value["hp"] = json!(0.0);
         value["state"] = json!("dead");
         let mut state = WorldState::default();
@@ -2236,10 +1925,7 @@ mod tests {
 
         tick_player_respawns(&mut state);
 
-        let revived = state
-            .players
-            .get("downed")
-            .expect("player remains connected");
+        let revived = state.players.get("downed").expect("player remains connected");
         assert_eq!(number(&revived.value, "hp", 0.0), 100.0);
         assert_eq!(number(&revived.value, "x", 0.0), PLAYER_RESPAWN_X);
         assert_eq!(number(&revived.value, "y", 0.0), PLAYER_RESPAWN_Y);
@@ -2493,10 +2179,8 @@ mod tests {
         // Repeated enter packets must only resync an existing participant.
         // They must not rewind the run, move the player, or refill HP.
         enter_horde(&server, 1).await;
-        let resumed = serde_json::from_str::<Value>(
-            &recv_text(&mut first, "idempotent enter snapshot").await,
-        )
-        .expect("snapshot JSON");
+        let resumed = serde_json::from_str::<Value>(&recv_text(&mut first, "idempotent enter snapshot").await)
+            .expect("snapshot JSON");
         let _ = recv_text(&mut second, "idempotent enter snapshot").await;
         let first_player = resumed["players"]
             .as_array()
@@ -2512,9 +2196,8 @@ mod tests {
         }
 
         enter_horde(&server, 2).await;
-        let rejection =
-            serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
-                .expect("rejection JSON");
+        let rejection = serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
+            .expect("rejection JSON");
         assert_eq!(rejection["type"], "horde_join_rejected");
         assert_eq!(rejection["reason"], "run_in_progress");
 
@@ -2580,7 +2263,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn heal_is_confirmed_by_the_next_authoritative_delta() {
+    async fn heal_is_confirmed_by_an_immediate_authoritative_snapshot() {
         let server = Arc::new(Server {
             state: Mutex::new(WorldState::default()),
             max_players: 4,
@@ -2605,18 +2288,19 @@ mod tests {
         let _ = receiver.recv().await.expect("world bootstrap");
         {
             let mut state = server.state.lock().await;
-            state.players.get_mut("pilot").expect("player").value["hp"] = json!(40.0);
+            state
+                .players
+                .get_mut("pilot")
+                .expect("player")
+                .value["hp"] = json!(40.0);
         }
 
         heal_player(&server, 1, json!({ "amount": 25.0 })).await;
 
-        let delta = {
-            let mut state = server.state.lock().await;
-            replication_payloads(&mut state)
-        };
-        let delta = serde_json::from_str::<Value>(&delta[0].1).expect("delta JSON");
-        assert_eq!(delta["type"], "world_delta");
-        assert_eq!(delta["players"]["upsert"][0]["hp"], 65.0);
+        let snapshot = serde_json::from_str::<Value>(&recv_text(&mut receiver, "heal snapshot").await)
+            .expect("snapshot JSON");
+        assert_eq!(snapshot["type"], "world_snapshot");
+        assert_eq!(snapshot["players"][0]["hp"], 65.0);
     }
 
     #[tokio::test]
@@ -2645,7 +2329,11 @@ mod tests {
         let _ = recv_text(&mut receiver, "world bootstrap").await;
         {
             let mut state = server.state.lock().await;
-            state.players.get_mut("pilot").expect("player").value["hp"] = json!(12.0);
+            state
+                .players
+                .get_mut("pilot")
+                .expect("player")
+                .value["hp"] = json!(12.0);
         }
 
         enter_horde(&server, 1).await;
@@ -2662,11 +2350,7 @@ mod tests {
         assert!(world.projectiles.is_empty());
         let player = state.players.get("pilot").expect("player");
         assert_eq!(number(&player.value, "hp", 0.0), 100.0);
-        for monster in world
-            .monsters
-            .values()
-            .filter(|monster| is_horde_monster(monster))
-        {
+        for monster in world.monsters.values().filter(|monster| is_horde_monster(monster)) {
             let dx = number(monster, "x", 0.0) - HORDE_CENTER_X;
             let dy = number(monster, "y", 0.0) - HORDE_CENTER_Y;
             assert!(dx.hypot(dy) >= 680.0);
@@ -2683,7 +2367,10 @@ mod tests {
             "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
         })])
         .expect("valid monster manifest");
-        monsters.get_mut("monster_one").expect("monster")["attackCooldown"] = json!(1.0);
+        monsters
+            .get_mut("monster_one")
+            .expect("monster")
+            ["attackCooldown"] = json!(1.0);
         let mut state = WorldState::default();
         state.players.insert(
             "player_one".into(),
