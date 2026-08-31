@@ -17,6 +17,7 @@ import { WorldMapModal } from './components/WorldMapModal';
 import { LevelUpModal } from './components/LevelUpModal';
 import { GunsmithModal } from './components/GunsmithModal';
 import { ChatAndEmotes } from './components/ChatAndEmotes';
+import { SettingsModal } from './components/SettingsModal';
 
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
@@ -479,6 +480,23 @@ export function App() {
                 engine.handleTeleport(x, y, zoneName);
                 engine.setActiveModal('none');
               }}
+            />
+          )}
+
+          {engine.activeModal === 'settings' && (
+            <SettingsModal
+              player={engine.player}
+              onClose={() => engine.setActiveModal('none')}
+              onLogout={() => {
+                setCreatedPlayer(null);
+                engine.setActiveModal('none');
+              }}
+              onRespawn={() => {
+                engine.handleRespawn();
+                engine.setActiveModal('none');
+              }}
+              isMuted={isMuted}
+              onToggleMute={handleToggleMute}
             />
           )}
 

@@ -16,7 +16,7 @@ interface HUDProps {
   player: Player;
   gameTimePhase?: number;
   nearbyNpcName?: string;
-  onOpenModal: (modal: 'inventory' | 'craft' | 'shop' | 'skills' | 'map') => void;
+  onOpenModal: (modal: 'inventory' | 'craft' | 'shop' | 'skills' | 'map' | 'settings') => void;
   onUseSkill: (idx: number) => void;
   onSwitchWeapon?: (gunType: GunType) => void;
   onReload?: () => void;
@@ -560,6 +560,23 @@ export const HUD: React.FC<HUDProps> = ({
             <span className="text-base group-hover:scale-110 transition-transform">✨</span>
             <span className="text-[8px] font-black font-mono px-1 py-0.2 rounded-xs mt-0.5 bg-zinc-900 text-rose-400 border border-zinc-600">
               [K]
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onOpenModal('settings')}
+            style={{
+              clipPath: 'polygon(2% 0%, 98% 2px, 100% 95%, 92% 100%, 0% 93%)',
+              transform: 'translateY(-1px) rotate(2deg)',
+              transition: 'all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
+            }}
+            className="px-2.5 py-2 text-xs font-mono bg-[#18181B] hover:bg-zinc-800 text-white/90 cursor-pointer flex flex-col items-center min-w-[44px] shadow-[0_6px_14px_rgba(0,0,0,0.7)] border-2 border-zinc-700 hover:border-amber-400 hover:-translate-y-1.5 hover:scale-108 group"
+            title="Settings [ESC]"
+          >
+            <span className="text-base group-hover:scale-110 transition-transform">⚙️</span>
+            <span className="text-[8px] font-black font-mono px-1 py-0.2 rounded-xs mt-0.5 bg-zinc-900 text-rose-400 border border-zinc-600">
+              [ESC]
             </span>
           </button>
         </div>

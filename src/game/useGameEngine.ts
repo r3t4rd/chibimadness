@@ -924,7 +924,7 @@ export function useGameEngine(initialPlayer: Player) {
   const [screenShake, setScreenShake] = useState<{ intensity: number; duration: number }>({ intensity: 0, duration: 0 });
 
   // Interactive UI Modal states
-  const [activeModal, setActiveModal] = useState<'none' | 'inventory' | 'craft' | 'shop' | 'dialogue' | 'skills' | 'map'>('none');
+  const [activeModal, setActiveModal] = useState<'none' | 'inventory' | 'craft' | 'shop' | 'dialogue' | 'skills' | 'map' | 'settings'>('none');
   const [activeNpc, setActiveNpc] = useState<NPC | null>(null);
   const [nearbyInteractable, setNearbyInteractable] = useState<{ type: 'npc' | 'node'; id: string; name: string } | null>(null);
   const nearbyInteractableRef = useRef<{ type: 'npc' | 'node'; id: string; name: string } | null>(null);
@@ -932,7 +932,7 @@ export function useGameEngine(initialPlayer: Player) {
   const gameTimePhaseRef = useRef(0.32);
   const gameTimeUiTimerRef = useRef(0);
   const [toastNotification, setToastNotification] = useState<{ id: string; title: string; message: string; icon: string } | null>(null);
-  const activeModalRef = useRef<'none' | 'inventory' | 'craft' | 'shop' | 'dialogue' | 'skills' | 'map'>('none');
+  const activeModalRef = useRef<'none' | 'inventory' | 'craft' | 'shop' | 'dialogue' | 'skills' | 'map' | 'settings'>('none');
   activeModalRef.current = activeModal;
 
   const [hordeRun, setHordeRun] = useState<HordeRunState>(() => createEmptyHordeRun());
@@ -5537,6 +5537,8 @@ export function useGameEngine(initialPlayer: Player) {
           if (activeModalRef.current !== 'none') {
             setActiveModal('none');
             setActiveNpc(null);
+          } else {
+            setActiveModal('settings');
           }
           return;
         }
@@ -5867,6 +5869,43 @@ export function useGameEngine(initialPlayer: Player) {
     });
   }, []);
 
+  const handleRespawn = useCallback(() => {
+    if (hordeRunRef.current.active) {
+      if (endHordeRunRef.current) {
+        endHordeRunRef.current('teleport', false);
+      }
+    }
+
+    const revivedPlayer: Player = {
+      ...playerRef.current,
+      x: 650,
+      y: 750,
+      vx: 0,
+      vy: 0,
+      jumpZ: 0,
+      jumpVz: 0,
+      isJumping: false,
+      dodgeTimer: 1.8, // Invulnerability recovery shield
+      dodgeCooldown: 0,
+      stats: {
+        ...playerRef.current.stats,
+        hp: playerRef.current.stats.maxHp,
+        mp: playerRef.current.stats.maxMp,
+      },
+      stamina: playerRef.current.maxStamina,
+      state: 'idle',
+      isRespawning: false,
+      respawnTimer: undefined,
+      currentZone: 'cyber_city', // Return to cyber_city camp
+    };
+    playerRef.current = revivedPlayer;
+    setPlayer(revivedPlayer);
+    sound.playRespawnFanfare();
+    showToast('RESPAWNED! 🌟', 'Returned to the campsite camp!', '✨');
+    spawnParticles(650, 750, '#38BDF8', 25, 'spark');
+    net.updatePosition(revivedPlayer);
+  }, [showToast, spawnParticles]);
+
   return {
     player,
     remotePlayers,
@@ -5925,5 +5964,6 @@ export function useGameEngine(initialPlayer: Player) {
     handleAcceptQuest,
     handleBuyItem,
     handleSellItem,
+    handleRespawn,
   };
 }

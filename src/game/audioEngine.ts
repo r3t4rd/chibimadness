@@ -1,10 +1,67 @@
 class AudioEngine {
   private ctx: AudioContext | null = null;
-  private isMuted: boolean = false;
+  private _isMuted: boolean = false;
+  private isFocusMuted: boolean = false;
   private bgmGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
   private isMusicPlaying: boolean = false;
   private musicTimer: number | null = null;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      this.isFocusMuted = !document.hasFocus();
+
+      const handleSuspend = () => {
+        if (this.ctx && this.ctx.state === 'running') {
+          this.ctx.suspend().catch(() => {});
+        }
+      };
+
+      const handleResume = () => {
+        if (this.ctx && this.ctx.state === 'suspended' && !this.isFocusMuted) {
+          this.ctx.resume().catch(() => {});
+        }
+      };
+
+      window.addEventListener('blur', () => {
+        this.isFocusMuted = true;
+        this.updateGainValues();
+        handleSuspend();
+      });
+
+      window.addEventListener('focus', () => {
+        this.isFocusMuted = false;
+        this.updateGainValues();
+        handleResume();
+      });
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+          this.isFocusMuted = true;
+          this.updateGainValues();
+          handleSuspend();
+        } else {
+          this.isFocusMuted = !document.hasFocus();
+          this.updateGainValues();
+          if (!this.isFocusMuted) {
+            handleResume();
+          }
+        }
+      });
+    }
+  }
+
+  private get isMuted(): boolean {
+    return this._isMuted || this.isFocusMuted;
+  }
+
+  private updateGainValues() {
+    const activeMuted = this._isMuted || this.isFocusMuted;
+    if (this.sfxGain && this.bgmGain) {
+      this.sfxGain.gain.value = activeMuted ? 0 : 0.35;
+      this.bgmGain.gain.value = activeMuted ? 0 : 0.12;
+    }
+  }
 
   private initCtx() {
     if (!this.ctx) {
@@ -18,30 +75,24 @@ class AudioEngine {
       this.bgmGain.gain.value = 0.12;
       this.bgmGain.connect(this.ctx.destination);
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
+    if (this.ctx && this.ctx.state === 'suspended' && !this.isFocusMuted) {
       this.ctx.resume().catch(() => {});
     }
   }
 
   public toggleMute(): boolean {
-    this.isMuted = !this.isMuted;
-    if (this.sfxGain && this.bgmGain) {
-      this.sfxGain.gain.value = this.isMuted ? 0 : 0.35;
-      this.bgmGain.gain.value = this.isMuted ? 0 : 0.12;
-    }
-    return this.isMuted;
+    this._isMuted = !this._isMuted;
+    this.updateGainValues();
+    return this._isMuted;
   }
 
   public setMuted(muted: boolean) {
-    this.isMuted = muted;
-    if (this.sfxGain && this.bgmGain) {
-      this.sfxGain.gain.value = this.isMuted ? 0 : 0.35;
-      this.bgmGain.gain.value = this.isMuted ? 0 : 0.12;
-    }
+    this._isMuted = muted;
+    this.updateGainValues();
   }
 
   public getMuted(): boolean {
-    return this.isMuted;
+    return this._isMuted;
   }
 
   // Juicy spawn bounce SFX: boing!
