@@ -1,7 +1,9 @@
 //! Native Windows package for the ChibiMadness web game.
 //!
-//! The compiled Vite bundle is embedded in memory; the process does not expose
-//! a local HTTP server or read game files at runtime.
+//! The compiled Vite bundle is embedded in memory. A verified optional patch is
+//! loaded from the local cache; the process never exposes a local HTTP server.
+
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use std::{
     cell::RefCell,
