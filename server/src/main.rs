@@ -1776,8 +1776,8 @@ fn sanitize_player_projectile(
     let vx = bounded_number(&Value::Object(value.clone()), "vx", -50.0, 50.0)?;
     let vy = bounded_number(&Value::Object(value.clone()), "vy", -50.0, 50.0)?;
     let size = bounded_number(&Value::Object(value.clone()), "size", 2.0, 32.0).unwrap_or(5.0);
-    let visual_offset_y = bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0)
-        .unwrap_or(0.0);
+    let visual_offset_y =
+        bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0).unwrap_or(0.0);
     let color = value
         .get("color")
         .and_then(Value::as_str)
