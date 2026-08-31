@@ -5,6 +5,8 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod world_renderer;
+
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
@@ -20,20 +22,14 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
+use world_renderer::{NativeRenderFrame, NativeWorldRenderer, NativeWorldState};
 use yuyib::{
-    platform::{
-        Window, WindowConfig, WindowMode,
-        winit::{
-            application::ApplicationHandler,
-            event::WindowEvent,
-            event_loop::{ActiveEventLoop, EventLoop},
-            window::WindowId,
-        },
-    },
+    app::{Application, ApplicationWebView, ApplicationWebViewHandle, RenderLoop},
+    platform::{WindowConfig, WindowMode},
     webview::{
         AssetBundle, AssetLimits, AssetPath, BridgeLimits, BridgeRouter, EndpointName, LocalCsp,
         LocalPage, MimePolicy, PageEvent, PageSessionId, TypedEndpoint, WebSocketOrigin,
-        WebViewBounds, WebViewBuilder, WebViewHost,
+        WebViewBuilder,
     },
 };
 
@@ -72,6 +68,7 @@ struct GameConfiguration {
     server_url: Option<String>,
     content_version: String,
     content_source: ContentSource,
+    native_renderer: bool,
 }
 
 struct ServerEndpoint {
@@ -92,91 +89,9 @@ struct LaunchAssets {
     source: ContentSource,
 }
 
-/// A WebView-only native host.  Do not put this opaque child over
-/// `yuyib::app::Application`: that facade creates a WGPU surface which adds a
-/// second present/compositor path even though this client has no native draw.
-struct DesktopApp {
-    window: Option<Window>,
-    webview: Rc<RefCell<Option<WebViewHost>>>,
-    builder: Option<WebViewBuilder>,
-}
-
-impl DesktopApp {
-    fn resize_webview(&self) {
-        let webview_guard = self.webview.borrow();
-        let (Some(window), Some(webview)) = (&self.window, webview_guard.as_ref()) else {
-            return;
-        };
-        let physical = window.physical_size();
-        let logical = physical.to_logical::<f64>(window.raw().scale_factor());
-        let Ok(bounds) = WebViewBounds::new(0.0, 0.0, logical.width.max(1.0), logical.height.max(1.0)) else {
-            return;
-        };
-        if let Err(error) = webview.set_bounds(bounds) {
-            eprintln!("ChibiMadness WebView resize ignored: {error}");
-        }
-    }
-}
-
-impl ApplicationHandler for DesktopApp {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-        let window = match Window::create(
-            event_loop,
-            &WindowConfig {
-                title: "ChibiMadness — Yuyib Desktop".to_owned(),
-                width: 1_600,
-                height: 900,
-                resizable: true,
-                decorations: true,
-                mode: WindowMode::Windowed,
-            },
-        ) {
-            Ok(window) => window,
-            Err(error) => {
-                eprintln!("ChibiMadness window creation failed: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
-        let Some(builder) = self.builder.take() else {
-            event_loop.exit();
-            return;
-        };
-        let webview = match builder.build(&window) {
-            Ok(webview) => webview,
-            Err(error) => {
-                eprintln!("ChibiMadness WebView creation failed: {error}");
-                event_loop.exit();
-                return;
-            }
-        };
-        *self.webview.borrow_mut() = Some(webview);
-        self.window = Some(window);
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::Resized(_) => self.resize_webview(),
-            WindowEvent::CloseRequested => {
-                self.webview.borrow_mut().take();
-                self.window.take();
-                event_loop.exit();
-            }
-            _ => {}
-        }
-    }
-}
-
 fn main() -> Result<(), Box<dyn Error>> {
     let server = configured_server()?;
+    let native_renderer = native_renderer_enabled();
     let csp = match &server {
         Some(server) => LocalCsp::strict().with_websocket_origin(&server.csp_origin),
         None => LocalCsp::strict(),
@@ -186,8 +101,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let session = PageSessionId::parse("b9c9f5bbfae14dbdb3f5e2356b74d0aa")?;
     let limits = BridgeLimits::default();
-    let outbound = Rc::new(RefCell::new(None::<WebViewHost>));
+    let outbound = Rc::new(RefCell::new(None::<ApplicationWebViewHandle>));
     let outbound_for_endpoint = Rc::clone(&outbound);
+    let native_world = Rc::new(RefCell::new(NativeWorldState::default()));
+    let native_world_for_endpoint = Rc::clone(&native_world);
     let server_url = server.map(|server| server.websocket_url);
     let content_version = launch_assets.version;
     let content_source = launch_assets.source;
@@ -195,8 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("game.ready")?,
         move |_message: GameReady| {
-            let webview_guard = outbound_for_endpoint.borrow();
-            let Some(webview) = webview_guard.as_ref() else {
+            let Some(handle) = outbound_for_endpoint.borrow().clone() else {
                 return;
             };
             let event = PageEvent::from_typed(
@@ -207,24 +123,50 @@ fn main() -> Result<(), Box<dyn Error>> {
                     server_url: server_url.clone(),
                     content_version: content_version.clone(),
                     content_source,
+                    native_renderer,
                 },
                 limits,
             );
             if let Ok(event) = event {
-                let _ = webview.emit_event(&event);
+                let _ = handle.enqueue(event);
             }
         },
     ))?;
+    bridge.register(TypedEndpoint::new(
+        EndpointName::parse("world.frame")?,
+        move |frame: NativeRenderFrame| native_world_for_endpoint.borrow_mut().apply(frame),
+    ))?;
     let builder = WebViewBuilder::new()
         .with_local_page(page)
+        .with_transparent(native_renderer)
         .with_bridge_router(bridge);
-    let event_loop = EventLoop::new()?;
-    let mut app = DesktopApp {
-        window: None,
-        webview: outbound,
-        builder: Some(builder),
-    };
-    event_loop.run_app(&mut app)?;
+    let (webview, handle) = ApplicationWebView::new(builder).with_event_queue(8)?;
+    *outbound.borrow_mut() = Some(handle);
+    let mut renderer = NativeWorldRenderer::default();
+    Application::new()
+        .window(WindowConfig {
+            title: "ChibiMadness — Yuyib Desktop".to_owned(),
+            width: 1_600,
+            height: 900,
+            resizable: true,
+            decorations: true,
+            mode: WindowMode::Windowed,
+        })
+        // This is now the intended game renderer, not an invisible surface
+        // behind an opaque WebView. It presents the last bridge frame at the
+        // display cadence while the WebView owns only sparse UI.
+        .render_loop(if native_renderer {
+            RenderLoop::Continuous
+        } else {
+            RenderLoop::OnDemand
+        })
+        .on_render(move |frame| {
+            if native_renderer {
+                renderer.render(frame, &native_world.borrow());
+            }
+        })
+        .webview(webview)
+        .run()?;
     Ok(())
 }
 
@@ -496,14 +438,23 @@ fn configured_server() -> Result<Option<ServerEndpoint>, Box<dyn Error>> {
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--server" => server = Some(arguments.next().ok_or("--server requires a WSS URL")?),
+            "--native-renderer" => {}
             "--help" | "-h" => {
-                println!("Usage: chibimadness-desktop [--server wss://game.example.com/ws]");
+                println!(
+                    "Usage: chibimadness-desktop [--server wss://game.example.com/ws] [--native-renderer]"
+                );
                 return Ok(None);
             }
             _ => return Err(format!("unknown argument {argument:?}").into()),
         }
     }
     server.map(parse_server_endpoint).transpose()
+}
+
+fn native_renderer_enabled() -> bool {
+    env::args()
+        .skip(1)
+        .any(|argument| argument == "--native-renderer")
 }
 
 fn parse_server_endpoint(value: String) -> Result<ServerEndpoint, Box<dyn Error>> {

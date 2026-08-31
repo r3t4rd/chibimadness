@@ -21,6 +21,27 @@ export function getCameraState() {
   };
 }
 
+// Native desktop rendering still uses the JS game state as its source of
+// truth. Keep camera and input transforms alive even when Canvas2D is not
+// submitting the world frame.
+export function updateNativeCamera(localPlayer: Player, time: number) {
+  const elapsedSeconds = lastRenderTimestamp === 0
+    ? 1 / 60
+    : Math.min(0.1, Math.max(0, (time - lastRenderTimestamp) / 1000));
+  lastRenderTimestamp = time;
+  const activeGunType = localPlayer.equipment?.weapon?.gunType || 'pistol';
+  const maxLookAhead = activeGunType === 'cheytac' ? 880 : activeGunType === 'ak47' ? 500 : 360;
+  const lookAhead = localPlayer.isAiming && !localPlayer.isInspectingWeapon
+    ? maxLookAhead
+    : 0;
+  const targetX = localPlayer.x + Math.cos(localPlayer.aimAngle || 0) * lookAhead;
+  const targetY = localPlayer.y + Math.sin(localPlayer.aimAngle || 0) * lookAhead;
+  const factor = 1 - Math.exp(-elapsedSeconds * (localPlayer.isAiming ? 6.5 : 8));
+  smoothedCameraX += (targetX - smoothedCameraX) * factor;
+  smoothedCameraY += (targetY - smoothedCameraY) * factor;
+  return getCameraState();
+}
+
 export function screenToWorld(
   screenX: number,
   screenY: number,

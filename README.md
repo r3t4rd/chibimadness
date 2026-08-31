@@ -21,6 +21,12 @@ git push origin v0.1.0
 .\chibimadness-desktop.exe --server wss://example.com/ws
 ```
 
+Native world-renderer preview (Rust/WGPU under the WebView HUD):
+
+```powershell
+.\chibimadness-desktop.exe --native-renderer
+```
+
 ### Hot updates без замены `.exe`
 
 Начиная с desktop-клиента с updater, каждый GitHub Release содержит `web-patch.zip` и `patch-manifest.json`. При запуске game host берёт последнюю проверенную web-версию: TS/JS-логику, карту, объекты, UI и ассеты можно менять последующими релизами без новой загрузки native runtime.

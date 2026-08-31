@@ -6,6 +6,21 @@ export type ContentBuildInfo = {
   source: 'embedded' | 'patch' | null;
 };
 
+export type NativeWorldRenderFrame = {
+  cameraX: number;
+  cameraY: number;
+  zoom: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  entities: Array<{
+    x: number;
+    y: number;
+    size: number;
+    color: [number, number, number, number];
+    layer: number;
+  }>;
+};
+
 declare global {
   interface Window {
     yuyib?: { post: (message: unknown) => void };
@@ -16,6 +31,7 @@ let configuredServerUrl: string | null = null;
 const serverConfigurationListeners = new Set<() => void>();
 const contentBuildListeners = new Set<() => void>();
 let contentBuildInfo: ContentBuildInfo = { version: null, source: null };
+let nativeWorldRendererEnabled = false;
 let configurationRetryTimer: number | null = null;
 let nextBridgeMessageId = 1;
 
@@ -43,7 +59,12 @@ if (typeof window !== 'undefined') {
   window.addEventListener('yuyib:event', (event: Event) => {
     const detail = (event as CustomEvent<{
       event?: string;
-      payload?: { server_url?: unknown; content_version?: unknown; content_source?: unknown };
+      payload?: {
+        server_url?: unknown;
+        content_version?: unknown;
+        content_source?: unknown;
+        native_renderer?: unknown;
+      };
     }>).detail;
     if (detail?.event === 'game.configuration') {
       const candidate = detail.payload?.server_url;
@@ -56,6 +77,7 @@ if (typeof window !== 'undefined') {
         version: typeof version === 'string' && version.length > 0 ? version : null,
         source: source === 'embedded' || source === 'patch' ? source : null,
       };
+      nativeWorldRendererEnabled = detail.payload?.native_renderer === true;
       if (configuredServerUrl && configurationRetryTimer !== null) {
         window.clearTimeout(configurationRetryTimer);
         configurationRetryTimer = null;
@@ -75,6 +97,20 @@ export function getContentBuildInfo(): ContentBuildInfo {
 export function subscribeContentBuildInfo(listener: () => void) {
   contentBuildListeners.add(listener);
   return () => contentBuildListeners.delete(listener);
+}
+
+export function isNativeWorldRendererEnabled() {
+  return nativeWorldRendererEnabled;
+}
+
+export function sendNativeWorldRenderFrame(frame: NativeWorldRenderFrame) {
+  if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint: 'world.frame',
+    payload: frame,
+  });
 }
 
 class MultiplayerClient {

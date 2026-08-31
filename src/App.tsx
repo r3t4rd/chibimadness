@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld, getCameraState } from './game/worldRenderer';
+import { drawWorld, screenToWorld, getCameraState, updateNativeCamera } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -22,7 +22,13 @@ import { SettingsModal } from './components/SettingsModal';
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
 import { CLASS_DEFAULTS } from './game/constants';
-import { getContentBuildInfo, net, subscribeContentBuildInfo } from './game/multiplayerClient';
+import {
+  getContentBuildInfo,
+  isNativeWorldRendererEnabled,
+  net,
+  sendNativeWorldRenderFrame,
+  subscribeContentBuildInfo,
+} from './game/multiplayerClient';
 
 const FALLBACK_PLAYER: Player = {
   id: 'default',
@@ -75,11 +81,26 @@ const FALLBACK_PLAYER: Player = {
   pendingEvolutionPicks: 0,
 };
 
+function hexColor(color: string | undefined, fallback: [number, number, number, number]): [number, number, number, number] {
+  const match = color?.match(/^#([0-9a-f]{6})$/i);
+  if (!match) return fallback;
+  const value = Number.parseInt(match[1], 16);
+  return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255, 1];
+}
+
+function nativeMonsterColor(faction: string | undefined): [number, number, number, number] {
+  if (faction === 'police') return [0.12, 0.75, 1, 1];
+  if (faction === 'punk_demon') return [1, 0.2, 0.32, 1];
+  if (faction === 'bandit') return [1, 0.6, 0.12, 1];
+  return [0.75, 0.2, 0.9, 1];
+}
+
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
+  const [nativeWorldRenderer, setNativeWorldRenderer] = useState(isNativeWorldRendererEnabled);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -102,6 +123,7 @@ export function App() {
 
   useEffect(() => subscribeContentBuildInfo(() => {
     setContentBuild(getContentBuildInfo());
+    setNativeWorldRenderer(isNativeWorldRendererEnabled());
   }), []);
 
   // Main Canvas Render Loop
@@ -111,8 +133,8 @@ export function App() {
     const canvas = canvasRef.current;
     if (!canvas || !createdPlayer) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const ctx = nativeWorldRenderer ? null : canvas.getContext('2d');
+    if (!nativeWorldRenderer && !ctx) return;
 
     // Responsive Canvas Resize Observer
     const handleResize = () => {
@@ -127,6 +149,61 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
+      if (nativeWorldRenderer) {
+        const camera = updateNativeCamera(curEngine.player, time);
+        const entities = [
+          {
+            x: curEngine.player.x,
+            y: curEngine.player.y,
+            size: 38,
+            color: [0.1, 0.9, 1, 1] as [number, number, number, number],
+            layer: 20,
+          },
+          ...(Object.values(curEngine.remotePlayers) as Player[]).map((player) => ({
+            x: player.x,
+            y: player.y,
+            size: 34,
+            color: [0.35, 0.65, 1, 1] as [number, number, number, number],
+            layer: 18,
+          })),
+          ...curEngine.monsters
+            .filter((monster) => monster.state !== 'dead' && monster.hp > 0)
+            .map((monster) => ({
+              x: monster.x,
+              y: monster.y - (monster.jumpZ || 0),
+              size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
+              color: nativeMonsterColor(monster.faction),
+              layer: 10,
+            })),
+          ...curEngine.projectiles.map((projectile) => ({
+            x: projectile.x,
+            y: projectile.y + (projectile.visualOffsetY || 0),
+            size: Math.max(4, projectile.size * 1.8),
+            color: hexColor(projectile.color, [1, 0.9, 0.2, 1]),
+            layer: 30,
+          })),
+        ];
+        sendNativeWorldRenderFrame({
+          cameraX: camera.x,
+          cameraY: camera.y,
+          zoom: camera.zoom,
+          viewportWidth: canvas.width,
+          viewportHeight: canvas.height,
+          entities,
+        });
+        perfMonitor.setExtras({
+          monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
+          particles: curEngine.particles.length,
+          projectiles: curEngine.projectiles.length,
+          zoom: camera.zoom,
+          canvasW: canvas.width,
+          canvasH: canvas.height,
+        });
+        perfMonitor.recordDraw(0);
+        perfMonitor.recordFrame(frameIntervalMs);
+        animationId = requestAnimationFrame(render);
+        return;
+      }
 
       perfMonitor.setExtras({
         monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
@@ -170,7 +247,7 @@ export function App() {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [createdPlayer]);
+  }, [createdPlayer, nativeWorldRenderer]);
 
   // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
   useEffect(() => {
@@ -239,7 +316,7 @@ export function App() {
   };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 select-none">
+    <div className={`relative w-screen h-screen overflow-hidden select-none ${nativeWorldRenderer ? 'bg-transparent' : 'bg-slate-950'}`}>
       {/* 1. Character Creation Screen if not yet spawned */}
       {!createdPlayer ? (
         <CharacterCreator
