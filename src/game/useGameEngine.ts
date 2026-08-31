@@ -2650,70 +2650,79 @@ export function useGameEngine(initialPlayer: Player) {
         }, i * 50);
       }
     } else if (skill.id === 'skill_spinning_blade') {
-      showToast('Sawblade Throw! 🌀', 'Spinning steel rips a line through the pack', '🌀');
+      showToast('Skyward Slam! ☄️', 'Leap and smash the ground!', '☄️');
       triggerShake(6, 0.2);
-      pushSkillProj({
-        id: `p_saw_${now}`,
-        ownerId: curPlayer.id,
-        type: 'spinning_blade',
-        x: curPlayer.x + aimDirX * 20,
-        y: curPlayer.y + aimDirY * 20,
-        vx: aimDirX * 18,
-        vy: aimDirY * 18,
-        damage: Math.round(curPlayer.stats.atk * 2.2),
-        range: 980,
-        distanceTraveled: 0,
-        color: '#CBD5E1',
-        size: 22,
-        piercing: true,
-        glow: true,
-      });
+      sound.playJump();
+
+      const dx = targetX - curPlayer.x;
+      const dy = targetY - curPlayer.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const maxRange = skill.range || 500;
+      const clampDist = Math.min(dist, maxRange);
+      const angle = Math.atan2(dy, dx);
+      const tx = curPlayer.x + Math.cos(angle) * clampDist;
+      const ty = curPlayer.y + Math.sin(angle) * clampDist;
+
+      const leapSlamDur = 0.55;
+      const modifiedPlayer: Player = {
+        ...skillCastPlayer,
+        leapSlamTimer: leapSlamDur,
+        leapSlamDuration: leapSlamDur,
+        leapSlamStartX: curPlayer.x,
+        leapSlamStartY: curPlayer.y,
+        leapSlamTargetX: tx,
+        leapSlamTargetY: ty,
+        dodgeTimer: leapSlamDur,
+        isJumping: true,
+        jumpZ: 1,
+      };
+      playerRef.current = modifiedPlayer;
+      setPlayer(modifiedPlayer);
+
     } else if (skill.id === 'skill_slash_scatter') {
-      showToast('Slash Scatter! 💥', 'Crescent waves fan out', '💥');
-      triggerShake(5, 0.18);
-      const n = 8;
-      const spread = (95 * Math.PI) / 180;
-      for (let i = 0; i < n; i++) {
-        const offset = (i - (n - 1) / 2) * (spread / (n - 1));
-        const a = aimAngle + offset;
-        pushSkillProj({
-          id: `p_ss_${now}_${i}`,
-          ownerId: curPlayer.id,
-          type: 'slash_wave',
-          x: curPlayer.x + Math.cos(a) * 18,
-          y: curPlayer.y + Math.sin(a) * 18,
-          vx: Math.cos(a) * 16,
-          vy: Math.sin(a) * 16,
-          damage: Math.round(curPlayer.stats.atk * 1.15),
-          range: 520,
-          distanceTraveled: 0,
-          color: '#67E8F9',
-          size: 20,
-          piercing: true,
-        });
-      }
+      showToast('Shadow Slash Dash! 💨', 'Dash forward and back slashing enemies!', '💨');
+      sound.playDodgeRoll();
+
+      const dx = targetX - curPlayer.x;
+      const dy = targetY - curPlayer.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const maxRange = skill.range || 320;
+      const clampDist = Math.min(dist, maxRange);
+      const angle = Math.atan2(dy, dx);
+      const tx = curPlayer.x + Math.cos(angle) * clampDist;
+      const ty = curPlayer.y + Math.sin(angle) * clampDist;
+
+      const modifiedPlayer: Player = {
+        ...skillCastPlayer,
+        dashSlashTimer: 0.16,
+        dashSlashPhase: 'forward',
+        dashSlashStartX: curPlayer.x,
+        dashSlashStartY: curPlayer.y,
+        dashSlashTargetX: tx,
+        dashSlashTargetY: ty,
+        dashSlashHitIds: [],
+        dodgeTimer: 0.32,
+      };
+      playerRef.current = modifiedPlayer;
+      setPlayer(modifiedPlayer);
+
     } else if (skill.id === 'skill_blade_storm') {
-      showToast('Blade Storm! ⚔️', 'Swords rain on the cursor', '⚔️');
-      triggerShake(10, 0.5);
-      for (let i = 0; i < 12; i++) {
-        const ox = (Math.random() - 0.5) * 220;
-        const oy = (Math.random() - 0.5) * 160;
-        pushSkillProj({
-          id: `p_fall_${now}_${i}`,
-          ownerId: curPlayer.id,
-          type: 'falling_sword',
-          x: targetX + ox,
-          y: targetY + oy - 180 - i * 8,
-          vx: 0,
-          vy: 16 + Math.random() * 6,
-          damage: Math.round(curPlayer.stats.atk * 1.8),
-          range: 260,
-          distanceTraveled: 0,
-          color: '#E0F2FE',
-          size: 16,
-          piercing: true,
-        });
-      }
+      showToast('Omnislash Flurry! ⚔️', 'Vanish and shred the target area!', '⚔️');
+      sound.playSkillCast('ultimate');
+
+      const modifiedPlayer: Player = {
+        ...skillCastPlayer,
+        omnislashTimer: 1.0,
+        omnislashStrikeTimer: 0.08,
+        omnislashStartX: curPlayer.x,
+        omnislashStartY: curPlayer.y,
+        omnislashTargetX: targetX,
+        omnislashTargetY: targetY,
+        omnislashStrikesLeft: 12,
+        dodgeTimer: 1.0,
+      };
+      playerRef.current = modifiedPlayer;
+      setPlayer(modifiedPlayer);
     } else if (skill.id === 'skill_meteor_rain') {
       showToast('Meteor Rain! ☄️', 'Fire from the sky', '☄️');
       triggerShake(8, 0.4);
@@ -3379,14 +3388,257 @@ export function useGameEngine(initialPlayer: Player) {
       let nextX = curPlayer.x;
       let nextY = curPlayer.y;
 
-      if (dodgeTimer > 0) {
-        nextX += dashVx * dt;
-        nextY += dashVy * dt;
-        dashVx *= 0.96;
-        dashVy *= 0.96;
+      // --- BLADE CLASS SKILLS OVERRIDES ---
+      const isLeaping = (curPlayer.leapSlamTimer ?? 0) > 0;
+      const isDashingSlash = (curPlayer.dashSlashTimer ?? 0) > 0;
+      const isOmnislashing = (curPlayer.omnislashStrikesLeft ?? 0) > 0;
+
+      if (isLeaping) {
+        const lTimer = Math.max(0, (curPlayer.leapSlamTimer ?? 0) - dt);
+        const lDur = curPlayer.leapSlamDuration ?? 0.55;
+        const lStartX = curPlayer.leapSlamStartX ?? curPlayer.x;
+        const lStartY = curPlayer.leapSlamStartY ?? curPlayer.y;
+        const lTargetX = curPlayer.leapSlamTargetX ?? curPlayer.x;
+        const lTargetY = curPlayer.leapSlamTargetY ?? curPlayer.y;
+
+        const t = lDur > 0 ? 1 - (lTimer / lDur) : 1;
+        nextX = lStartX + (lTargetX - lStartX) * t;
+        nextY = lStartY + (lTargetY - lStartY) * t;
+        jumpZ = Math.sin(t * Math.PI) * 150;
+
+        curPlayer.leapSlamTimer = lTimer;
+
+        if (lTimer <= 0) {
+          curPlayer.leapSlamTimer = undefined;
+          curPlayer.leapSlamDuration = undefined;
+          curPlayer.leapSlamStartX = undefined;
+          curPlayer.leapSlamStartY = undefined;
+          curPlayer.leapSlamTargetX = undefined;
+          curPlayer.leapSlamTargetY = undefined;
+
+          jumpZ = 0;
+          jumpVz = 0;
+          isJumping = false;
+
+          triggerShake(14, 0.4);
+          sound.playCrashSlam();
+          addDamagePopup(nextX, nextY - 10, 'БАБАХ!', '#EF4444', true, false, 'manga', 1.8, 0, -25);
+          spawnParticles(nextX, nextY + 10, '#CBD5E1', 30, 'smoke');
+          spawnParticles(nextX, nextY + 10, '#38BDF8', 25, 'spark');
+          addGroundDecal(nextX, nextY + 10, '#0284C7', 55);
+
+          const n = 16;
+          const dmg = Math.round(curPlayer.stats.atk * 3.5);
+          const now = Date.now();
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * Math.PI * 2;
+            projectilesRef.current.push({
+              id: `p_slam_ring_${now}_${i}`,
+              ownerId: curPlayer.id,
+              type: 'slash_wave',
+              x: nextX,
+              y: nextY,
+              vx: Math.cos(a) * 12,
+              vy: Math.sin(a) * 12,
+              damage: dmg,
+              range: 220,
+              distanceTraveled: 0,
+              color: '#38BDF8',
+              size: 26,
+              piercing: true,
+            });
+          }
+          setProjectiles([...projectilesRef.current]);
+
+          monstersRef.current.forEach((m) => {
+            if (m.hp <= 0 || m.state === 'dead') return;
+            const mdx = m.x - nextX;
+            const mdy = m.y - nextY;
+            const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+            if (mdist < 220) {
+              const kx = (mdx / (mdist || 1)) * 320;
+              const ky = (mdy / (mdist || 1)) * 320;
+              m.dashVx = kx;
+              m.dashVy = ky;
+              m.hp = Math.max(0, m.hp - dmg);
+              if (m.hp <= 0) m.state = 'dead';
+            }
+          });
+        }
+      } else if (isDashingSlash) {
+        const dTimer = Math.max(0, (curPlayer.dashSlashTimer ?? 0) - dt);
+        const dPhase = curPlayer.dashSlashPhase ?? 'forward';
+        const dStartX = curPlayer.dashSlashStartX ?? curPlayer.x;
+        const dStartY = curPlayer.dashSlashStartY ?? curPlayer.y;
+        const dTargetX = curPlayer.dashSlashTargetX ?? curPlayer.x;
+        const dTargetY = curPlayer.dashSlashTargetY ?? curPlayer.y;
+        const hitIds = curPlayer.dashSlashHitIds ?? [];
+
+        const t = 1 - (dTimer / 0.16);
+        if (dPhase === 'forward') {
+          nextX = dStartX + (dTargetX - dStartX) * t;
+          nextY = dStartY + (dTargetY - dStartY) * t;
+        } else {
+          nextX = dTargetX + (dStartX - dTargetX) * t;
+          nextY = dTargetY + (dStartY - dTargetY) * t;
+        }
+
+        if (Math.random() < 0.55) {
+          spawnParticles(nextX, nextY + 4, '#22D3EE', 5, 'spark');
+        }
+
+        const dmg = Math.round(curPlayer.stats.atk * 2.2);
+        monstersRef.current.forEach((m) => {
+          if (m.hp <= 0 || m.state === 'dead' || hitIds.includes(m.id)) return;
+          const mdx = m.x - nextX;
+          const mdy = m.y - nextY;
+          const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+          if (mdist < 75) {
+            hitIds.push(m.id);
+            m.hp = Math.max(0, m.hp - dmg);
+            spawnParticles(m.x, m.y, '#22D3EE', 8, 'spark');
+            sound.playSlash();
+            addDamagePopup(m.x, m.y - 12, `${dmg}`, '#22D3EE', false, false, 'manga');
+            if (m.hp <= 0) m.state = 'dead';
+          }
+        });
+
+        curPlayer.dashSlashTimer = dTimer;
+        curPlayer.dashSlashHitIds = hitIds;
+
+        if (dTimer <= 0) {
+          if (dPhase === 'forward') {
+            curPlayer.dashSlashPhase = 'backward';
+            curPlayer.dashSlashTimer = 0.16;
+            curPlayer.dashSlashHitIds = [];
+            sound.playDodgeRoll();
+          } else {
+            curPlayer.dashSlashTimer = undefined;
+            curPlayer.dashSlashPhase = undefined;
+            curPlayer.dashSlashStartX = undefined;
+            curPlayer.dashSlashStartY = undefined;
+            curPlayer.dashSlashTargetX = undefined;
+            curPlayer.dashSlashTargetY = undefined;
+            curPlayer.dashSlashHitIds = undefined;
+          }
+        }
+      } else if (isOmnislashing) {
+        let strikesLeft = curPlayer.omnislashStrikesLeft ?? 0;
+        let strikeTimer = Math.max(0, (curPlayer.omnislashStrikeTimer ?? 0) - dt);
+        const oStartX = curPlayer.omnislashStartX ?? curPlayer.x;
+        const oStartY = curPlayer.omnislashStartY ?? curPlayer.y;
+        const oTargetX = curPlayer.omnislashTargetX ?? curPlayer.x;
+        const oTargetY = curPlayer.omnislashTargetY ?? curPlayer.y;
+
+        if (strikeTimer <= 0 && strikesLeft > 0) {
+          strikesLeft -= 1;
+          strikeTimer = 0.08;
+
+          const candidates = monstersRef.current.filter((m) => {
+            if (m.hp <= 0 || m.state === 'dead') return false;
+            const tdx = m.x - oTargetX;
+            const tdy = m.y - oTargetY;
+            return Math.sqrt(tdx * tdx + tdy * tdy) < 200;
+          });
+
+          let tx = oTargetX + (Math.random() - 0.5) * 160;
+          let ty = oTargetY + (Math.random() - 0.5) * 160;
+
+          if (candidates.length > 0) {
+            const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+            tx = chosen.x + (Math.random() - 0.5) * 20;
+            ty = chosen.y + (Math.random() - 0.5) * 20;
+          }
+
+          nextX = tx;
+          nextY = ty;
+
+          sound.playSlash();
+          triggerShake(5, 0.06);
+          spawnParticles(nextX, nextY, '#EF4444', 12, 'spark');
+
+          const dmg = Math.round(curPlayer.stats.atk * 1.65);
+          monstersRef.current.forEach((m) => {
+            if (m.hp <= 0 || m.state === 'dead') return;
+            const mdx = m.x - nextX;
+            const mdy = m.y - nextY;
+            const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+            if (mdist < 75) {
+              m.hp = Math.max(0, m.hp - dmg);
+              addDamagePopup(m.x, m.y - 12, `${dmg}`, '#EF4444', true, false, 'manga', 1.25);
+              if (m.hp <= 0) m.state = 'dead';
+            }
+          });
+
+          const now = Date.now();
+          const strikeAngle = Math.random() * Math.PI * 2;
+          projectilesRef.current.push({
+            id: `p_omni_${now}_${strikesLeft}`,
+            ownerId: curPlayer.id,
+            type: 'slash_wave',
+            x: nextX,
+            y: nextY,
+            vx: Math.cos(strikeAngle) * 5,
+            vy: Math.sin(strikeAngle) * 5,
+            damage: 0,
+            range: 65,
+            distanceTraveled: 0,
+            color: '#EF4444',
+            size: 24,
+            piercing: true,
+          });
+          setProjectiles([...projectilesRef.current]);
+        }
+
+        curPlayer.omnislashStrikesLeft = strikesLeft;
+        curPlayer.omnislashStrikeTimer = strikeTimer;
+
+        if (strikesLeft <= 0) {
+          nextX = oStartX;
+          nextY = oStartY;
+          curPlayer.omnislashStrikesLeft = undefined;
+          curPlayer.omnislashStrikeTimer = undefined;
+          curPlayer.omnislashStartX = undefined;
+          curPlayer.omnislashStartY = undefined;
+          curPlayer.omnislashTargetX = undefined;
+          curPlayer.omnislashTargetY = undefined;
+
+          sound.playCrashSlam();
+          triggerShake(16, 0.45);
+
+          const now = Date.now();
+          for (let i = 0; i < 8; i++) {
+            const a = (i / 8) * Math.PI * 2;
+            const ox = Math.cos(a) * 45;
+            const oy = Math.sin(a) * 45;
+            projectilesRef.current.push({
+              id: `p_omni_final_${now}_${i}`,
+              ownerId: curPlayer.id,
+              type: 'falling_sword',
+              x: oTargetX + ox,
+              y: oTargetY + oy - 200,
+              vx: 0,
+              vy: 22,
+              damage: Math.round(curPlayer.stats.atk * 4.5),
+              range: 280,
+              distanceTraveled: 0,
+              color: '#EF4444',
+              size: 24,
+              piercing: true,
+            });
+          }
+          setProjectiles([...projectilesRef.current]);
+        }
       } else {
-        nextX += moveX * baseSpeed * dt;
-        nextY += moveY * baseSpeed * dt;
+        if (dodgeTimer > 0) {
+          nextX += dashVx * dt;
+          nextY += dashVy * dt;
+          dashVx *= 0.96;
+          dashVy *= 0.96;
+        } else {
+          nextX += moveX * baseSpeed * dt;
+          nextY += moveY * baseSpeed * dt;
+        }
       }
 
       const ride = elevatorRideRef.current;
@@ -3438,21 +3690,21 @@ export function useGameEngine(initialPlayer: Player) {
       }
 
       // 3. Elevation & Platform / Cliff Fall Detection
-      const targetGroundElev = ride.active ? curElevation : getGroundElevation(nextX, nextY, occupancy);
+      const targetGroundElev = (ride.active || isLeaping) ? curElevation : getGroundElevation(nextX, nextY, occupancy);
 
       // If stepping off high plateau / bridge into thin air: initiate free-fall!
-      if (curElevation > targetGroundElev && jumpZ <= 0) {
+      if (curElevation > targetGroundElev && jumpZ <= 0 && !isLeaping) {
         jumpZ = curElevation - targetGroundElev;
         jumpVz = 0;
         fallStartZ = curElevation;
         curElevation = targetGroundElev;
         isJumping = true;
-      } else if (jumpZ <= 0) {
+      } else if (jumpZ <= 0 && !isLeaping) {
         curElevation = targetGroundElev;
       }
 
       // Jump & Gravity Physics
-      if (!drivingCar && keysRef.current['Space'] && jumpZ <= 0) {
+      if (!drivingCar && keysRef.current['Space'] && jumpZ <= 0 && !isLeaping && !isDashingSlash && !isOmnislashing) {
         jumpZ = 1;
         jumpVz = skating ? 380 : 350;
         isJumping = true;
@@ -3471,7 +3723,7 @@ export function useGameEngine(initialPlayer: Player) {
           sound.playJump();
           spawnParticles(curPlayer.x, curPlayer.y + 10, '#38BDF8', 4, 'spark');
         }
-      } else if (jumpZ > 0 || jumpVz !== 0) {
+      } else if ((jumpZ > 0 || jumpVz !== 0) && !isLeaping) {
         jumpZ = Math.max(0, jumpZ + jumpVz * dt);
         jumpVz -= 720 * dt; // Gravity
 
@@ -3704,7 +3956,7 @@ export function useGameEngine(initialPlayer: Player) {
                 ? 'walk'
                 : 'idle',
         isRiding: drivingCar ? true : curPlayer.isRiding,
-        hideWeapon: drivingCar ? true : curPlayer.hideWeapon,
+        hideWeapon: (drivingCar || isOmnislashing) ? true : curPlayer.hideWeapon,
         gold: skateGold,
         skateTrick,
         skateTrickTimer,
@@ -3738,6 +3990,26 @@ export function useGameEngine(initialPlayer: Player) {
         isReloading,
         reloadTimer,
         spawnBounce: nextSpawnBounce,
+        leapSlamTimer: curPlayer.leapSlamTimer,
+        leapSlamDuration: curPlayer.leapSlamDuration,
+        leapSlamStartX: curPlayer.leapSlamStartX,
+        leapSlamStartY: curPlayer.leapSlamStartY,
+        leapSlamTargetX: curPlayer.leapSlamTargetX,
+        leapSlamTargetY: curPlayer.leapSlamTargetY,
+        dashSlashTimer: curPlayer.dashSlashTimer,
+        dashSlashPhase: curPlayer.dashSlashPhase,
+        dashSlashStartX: curPlayer.dashSlashStartX,
+        dashSlashStartY: curPlayer.dashSlashStartY,
+        dashSlashTargetX: curPlayer.dashSlashTargetX,
+        dashSlashTargetY: curPlayer.dashSlashTargetY,
+        dashSlashHitIds: curPlayer.dashSlashHitIds,
+        omnislashTimer: curPlayer.omnislashTimer,
+        omnislashStrikeTimer: curPlayer.omnislashStrikeTimer,
+        omnislashStartX: curPlayer.omnislashStartX,
+        omnislashStartY: curPlayer.omnislashStartY,
+        omnislashTargetX: curPlayer.omnislashTargetX,
+        omnislashTargetY: curPlayer.omnislashTargetY,
+        omnislashStrikesLeft: curPlayer.omnislashStrikesLeft,
         eyeLookX: facing === 'left' ? -Math.max(-2.8, Math.min(2.8, mDx * 0.028)) : Math.max(-2.8, Math.min(2.8, mDx * 0.028)),
         eyeLookY: Math.max(-2.2, Math.min(2.2, mDy * 0.022)),
       };

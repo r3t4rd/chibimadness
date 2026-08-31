@@ -331,7 +331,23 @@ export function renderWorld(
   for (const p of allPlayers) {
     if (p.id === localPlayer.id || inView(p.x, p.y)) {
       if (p.id === localPlayer.id) drawEvolutionFx(ctx, p, time, inHorde);
-      drawChibiCharacter(ctx, p, time);
+      
+      const isOmni = (p.omnislashStrikesLeft ?? 0) > 0;
+      const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
+
+      if (isOmni) {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        drawChibiCharacter(ctx, p, time);
+        ctx.restore();
+      } else if (isDashSlashing) {
+        ctx.save();
+        ctx.globalAlpha = 0.6;
+        drawChibiCharacter(ctx, p, time);
+        ctx.restore();
+      } else {
+        drawChibiCharacter(ctx, p, time);
+      }
     }
   }
   if (!inHorde) {

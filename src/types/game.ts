@@ -693,6 +693,30 @@ export interface Player {
   evolutions?: Record<string, number>;
   /** Unspent level-up picks — game pauses until the player chooses. */
   pendingEvolutionPicks?: number;
+
+  // Blade Class Skills transient state variables
+  leapSlamTimer?: number;
+  leapSlamDuration?: number;
+  leapSlamStartX?: number;
+  leapSlamStartY?: number;
+  leapSlamTargetX?: number;
+  leapSlamTargetY?: number;
+
+  dashSlashTimer?: number;
+  dashSlashPhase?: 'forward' | 'backward';
+  dashSlashStartX?: number;
+  dashSlashStartY?: number;
+  dashSlashTargetX?: number;
+  dashSlashTargetY?: number;
+  dashSlashHitIds?: string[];
+
+  omnislashTimer?: number;
+  omnislashStrikeTimer?: number;
+  omnislashStartX?: number;
+  omnislashStartY?: number;
+  omnislashTargetX?: number;
+  omnislashTargetY?: number;
+  omnislashStrikesLeft?: number;
 }
 
 export type IntroCinematicPhase = 'black_fade_in' | 'dive' | 'impact' | 'skid' | 'dazed' | 'brush' | 'gun_fall_bonk' | 'pickup_ready' | 'complete' | 'none';

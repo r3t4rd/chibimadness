@@ -525,23 +525,131 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
                 </g>
               )}
 
-              {/* ----------------- 2.7 MELEE (Katana / Sledgehammer) ----------------- */}
-              {(activeGunType === 'katana' || activeGunType === 'sledgehammer') && (
-                <g id="wpn-melee" transform="translate(90, 30)">
+              {/* ----------------- 2.7 MELEE (Katana / Sledgehammer / Scythe / Greatsword / Throwing Knives) ----------------- */}
+              {activeGunType === 'katana' && (
+                <g id="wpn-katana" transform="translate(90, 30)">
+                  {/* Blade back highlight */}
                   <path
-                    d="M -90 -20 Q 20 45 100 80 L 105 90 Q 20 58 -95 -12 Z"
-                    fill="#F1F5F9"
-                    stroke="#1E1B18"
-                    strokeWidth="3"
+                    d="M -95 -15 Q 15 48 95 82 L 98 87 Q 15 52 -98 -7 Z"
+                    fill="#E2E8F0"
+                    stroke="#0F172A"
+                    strokeWidth="2"
                   />
+                  {/* Glowing neon edge */}
                   <path
-                    d="M -90 -20 Q 20 45 100 80"
-                    stroke="#38BDF8"
+                    d="M -95 -15 Q 15 48 95 82"
+                    stroke="#06B6D4"
+                    strokeWidth="3"
+                    fill="none"
+                    strokeLinecap="round"
+                  />
+                  {/* Tsuba (guard) */}
+                  <ellipse cx="96" cy="84" rx="12" ry="6" fill="#F59E0B" stroke="#0F172A" strokeWidth="2.5" transform="rotate(25 96 84)" />
+                  {/* Tsuka (handle) */}
+                  <rect x="102" y="81" width="42" height="14" rx="2" fill="#7F1D1D" stroke="#0F172A" strokeWidth="2.5" transform="rotate(25 102 81)" />
+                  {/* Tsuka wrapping detail */}
+                  <line x1="110" y1="88" x2="114" y2="98" stroke="#0F172A" strokeWidth="1.5" />
+                  <line x1="120" y1="92" x2="124" y2="102" stroke="#0F172A" strokeWidth="1.5" />
+                  <line x1="130" y1="96" x2="134" y2="106" stroke="#0F172A" strokeWidth="1.5" />
+                </g>
+              )}
+
+              {activeGunType === 'sledgehammer' && (
+                <g id="wpn-sledgehammer" transform="translate(90, 30)">
+                  {/* Long Handle */}
+                  <line x1="80" y1="90" x2="-20" y2="30" stroke="#78350F" strokeWidth="6" strokeLinecap="round" />
+                  <line x1="80" y1="90" x2="-20" y2="30" stroke="#451A03" strokeWidth="2" />
+                  {/* Hammer Head */}
+                  <rect x="-35" y="10" width="30" height="50" rx="3" fill="#334155" stroke="#0F172A" strokeWidth="3" transform="rotate(30 -20 35)" />
+                  {/* Glowing core/plates on hammer head */}
+                  <rect x="-28" y="20" width="16" height="12" rx="1" fill="#EA580C" transform="rotate(30 -20 35)" />
+                </g>
+              )}
+
+              {activeGunType === 'scythe' && (
+                <g id="wpn-scythe" transform="translate(100, 20)">
+                  {/* Long staff/pole */}
+                  <line x1="-70" y1="-10" x2="80" y2="130" stroke="#78350F" strokeWidth="6" strokeLinecap="round" />
+                  <line x1="-70" y1="-10" x2="80" y2="130" stroke="#451A03" strokeWidth="2" />
+                  {/* Metal wraps/binding at top */}
+                  <rect x="-76" y="-18" width="16" height="14" rx="2" fill="#64748B" stroke="#0F172A" strokeWidth="2" transform="rotate(40 -76 -18)" />
+                  {/* Huge curved scythe blade */}
+                  <path
+                    d="M -70 -12 C -110 -15 -140 15 -150 55 C -130 35 -100 15 -68 -6 Z"
+                    fill="#1E293B"
+                    stroke="#0F172A"
+                    strokeWidth="2.5"
+                  />
+                  {/* Glowing energy edge of the blade */}
+                  <path
+                    d="M -70 -12 C -110 -15 -140 15 -150 55"
+                    stroke="#A855F7"
                     strokeWidth="3.5"
                     fill="none"
+                    strokeLinecap="round"
                   />
-                  <rect x="95" y="70" width="18" height="26" rx="4" fill="#F59E0B" stroke="#1E1B18" strokeWidth="3" transform="rotate(25 104 83)" />
-                  <rect x="105" y="80" width="45" height="16" rx="2" fill="#991B1B" stroke="#1E1B18" strokeWidth="3" transform="rotate(25 127 88)" />
+                  {/* Spiky details at the back of the blade hook */}
+                  <path d="M -66 -8 L -55 -15 L -58 0 Z" fill="#64748B" stroke="#0F172A" strokeWidth="1.5" />
+                </g>
+              )}
+
+              {activeGunType === 'greatsword' && (
+                <g id="wpn-greatsword" transform="translate(110, 20)">
+                  {/* Handle/Grip */}
+                  <rect x="75" y="85" width="46" height="15" rx="2" fill="#1E293B" stroke="#0F172A" strokeWidth="2.5" transform="rotate(30 75 85)" />
+                  {/* Wrap detail */}
+                  <line x1="88" y1="94" x2="94" y2="104" stroke="#F1F5F9" strokeWidth="1.5" />
+                  <line x1="98" y1="100" x2="104" y2="110" stroke="#F1F5F9" strokeWidth="1.5" />
+                  {/* Pommel */}
+                  <circle cx="118" cy="110" r="9" fill="#D97706" stroke="#0F172A" strokeWidth="2.5" />
+                  {/* Massive Crossguard */}
+                  <rect x="62" y="55" width="16" height="65" rx="3" fill="#D97706" stroke="#0F172A" strokeWidth="3" transform="rotate(30 70 87)" />
+                  {/* Colossal Blade */}
+                  <path
+                    d="M 62 82 L -95 -8 L -100 0 L -95 8 L 62 92 Z"
+                    fill="#475569"
+                    stroke="#0F172A"
+                    strokeWidth="3"
+                    transform="rotate(30 62 82)"
+                  />
+                  {/* Central fuller line and glowing rune carvings */}
+                  <path
+                    d="M 52 87 L -80 5"
+                    stroke="#EF4444"
+                    strokeWidth="2.5"
+                    fill="none"
+                    transform="rotate(30 62 82)"
+                  />
+                  <line
+                    x1="40" y1="87" x2="-70" y2="15"
+                    stroke="#FCA5A5"
+                    strokeWidth="1"
+                    transform="rotate(30 62 82)"
+                  />
+                </g>
+              )}
+
+              {activeGunType === 'throwing_knives' && (
+                <g id="wpn-throwing-knives" transform="translate(60, 20)">
+                  {/* Fan of 3 throwing knives */}
+                  {[-22, 0, 22].map((rot, idx) => (
+                    <g key={idx} transform={`rotate(${rot} 100 100)`}>
+                      {/* Ring pommel */}
+                      <circle cx="100" cy="100" r="6" fill="none" stroke="#475569" strokeWidth="2.5" />
+                      {/* Red ribbon */}
+                      <path d="M 104 104 Q 112 118 118 126" stroke="#EF4444" strokeWidth="3" fill="none" strokeLinecap="round" />
+                      {/* Handle */}
+                      <rect x="74" y="96" width="20" height="8" fill="#18181B" stroke="#0F172A" strokeWidth="2" />
+                      {/* Blade */}
+                      <polygon
+                        points="74,92 34,84 26,100 34,116 74,108"
+                        fill="#CBD5E1"
+                        stroke="#0F172A"
+                        strokeWidth="2.5"
+                      />
+                      <line x1="74" y1="100" x2="28" y2="100" stroke="#94A3B8" strokeWidth="1.5" />
+                    </g>
+                  ))}
                 </g>
               )}
             </svg>
