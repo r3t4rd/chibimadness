@@ -770,6 +770,11 @@ export function useGameEngine(initialPlayer: Player) {
       const selfInServerHorde = data.horde?.active === true
         && Array.isArray(data.horde.participants)
         && data.horde.participants.includes(initialPlayer.id);
+      const serverBossWarp = typeof data.horde?.bossWarp === 'number' ? data.horde.bossWarp : null;
+      const serverHordeWarped = selfInServerHorde
+        && serverBossWarp !== null
+        && serverBossWarp !== lastServerBossWarpRef.current;
+      lastServerBossWarpRef.current = selfInServerHorde ? serverBossWarp : null;
       if (selfInServerHorde) {
         hordeJoinPendingRef.current = false;
         const previous = hordeRunRef.current;
@@ -823,7 +828,7 @@ export function useGameEngine(initialPlayer: Player) {
           // server-authoritative transform when a death has just resolved.
           // Crossing into or out of Nullspace is a world transition; remaining
           // inside it is ordinary movement and must stay client-predicted.
-          const shouldApplyServerTransform = serverMovedAcrossWorlds || serverRespawned;
+          const shouldApplyServerTransform = serverMovedAcrossWorlds || serverRespawned || serverHordeWarped;
           const entryIFrames = serverMovedAcrossWorlds && selfInHorde ? 2.5 : 0;
           playerRef.current = shouldApplyServerTransform
             ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(current.dodgeTimer ?? 0, entryIFrames) }
@@ -967,6 +972,7 @@ export function useGameEngine(initialPlayer: Player) {
   const hordeHazardsRef = useRef<HordeHazard[]>([]);
   const hordeJoinPendingRef = useRef(false);
   const hordeJoinRequestedAtRef = useRef(0);
+  const lastServerBossWarpRef = useRef<number | null>(null);
   const leakFireAccRef = useRef(0);
   const lastZoneIdRef = useRef<string>('forest_camp');
   const [worldFade, setWorldFade] = useState(0);
@@ -5905,8 +5911,13 @@ export function useGameEngine(initialPlayer: Player) {
           if (!run.canExtract) {
             showToast('TOO EARLY', 'Hold the line a bit longer before extract.', '⏳');
           } else if (worldFadeRef.current.phase === 'none') {
-            worldFadeRef.current = { phase: 'out', t: 0, pending: 'extract' };
-            showToast('EXTRACTING', 'Stepping back through the gate...', '🚪');
+            if (net.hasSharedWorld()) {
+              net.extractHorde();
+              showToast('EXTRACTING', 'Server is returning you through the gate…', '🚪');
+            } else {
+              worldFadeRef.current = { phase: 'out', t: 0, pending: 'extract' };
+              showToast('EXTRACTING', 'Stepping back through the gate...', '🚪');
+            }
           }
         }
       }
