@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import { randomBytes, timingSafeEqual } from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 
@@ -39,8 +40,13 @@ interface NetPlayer {
   lastSeen: number;
 }
 
-const connectedPlayers = new Map<string, { ws: WebSocket; player: NetPlayer }>();
+const connectedPlayers = new Map<string, { ws: WebSocket; player: NetPlayer; resumeToken: string }>();
 const chatHistory: any[] = [];
+
+function resumeTokenMatches(candidate: unknown, expected: string) {
+  if (typeof candidate !== 'string' || candidate.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(candidate), Buffer.from(expected));
+}
 
 // Initialize WebSocket Server on same port 3000
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -53,6 +59,12 @@ wss.on('connection', (ws: WebSocket) => {
       const msg = JSON.parse(raw.toString());
 
       if (msg.type === 'join') {
+        if (playerId !== null) return;
+        if (typeof msg.player?.id !== 'string' || msg.player.id.length === 0) {
+          ws.send(JSON.stringify({ type: 'join_rejected', reason: 'invalid_player' }));
+          ws.close(1008, 'invalid player');
+          return;
+        }
         playerId = msg.player.id;
         const player: NetPlayer = {
           ...msg.player,
@@ -62,9 +74,16 @@ wss.on('connection', (ws: WebSocket) => {
         if (playerId) {
           const existing = connectedPlayers.get(playerId);
           if (existing) {
-            existing.ws.terminate();
+            if (!resumeTokenMatches(msg.resumeToken, existing.resumeToken)) {
+              playerId = null;
+              ws.send(JSON.stringify({ type: 'join_rejected', reason: 'player_id_in_use' }));
+              ws.close(1008, 'player id is already connected');
+              return;
+            }
+            existing.ws.close(4001, 'session resumed');
           }
-          connectedPlayers.set(playerId, { ws, player });
+          const resumeToken = existing?.resumeToken ?? randomBytes(32).toString('hex');
+          connectedPlayers.set(playerId, { ws, player, resumeToken });
         }
 
         // Send existing players list and recent chat to the new player
@@ -80,6 +99,7 @@ wss.on('connection', (ws: WebSocket) => {
             type: 'init_world',
             players: otherPlayers,
             recentChat: chatHistory.slice(-20),
+            resumeToken: connectedPlayers.get(playerId!)?.resumeToken,
           })
         );
 
@@ -93,7 +113,7 @@ wss.on('connection', (ws: WebSocket) => {
         );
       } else if (msg.type === 'update_position' && playerId) {
         const stored = connectedPlayers.get(playerId);
-        if (stored) {
+        if (stored?.ws === ws) {
           stored.player.x = msg.x;
           stored.player.y = msg.y;
           stored.player.vx = msg.vx;
@@ -126,7 +146,11 @@ wss.on('connection', (ws: WebSocket) => {
             playerId
           );
         }
-      } else if (msg.type === 'action' && playerId) {
+      } else if (
+        msg.type === 'action' &&
+        playerId &&
+        connectedPlayers.get(playerId)?.ws === ws
+      ) {
         // Player attack / skill / emote
         broadcast(
           {
@@ -137,11 +161,15 @@ wss.on('connection', (ws: WebSocket) => {
           },
           playerId
         );
-      } else if (msg.type === 'chat' && playerId) {
+      } else if (
+        msg.type === 'chat' &&
+        playerId &&
+        connectedPlayers.get(playerId)?.ws === ws
+      ) {
         const chatItem = {
           id: `chat_${Date.now()}_${Math.random()}`,
           senderId: playerId,
-          senderName: msg.senderName,
+          senderName: connectedPlayers.get(playerId)!.player.name,
           text: msg.text,
           channel: msg.channel || 'all',
           timestamp: Date.now(),
@@ -154,7 +182,11 @@ wss.on('connection', (ws: WebSocket) => {
           type: 'chat_message',
           message: chatItem,
         });
-      } else if (msg.type === 'sync_monster_damage') {
+      } else if (
+        msg.type === 'sync_monster_damage' &&
+        playerId &&
+        connectedPlayers.get(playerId)?.ws === ws
+      ) {
         broadcast(
           {
             type: 'monster_damaged',
@@ -165,12 +197,20 @@ wss.on('connection', (ws: WebSocket) => {
           },
           playerId
         );
-      } else if (msg.type === 'sync_drop_spawn') {
+      } else if (
+        msg.type === 'sync_drop_spawn' &&
+        playerId &&
+        connectedPlayers.get(playerId)?.ws === ws
+      ) {
         broadcast({
           type: 'drop_spawned',
           drop: msg.drop,
         });
-      } else if (msg.type === 'sync_drop_pickup') {
+      } else if (
+        msg.type === 'sync_drop_pickup' &&
+        playerId &&
+        connectedPlayers.get(playerId)?.ws === ws
+      ) {
         broadcast({
           type: 'drop_picked',
           dropId: msg.dropId,

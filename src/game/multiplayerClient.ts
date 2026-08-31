@@ -84,6 +84,7 @@ class MultiplayerClient {
   private isConnected: boolean = false;
   private reconnectTimer: number | null = null;
   private localPlayer: Player | null = null;
+  private resumeToken: string | null = null;
   private lastPositionSentAt = 0;
   private sharedWorldReady = false;
   private serverHordeActive = false;
@@ -128,6 +129,7 @@ class MultiplayerClient {
         this.isConnected = true;
         this.send({
           type: 'join',
+          resumeToken: this.resumeToken,
           player: {
             id: player.id,
             name: player.name,
@@ -159,6 +161,9 @@ class MultiplayerClient {
         if (this.ws !== socket) return;
         try {
           const msg = JSON.parse(event.data);
+          if (msg.type === 'init_world' && typeof msg.resumeToken === 'string') {
+            this.resumeToken = msg.resumeToken;
+          }
           this.emitToListeners(msg.type, msg);
         } catch (e) {
           console.error('Error parsing WS message:', e);
@@ -222,6 +227,7 @@ class MultiplayerClient {
   }
 
   public updatePosition(player: Player) {
+    this.localPlayer = player;
     const now = performance.now();
     if (now - this.lastPositionSentAt < 1000 / 10) {
       return;
@@ -328,6 +334,7 @@ class MultiplayerClient {
     this.sharedWorldReady = false;
     this.serverHordeActive = false;
     this.localPlayer = null;
+    this.resumeToken = null;
   }
 }
 

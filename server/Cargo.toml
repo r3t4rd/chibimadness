@@ -8,6 +8,7 @@ description = "Bounded WebSocket presence and chat server for ChibiMadness."
 
 [dependencies]
 futures-util = "0.3.33"
+getrandom = "0.4.3"
 serde_json = "1.0.149"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = "0.30.0"

@@ -90,15 +90,21 @@ struct HordeRun {
 }
 
 struct Session {
-    sender: mpsc::Sender<String>,
+    sender: mpsc::Sender<Outbound>,
     player_id: Option<String>,
     last_position: Instant,
+}
+
+enum Outbound {
+    Text(String),
+    Close,
 }
 
 struct PlayerRecord {
     session_id: u64,
     value: Value,
     respawn_at: Option<Instant>,
+    resume_token: String,
 }
 
 #[tokio::main]
@@ -178,7 +184,7 @@ async fn handle_connection(
         .max_frame_size(Some(MAX_MESSAGE_BYTES));
     let socket = accept_async_with_config(stream, Some(config)).await?;
     let session_id = NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed);
-    let (sender, mut receiver) = mpsc::channel::<String>(OUTBOUND_QUEUE_CAPACITY);
+    let (sender, mut receiver) = mpsc::channel::<Outbound>(OUTBOUND_QUEUE_CAPACITY);
     {
         let mut state = server.state.lock().await;
         state.sessions.insert(
@@ -193,9 +199,17 @@ async fn handle_connection(
 
     let (mut writer, mut reader) = socket.split();
     let writer_task = tokio::spawn(async move {
-        while let Some(payload) = receiver.recv().await {
-            if writer.send(Message::Text(payload.into())).await.is_err() {
-                break;
+        while let Some(outbound) = receiver.recv().await {
+            match outbound {
+                Outbound::Text(payload) => {
+                    if writer.send(Message::Text(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Outbound::Close => {
+                    let _ = writer.send(Message::Close(None)).await;
+                    break;
+                }
             }
         }
     });
@@ -249,22 +263,55 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
     let Some((player_id, player)) = message.get("player").and_then(sanitize_player) else {
         return;
     };
-    let (recipients, init_payload, joined_payload, online_count) = {
+    let requested_resume_token = message
+        .get("resumeToken")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let (recipients, init_payload, joined_payload, online_count, old_sender) = {
         let mut state = server.state.lock().await;
-        let Some(session) = state.sessions.get(&session_id) else {
+        let Some((already_joined, sender)) = state
+            .sessions
+            .get(&session_id)
+            .map(|session| (session.player_id.is_some(), session.sender.clone()))
+        else {
             return;
         };
-        if session.player_id.is_some()
-            || (state.players.len() >= server.max_players && !state.players.contains_key(&player_id))
-        {
+        if already_joined {
             return;
         }
-        if let Some(existing_record) = state.players.get(&player_id) {
-            let old_session_id = existing_record.session_id;
-            if old_session_id != session_id {
-                state.sessions.remove(&old_session_id);
-            }
+
+        let existing_session = state
+            .players
+            .get(&player_id)
+            .map(|record| (record.session_id, record.resume_token.clone()));
+        if let Some((_, expected_token)) = &existing_session
+            && requested_resume_token.as_deref() != Some(expected_token.as_str())
+        {
+            drop(state);
+            reject_join(sender, "player_id_in_use");
+            return;
         }
+        if existing_session.is_none() && state.players.len() >= server.max_players {
+            drop(state);
+            reject_join(sender, "server_full");
+            return;
+        }
+
+        let (resume_token, old_sender) =
+            if let Some((old_session_id, resume_token)) = existing_session {
+                let old_sender = (old_session_id != session_id)
+                    .then(|| state.sessions.remove(&old_session_id))
+                    .flatten()
+                    .map(|session| session.sender);
+                (resume_token, old_sender)
+            } else {
+                let Some(resume_token) = new_resume_token() else {
+                    drop(state);
+                    reject_join(sender, "server_error");
+                    return;
+                };
+                (resume_token, None)
+            };
         let existing_players = state
             .players
             .iter()
@@ -272,9 +319,13 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             .map(|(_, player)| player.value.clone())
             .collect::<Vec<_>>();
         let recent_chat = state.chat_history.iter().cloned().collect::<Vec<_>>();
-        let init_payload =
-            json!({ "type": "init_world", "players": existing_players, "recentChat": recent_chat })
-                .to_string();
+        let init_payload = json!({
+            "type": "init_world",
+            "players": existing_players,
+            "recentChat": recent_chat,
+            "resumeToken": resume_token,
+        })
+        .to_string();
         let joined_payload = json!({ "type": "player_joined", "player": player }).to_string();
         state
             .sessions
@@ -287,6 +338,7 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
                 session_id,
                 value: player,
                 respawn_at: None,
+                resume_token,
             },
         );
         let recipients = recipients_except(&state, session_id);
@@ -295,8 +347,12 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             init_payload,
             joined_payload,
             state.players.len(),
+            old_sender,
         )
     };
+    if let Some(old_sender) = old_sender {
+        let _ = old_sender.try_send(Outbound::Close);
+    }
     send_to_session(server, session_id, init_payload).await;
     send_to(recipients, joined_payload);
     println!("player joined ({online_count} online)");
@@ -452,10 +508,10 @@ async fn world_bootstrap(server: &Arc<Server>, session_id: u64, message: Value) 
     };
     let (recipients, payload) = {
         let mut state = server.state.lock().await;
-        if !state
+        if state
             .sessions
             .get(&session_id)
-            .is_some_and(|session| session.player_id.is_some())
+            .is_none_or(|session| session.player_id.is_none())
         {
             return;
         }
@@ -1445,7 +1501,7 @@ fn bounded_number(value: &Value, field: &str, min: f64, max: f64) -> Option<f64>
     (number.is_finite() && (min..=max).contains(&number)).then_some(number)
 }
 
-fn recipients_except(state: &WorldState, excluded_session: u64) -> Vec<mpsc::Sender<String>> {
+fn recipients_except(state: &WorldState, excluded_session: u64) -> Vec<mpsc::Sender<Outbound>> {
     state
         .sessions
         .iter()
@@ -1463,14 +1519,32 @@ async fn send_to_session(server: &Arc<Server>, session_id: u64, payload: String)
         .get(&session_id)
         .map(|session| session.sender.clone());
     if let Some(sender) = sender {
-        let _ = sender.try_send(payload);
+        let _ = sender.try_send(Outbound::Text(payload));
     }
 }
 
-fn send_to(recipients: Vec<mpsc::Sender<String>>, payload: String) {
+fn send_to(recipients: Vec<mpsc::Sender<Outbound>>, payload: String) {
     for recipient in recipients {
-        let _ = recipient.try_send(payload.clone());
+        let _ = recipient.try_send(Outbound::Text(payload.clone()));
     }
+}
+
+fn reject_join(sender: mpsc::Sender<Outbound>, reason: &str) {
+    let payload = json!({ "type": "join_rejected", "reason": reason }).to_string();
+    let _ = sender.try_send(Outbound::Text(payload));
+    let _ = sender.try_send(Outbound::Close);
+}
+
+fn new_resume_token() -> Option<String> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).ok()?;
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Some(token)
 }
 
 fn unix_millis() -> u128 {
@@ -1491,7 +1565,7 @@ mod tests {
         })
     }
 
-    async fn session(server: &Arc<Server>, id: u64) -> mpsc::Receiver<String> {
+    async fn session(server: &Arc<Server>, id: u64) -> mpsc::Receiver<Outbound> {
         let (sender, receiver) = mpsc::channel(OUTBOUND_QUEUE_CAPACITY);
         server.state.lock().await.sessions.insert(
             id,
@@ -1502,6 +1576,13 @@ mod tests {
             },
         );
         receiver
+    }
+
+    async fn recv_text(receiver: &mut mpsc::Receiver<Outbound>, description: &str) -> String {
+        match receiver.recv().await.expect(description) {
+            Outbound::Text(payload) => payload,
+            Outbound::Close => panic!("expected {description}, received close"),
+        }
     }
 
     #[test]
@@ -1542,6 +1623,7 @@ mod tests {
                 session_id: 1,
                 value: player_value,
                 respawn_at: None,
+                resume_token: "test-token".into(),
             },
         );
         state.combat_world = Some(CombatWorld {
@@ -1580,6 +1662,7 @@ mod tests {
                 session_id: 1,
                 value,
                 respawn_at: Some(Instant::now() - Duration::from_millis(1)),
+                resume_token: "test-token".into(),
             },
         );
 
@@ -1607,7 +1690,7 @@ mod tests {
             json!({ "player": player("first", 100.0, 100.0) }),
         )
         .await;
-        let first_init = first.recv().await.expect("first init");
+        let first_init = recv_text(&mut first, "first init").await;
         assert_eq!(
             serde_json::from_str::<Value>(&first_init).expect("json")["type"],
             "init_world"
@@ -1619,7 +1702,7 @@ mod tests {
             json!({ "player": player("second", 200.0, 100.0) }),
         )
         .await;
-        let second_init = second.recv().await.expect("second init");
+        let second_init = recv_text(&mut second, "second init").await;
         assert_eq!(
             serde_json::from_str::<Value>(&second_init).expect("json")["players"]
                 .as_array()
@@ -1627,7 +1710,7 @@ mod tests {
                 .len(),
             1
         );
-        let joined = first.recv().await.expect("joined");
+        let joined = recv_text(&mut first, "joined").await;
         assert_eq!(
             serde_json::from_str::<Value>(&joined).expect("json")["type"],
             "player_joined"
@@ -1642,10 +1725,83 @@ mod tests {
             }),
         )
         .await;
-        let moved = first.recv().await.expect("movement");
+        let moved = recv_text(&mut first, "movement").await;
         let moved = serde_json::from_str::<Value>(&moved).expect("json");
         assert_eq!(moved["type"], "player_moved");
         assert_eq!(moved["x"], 220.0);
+    }
+
+    #[tokio::test]
+    async fn reconnect_requires_token_and_closes_replaced_session() {
+        let server = Arc::new(Server {
+            state: Mutex::new(WorldState::default()),
+            max_players: 4,
+        });
+        let mut first = session(&server, 1).await;
+        join(
+            &server,
+            1,
+            json!({ "player": player("operator", 100.0, 100.0) }),
+        )
+        .await;
+        let first_init = serde_json::from_str::<Value>(&recv_text(&mut first, "first init").await)
+            .expect("init JSON");
+        let resume_token = first_init["resumeToken"]
+            .as_str()
+            .expect("resume token")
+            .to_owned();
+        assert_eq!(resume_token.len(), 64);
+
+        let mut attacker = session(&server, 2).await;
+        join(
+            &server,
+            2,
+            json!({ "player": player("operator", 200.0, 100.0) }),
+        )
+        .await;
+        let rejected = serde_json::from_str::<Value>(&recv_text(&mut attacker, "rejection").await)
+            .expect("rejection JSON");
+        assert_eq!(rejected["type"], "join_rejected");
+        assert_eq!(rejected["reason"], "player_id_in_use");
+        assert!(matches!(attacker.recv().await, Some(Outbound::Close)));
+        assert_eq!(
+            server
+                .state
+                .lock()
+                .await
+                .players
+                .get("operator")
+                .expect("original player remains")
+                .session_id,
+            1
+        );
+
+        let mut resumed = session(&server, 3).await;
+        join(
+            &server,
+            3,
+            json!({
+                "resumeToken": resume_token,
+                "player": player("operator", 300.0, 100.0),
+            }),
+        )
+        .await;
+        assert!(matches!(first.recv().await, Some(Outbound::Close)));
+        let resumed_init =
+            serde_json::from_str::<Value>(&recv_text(&mut resumed, "resume init").await)
+                .expect("resume JSON");
+        assert_eq!(resumed_init["type"], "init_world");
+        assert_eq!(
+            server
+                .state
+                .lock()
+                .await
+                .players
+                .get("operator")
+                .expect("resumed player")
+                .session_id,
+            3
+        );
     }
 
     #[tokio::test]
@@ -1661,7 +1817,7 @@ mod tests {
             json!({ "player": player("pilot", 650.0, 750.0) }),
         )
         .await;
-        let _ = receiver.recv().await.expect("join init");
+        let _ = recv_text(&mut receiver, "join init").await;
         world_bootstrap(
             &server,
             1,
@@ -1671,11 +1827,11 @@ mod tests {
             }]}),
         )
         .await;
-        let _ = receiver.recv().await.expect("world bootstrap");
+        let _ = recv_text(&mut receiver, "world bootstrap").await;
 
         enter_horde(&server, 1).await;
         let snapshot =
-            serde_json::from_str::<Value>(&receiver.recv().await.expect("horde snapshot"))
+            serde_json::from_str::<Value>(&recv_text(&mut receiver, "horde snapshot").await)
                 .expect("snapshot JSON");
         assert_eq!(snapshot["horde"]["active"], true);
         assert_eq!(snapshot["players"][0]["x"], HORDE_CENTER_X);
