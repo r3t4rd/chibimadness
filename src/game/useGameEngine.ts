@@ -677,6 +677,22 @@ export function useGameEngine(initialPlayer: Player) {
 
   const [remotePlayers, setRemotePlayers] = useState<Record<string, Player>>({});
   const remoteTargetsRef = useRef<Record<string, Player>>({});
+  const remoteHistoryRef = useRef<Record<string, { x: number; y: number; vx: number; vy: number; timestamp: number }[]>>({});
+  const addPlayerHistory = (id: string, x: number, y: number, vx: number, vy: number) => {
+    const now = performance.now();
+    if (!remoteHistoryRef.current[id]) {
+      remoteHistoryRef.current[id] = [];
+    }
+    const history = remoteHistoryRef.current[id];
+    if (history.length > 0 && history[history.length - 1].timestamp === now) {
+      history[history.length - 1] = { x, y, vx, vy, timestamp: now };
+    } else {
+      history.push({ x, y, vx, vy, timestamp: now });
+    }
+    if (history.length > 8) {
+      history.shift();
+    }
+  };
   useEffect(() => {
     if (initialPlayer.id === 'default') return;
     net.connect(initialPlayer);
@@ -690,6 +706,9 @@ export function useGameEngine(initialPlayer: Player) {
         .filter((player): player is Player => player !== null && player.id !== initialPlayer.id);
       const remotePlayers = Object.fromEntries(players.map((player) => [player.id, player]));
       remoteTargetsRef.current = { ...remotePlayers };
+      players.forEach((p) => {
+        addPlayerHistory(p.id, p.x, p.y, p.vx, p.vy);
+      });
       setRemotePlayers(remotePlayers);
       // Only the first client initializes the map. The server accepts this
       // immutable spawn manifest once, then owns every combat mutation.
@@ -698,9 +717,11 @@ export function useGameEngine(initialPlayer: Player) {
       const player = remotePlayerFromWire(data.player);
       if (player && player.id !== initialPlayer.id) {
         remoteTargetsRef.current[player.id] = player;
+        addPlayerHistory(player.id, player.x, player.y, player.vx, player.vy);
         setRemotePlayers((current) => ({ ...current, [player.id]: player }));
       }
     } else if (type === 'player_moved' && typeof data.id === 'string') {
+      addPlayerHistory(data.id, data.x, data.y, data.vx, data.vy);
       setRemotePlayers((current) => {
         const existing = current[data.id];
         if (!existing) return current;
@@ -718,6 +739,20 @@ export function useGameEngine(initialPlayer: Player) {
       const authoritativeProjectiles = data.projectiles.filter((projectile: unknown): projectile is Projectile =>
         typeof projectile === 'object' && projectile !== null && typeof (projectile as Projectile).id === 'string'
       );
+      // Detect newly defeated horde monsters from snapshot difference
+      monstersRef.current.forEach((prevMonster) => {
+        if (prevMonster.zone === HORDE_ZONE_ID) {
+          const serverMonster = authoritativeMonsters.find(m => m.id === prevMonster.id);
+          const becameDead = serverMonster ? (serverMonster.hp <= 0 || serverMonster.state === 'dead') : true;
+          const wasDead = prevMonster.hp <= 0 || prevMonster.state === 'dead';
+          if (becameDead && !wasDead) {
+            if (handleMonsterDefeatedRef.current) {
+              handleMonsterDefeatedRef.current(prevMonster, prevMonster.damagedByPlayer);
+            }
+          }
+        }
+      });
+
       monstersRef.current = authoritativeMonsters;
       projectilesRef.current = authoritativeProjectiles;
       setMonsters(authoritativeMonsters);
@@ -784,6 +819,11 @@ export function useGameEngine(initialPlayer: Player) {
           .filter((player) => player.id !== initialPlayer.id)
           .map((player) => [player.id, player]));
         remoteTargetsRef.current = remote;
+        players.forEach((p) => {
+          if (p.id !== initialPlayer.id) {
+            addPlayerHistory(p.id, p.x, p.y, p.vx, p.vy);
+          }
+        });
         setRemotePlayers((current) => Object.fromEntries(Object.entries(remote).map(([id, target]) => {
           const previous = current[id];
           return [id, previous ? { ...target, x: previous.x, y: previous.y } : target];
@@ -793,6 +833,7 @@ export function useGameEngine(initialPlayer: Player) {
       setRemotePlayers((current) => {
         if (!current[data.id]) return current;
         delete remoteTargetsRef.current[data.id];
+        delete remoteHistoryRef.current[data.id];
         const { [data.id]: _left, ...remaining } = current;
         return remaining;
       });
@@ -806,17 +847,54 @@ export function useGameEngine(initialPlayer: Player) {
     const interpolate = (time: number) => {
       const dt = Math.min(0.1, Math.max(0, (time - previousTime) / 1000));
       previousTime = time;
-      // At 30 Hz network snapshots, 16/s keeps motion responsive without
-      // exposing packet-to-packet snaps or overshooting the latest state.
-      const alpha = 1 - Math.exp(-16 * dt);
+
+      const interpolationDelay = 120; // 120ms delay is perfect for 100ms (10Hz) ticks
+      const renderTime = time - interpolationDelay;
+
       setRemotePlayers((current) => {
         let next: Record<string, Player> | null = null;
         for (const [id, player] of Object.entries(current) as Array<[string, Player]>) {
-          const target = remoteTargetsRef.current[id];
-          if (!target) continue;
-          const x = player.x + (target.x - player.x) * alpha;
-          const y = player.y + (target.y - player.y) * alpha;
-          if (Math.abs(target.x - x) < 0.01 && Math.abs(target.y - y) < 0.01) continue;
+          const history = remoteHistoryRef.current[id];
+          if (!history || history.length === 0) continue;
+
+          let targetX = player.x;
+          let targetY = player.y;
+
+          // Find the snapshot bracket
+          let i = 0;
+          for (; i < history.length - 1; i++) {
+            if (history[i].timestamp <= renderTime && history[i + 1].timestamp >= renderTime) {
+              break;
+            }
+          }
+
+          if (i < history.length - 1) {
+            // We found bracketing snapshots: history[i] and history[i + 1]
+            const s0 = history[i];
+            const s1 = history[i + 1];
+            const timeDiff = s1.timestamp - s0.timestamp;
+            const t = timeDiff > 0 ? (renderTime - s0.timestamp) / timeDiff : 0;
+            targetX = s0.x + (s1.x - s0.x) * t;
+            targetY = s0.y + (s1.y - s0.y) * t;
+          } else {
+            // No future snapshot available. Use velocity extrapolation or clamp to latest
+            const latest = history[history.length - 1];
+            const timeDiff = renderTime - latest.timestamp;
+            if (timeDiff > 0 && timeDiff < 500) { // Extrapolate up to 500ms
+              targetX = latest.x + (latest.vx * timeDiff) / 1000;
+              targetY = latest.y + (latest.vy * timeDiff) / 1000;
+            } else {
+              targetX = latest.x;
+              targetY = latest.y;
+            }
+          }
+
+          // Use a fast LERP/damping to converge smoothly from the current rendered position to targetX/Y.
+          const alpha = 1 - Math.exp(-25 * dt);
+          const x = player.x + (targetX - player.x) * alpha;
+          const y = player.y + (targetY - player.y) * alpha;
+
+          if (Math.abs(player.x - x) < 0.01 && Math.abs(player.y - y) < 0.01) continue;
           if (!next) next = { ...current };
           next[id] = { ...player, x, y };
         }
@@ -910,6 +988,8 @@ export function useGameEngine(initialPlayer: Player) {
 
   const monstersRef = useRef<Monster[]>(monsters);
   monstersRef.current = monsters;
+
+  const handleMonsterDefeatedRef = useRef<((m: Monster, killedByPlayer?: boolean) => void) | null>(null);
 
   const resourceNodesRef = useRef<ResourceNode[]>(resourceNodes);
   resourceNodesRef.current = resourceNodes;
@@ -1500,6 +1580,8 @@ export function useGameEngine(initialPlayer: Player) {
       m.respawnTime = 2.5 + Math.random() * 1.5;
     }
   }, [awardExpAndGold, updateQuestObjective, addGroundDecal, spawnParticles, showToast, spawnXpGem]);
+
+  handleMonsterDefeatedRef.current = handleMonsterDefeated;
 
   // Refs for Hostingovaya dynamic escalation
   const brokenServersCountRef = useRef<number>(0);
@@ -5698,6 +5780,9 @@ export function useGameEngine(initialPlayer: Player) {
   const handleTeleport = useCallback((x: number, y: number, zoneName: string) => {
     if (hordeRunRef.current.active) {
       endHordeRunRef.current('teleport', false);
+    }
+    if (net.hasSharedWorld()) {
+      net.teleport(x, y);
     }
     setPlayer((prev) => ({
       ...prev,

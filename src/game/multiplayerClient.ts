@@ -223,7 +223,7 @@ class MultiplayerClient {
 
   public updatePosition(player: Player) {
     const now = performance.now();
-    if (now - this.lastPositionSentAt < 1000 / 30) {
+    if (now - this.lastPositionSentAt < 1000 / 10) {
       return;
     }
     this.lastPositionSentAt = now;
@@ -261,6 +261,14 @@ class MultiplayerClient {
 
   public extractHorde() {
     this.send({ type: 'horde_extract' });
+  }
+
+  public healPlayer(amount: number) {
+    this.send({ type: 'player_heal', amount });
+  }
+
+  public teleport(x: number, y: number) {
+    this.send({ type: 'teleport', x, y });
   }
 
   public isServerHordeActive() {

@@ -41,7 +41,7 @@ const HORDE_CENTER_Y: f64 = 2_200.0;
 const HORDE_EXTRACT_AFTER: f64 = 24.0;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_CHAT_HISTORY: usize = 50;
-const POSITION_INTERVAL: Duration = Duration::from_millis(33);
+const POSITION_INTERVAL: Duration = Duration::from_millis(90);
 const WORLD_TICK: Duration = Duration::from_millis(33);
 const WORLD_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_WORLD_MONSTERS: usize = 256;
@@ -234,6 +234,8 @@ async fn process_message(server: &Arc<Server>, session_id: u64, message: Value) 
         Some("world_fire") => world_fire(server, session_id, message).await,
         Some("horde_enter") => enter_horde(server, session_id).await,
         Some("horde_extract") => extract_horde(server, session_id).await,
+        Some("player_heal") => heal_player(server, session_id, message).await,
+        Some("teleport") => teleport(server, session_id, message).await,
         Some("action")
         | Some("sync_monster_damage")
         | Some("sync_drop_spawn")
@@ -319,10 +321,32 @@ async fn update_position(server: &Arc<Server>, session_id: u64, message: Value) 
         };
         let old_x = record.value["x"].as_f64().unwrap_or(WORLD_MIN_X);
         let old_y = record.value["y"].as_f64().unwrap_or(WORLD_MIN_Y);
-        let in_horde = state
+        let mut in_horde = state
             .horde
             .as_ref()
             .is_some_and(|horde| horde.participants.contains_key(&player_id));
+        if in_horde {
+            if let (Some(mx), Some(my)) = (message.get("x").and_then(Value::as_f64), message.get("y").and_then(Value::as_f64)) {
+                if !is_horde_coordinate(mx, my) {
+                    if let Some(horde) = state.horde.as_mut() {
+                        horde.participants.remove(&player_id);
+                        let should_close = horde.participants.is_empty();
+                        if should_close {
+                            state.horde = None;
+                            if let Some(world) = state.combat_world.as_mut() {
+                                world
+                                    .monsters
+                                    .retain(|_, monster| !is_horde_monster(monster));
+                                world
+                                    .projectiles
+                                    .retain(|projectile| !is_horde_projectile(projectile));
+                            }
+                        }
+                    }
+                    in_horde = false;
+                }
+            }
+        }
         let (min_x, max_x, min_y, max_y) = if in_horde {
             (HORDE_MIN_X, HORDE_MAX_X, HORDE_MIN_Y, HORDE_MAX_Y)
         } else {
@@ -361,15 +385,21 @@ async fn update_position(server: &Arc<Server>, session_id: u64, message: Value) 
             record.value["vy"] = json!(vy);
             record.value["facing"] = json!(facing);
             record.value["state"] = json!(state_name);
+            record.value["maxHp"] = json!(
+                bounded_number(&message, "maxHp", 1.0, 100_000.0)
+                    .unwrap_or_else(|| record.value["maxHp"].as_f64().unwrap_or(100.0))
+            );
             if !combat_world_ready {
                 record.value["hp"] = json!(
                     bounded_number(&message, "hp", 0.0, 100_000.0)
                         .unwrap_or_else(|| record.value["hp"].as_f64().unwrap_or(100.0))
                 );
-                record.value["maxHp"] = json!(
-                    bounded_number(&message, "maxHp", 1.0, 100_000.0)
-                        .unwrap_or_else(|| record.value["maxHp"].as_f64().unwrap_or(100.0))
-                );
+            } else {
+                let max_hp_val = record.value["maxHp"].as_f64().unwrap_or(100.0).max(1.0);
+                let current_hp = record.value["hp"].as_f64().unwrap_or(100.0);
+                if current_hp > max_hp_val {
+                    record.value["hp"] = json!(max_hp_val);
+                }
             }
             record.value["level"] = json!(
                 bounded_number(&message, "level", 1.0, 1_000.0)
@@ -556,6 +586,93 @@ async fn extract_horde(server: &Arc<Server>, session_id: u64) {
                 world
                     .projectiles
                     .retain(|projectile| !is_horde_projectile(projectile));
+            }
+        }
+        (recipients_except(&state, 0), world_snapshot(&state))
+    };
+    send_to(recipients, payload);
+}
+
+async fn heal_player(server: &Arc<Server>, session_id: u64, message: Value) {
+    let Some(amount) = message.get("amount").and_then(Value::as_f64) else {
+        return;
+    };
+    if amount <= 0.0 || amount > 100_000.0 {
+        return;
+    }
+    let mut state = server.state.lock().await;
+    let Some(player_id) = state
+        .sessions
+        .get(&session_id)
+        .and_then(|session| session.player_id.clone())
+    else {
+        return;
+    };
+    if let Some(player) = state.players.get_mut(&player_id) {
+        let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+        let hp = number(&player.value, "hp", 100.0);
+        let next_hp = (hp + amount).min(max_hp);
+        set_number(&mut player.value, "hp", next_hp);
+    }
+}
+
+async fn teleport(server: &Arc<Server>, session_id: u64, message: Value) {
+    let Some(x) = message.get("x").and_then(Value::as_f64) else {
+        return;
+    };
+    let Some(y) = message.get("y").and_then(Value::as_f64) else {
+        return;
+    };
+    let (recipients, payload) = {
+        let mut state = server.state.lock().await;
+        let Some(player_id) = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.player_id.clone())
+        else {
+            return;
+        };
+        let in_horde = state
+            .horde
+            .as_ref()
+            .is_some_and(|horde| horde.participants.contains_key(&player_id));
+        let target_in_horde = is_horde_coordinate(x, y);
+
+        if in_horde && !target_in_horde {
+            if let Some(horde) = state.horde.as_mut() {
+                horde.participants.remove(&player_id);
+                let should_close = horde.participants.is_empty();
+                if should_close {
+                    state.horde = None;
+                    if let Some(world) = state.combat_world.as_mut() {
+                        world
+                            .monsters
+                            .retain(|_, monster| !is_horde_monster(monster));
+                        world
+                            .projectiles
+                            .retain(|projectile| !is_horde_projectile(projectile));
+                    }
+                }
+            }
+        }
+
+        let (min_x, max_x, min_y, max_y) = if target_in_horde {
+            (HORDE_MIN_X, HORDE_MAX_X, HORDE_MIN_Y, HORDE_MAX_Y)
+        } else {
+            (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
+        };
+        let clamped_x = x.clamp(min_x, max_x);
+        let clamped_y = y.clamp(min_y, max_y);
+
+        if let Some(player) = state.players.get_mut(&player_id) {
+            set_number(&mut player.value, "x", clamped_x);
+            set_number(&mut player.value, "y", clamped_y);
+            set_number(&mut player.value, "vx", 0.0);
+            set_number(&mut player.value, "vy", 0.0);
+            if target_in_horde {
+                player.value["currentZone"] = json!("horde_crucible");
+            } else {
+                player.value["currentZone"] = Value::Null;
             }
         }
         (recipients_except(&state, 0), world_snapshot(&state))
