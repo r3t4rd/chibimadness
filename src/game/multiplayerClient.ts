@@ -13,6 +13,7 @@ export type NativeWorldRenderFrame = {
   zoom: number;
   viewportWidth: number;
   viewportHeight: number;
+  theme: string;
   entities: Array<{
     id: string;
     x: number;

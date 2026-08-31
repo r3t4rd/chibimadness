@@ -39,6 +39,12 @@ export function updateNativeCamera(localPlayer: Player, time: number) {
   const factor = 1 - Math.exp(-elapsedSeconds * (localPlayer.isAiming ? 6.5 : 8));
   smoothedCameraX += (targetX - smoothedCameraX) * factor;
   smoothedCameraY += (targetY - smoothedCameraY) * factor;
+  const speed = Math.hypot(localPlayer.vx || 0, localPlayer.vy || 0);
+  const aimZoom = localPlayer.isAiming ? (activeGunType === 'cheytac' ? 0.46 : 0.68) : 1;
+  const targetZoom = localPlayer.isInspectingWeapon
+    ? 5.2
+    : Math.max(0.4, (1 - Math.min(0.2, (speed / 650) * 0.16)) * aimZoom);
+  smoothedZoom += (targetZoom - smoothedZoom) * (1 - Math.exp(-elapsedSeconds * 6));
   return getCameraState();
 }
 

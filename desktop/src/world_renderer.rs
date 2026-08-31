@@ -34,6 +34,10 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 #[serde(rename_all = "camelCase")]
 pub struct NativeRenderEntity {
     pub id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub faction: String,
     pub x: f32,
     pub y: f32,
     pub size: f32,
@@ -44,6 +48,10 @@ pub struct NativeRenderEntity {
     pub velocity_y: f32,
     #[serde(default)]
     pub has_velocity: bool,
+    #[serde(default = "default_hp_ratio")]
+    pub hp_ratio: f32,
+    #[serde(default)]
+    pub facing_left: bool,
     #[serde(default)]
     pub layer: i16,
 }
@@ -57,7 +65,13 @@ pub struct NativeRenderFrame {
     pub viewport_width: f32,
     pub viewport_height: f32,
     #[serde(default)]
+    pub theme: String,
+    #[serde(default)]
     pub entities: Vec<NativeRenderEntity>,
+}
+
+fn default_hp_ratio() -> f32 {
+    1.0
 }
 
 #[derive(Default)]
@@ -88,6 +102,9 @@ impl NativeWorldState {
                 && entity.size.is_finite()
                 && entity.velocity_x.is_finite()
                 && entity.velocity_y.is_finite()
+                && entity.hp_ratio.is_finite()
+                && entity.kind.len() <= 32
+                && entity.faction.len() <= 32
                 && entity.color.iter().all(|value| value.is_finite())
         });
         let received_at = Instant::now();
@@ -118,6 +135,7 @@ impl NativeWorldState {
             }
             entity.velocity_x = entity.velocity_x.clamp(-MAX_ENTITY_SPEED, MAX_ENTITY_SPEED);
             entity.velocity_y = entity.velocity_y.clamp(-MAX_ENTITY_SPEED, MAX_ENTITY_SPEED);
+            entity.hp_ratio = entity.hp_ratio.clamp(0.0, 1.0);
             for channel in &mut entity.color {
                 *channel = channel.clamp(0.0, 1.0);
             }
@@ -309,28 +327,360 @@ impl NativeWorldRenderer {
 
     fn build_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
         self.vertices.clear();
-        // The native pass intentionally owns the base world surface. The UI
-        // WebView is transparent, so no WebView2 canvas is composited here.
-        self.add_screen_quad(
-            [0.0, 0.0],
-            [world.viewport_width, world.viewport_height],
-            [0.018, 0.035, 0.09, 1.0],
-            world,
-        );
-        self.add_grid(world);
+        // The native pass intentionally owns the world surface. The WebView
+        // stays transparent and therefore cannot force WebView2 to composite
+        // a full-screen Canvas2D texture every gameplay frame.
+        self.add_district(world);
         for entity in &world.entities {
             let x = entity.x + entity.velocity_x * prediction_seconds;
             let y = entity.y + entity.velocity_y * prediction_seconds;
-            let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.32).min(0.32)];
-            self.add_world_quad(
-                x + entity.size * 0.12,
-                y + entity.size * 0.28,
-                entity.size * 1.12,
-                shadow,
+            self.add_entity(entity, x, y, world);
+        }
+    }
+
+    fn add_district(&mut self, world: &NativeRenderFrame) {
+        let (ground, asphalt, building, window) = match world.theme.as_str() {
+            "cop_precinct" | "warzone_frontline" => (
+                [0.015, 0.065, 0.13, 1.0],
+                [0.025, 0.045, 0.075, 1.0],
+                [0.035, 0.15, 0.25, 1.0],
+                [0.08, 0.72, 0.96, 0.55],
+            ),
+            "punk_territory" => (
+                [0.09, 0.018, 0.045, 1.0],
+                [0.06, 0.025, 0.05, 1.0],
+                [0.22, 0.035, 0.12, 1.0],
+                [1.0, 0.16, 0.42, 0.58],
+            ),
+            "deep_forest" | "forest_camp" => (
+                [0.018, 0.10, 0.07, 1.0],
+                [0.04, 0.10, 0.08, 1.0],
+                [0.06, 0.20, 0.12, 1.0],
+                [0.38, 0.85, 0.42, 0.32],
+            ),
+            _ => (
+                [0.06, 0.035, 0.045, 1.0],
+                [0.08, 0.045, 0.05, 1.0],
+                [0.22, 0.11, 0.08, 1.0],
+                [1.0, 0.62, 0.16, 0.36],
+            ),
+        };
+        self.add_screen_quad(
+            [0.0, 0.0],
+            [world.viewport_width, world.viewport_height],
+            ground,
+            world,
+        );
+
+        let road_spacing = 760.0;
+        let road_width = 170.0;
+        let half_width = world.viewport_width / world.zoom / 2.0;
+        let half_height = world.viewport_height / world.zoom / 2.0;
+        let min_column = ((world.camera_x - half_width) / road_spacing).floor() as i32 - 1;
+        let max_column = ((world.camera_x + half_width) / road_spacing).ceil() as i32 + 1;
+        let min_row = ((world.camera_y - half_height) / road_spacing).floor() as i32 - 1;
+        let max_row = ((world.camera_y + half_height) / road_spacing).ceil() as i32 + 1;
+
+        for column in min_column..=max_column {
+            let x = column as f32 * road_spacing;
+            self.add_world_rect(
+                x,
+                world.camera_y,
+                road_width,
+                half_height * 2.4,
+                asphalt,
                 world,
             );
-            self.add_world_quad(x, y, entity.size, entity.color, world);
+            self.add_world_rect(
+                x,
+                world.camera_y,
+                3.0,
+                half_height * 2.2,
+                [1.0, 0.78, 0.12, 0.68],
+                world,
+            );
         }
+        for row in min_row..=max_row {
+            let y = row as f32 * road_spacing;
+            self.add_world_rect(
+                world.camera_x,
+                y,
+                half_width * 2.4,
+                road_width,
+                asphalt,
+                world,
+            );
+            self.add_world_rect(
+                world.camera_x,
+                y,
+                half_width * 2.2,
+                3.0,
+                [1.0, 0.78, 0.12, 0.68],
+                world,
+            );
+        }
+
+        for column in min_column..=max_column {
+            for row in min_row..=max_row {
+                let block_x = column as f32 * road_spacing + road_spacing * 0.5;
+                let block_y = row as f32 * road_spacing + road_spacing * 0.5;
+                let variant = (column * 17 + row * 31).rem_euclid(3) as f32;
+                let width = 380.0 + variant * 44.0;
+                let height = 300.0 + (2.0 - variant) * 36.0;
+                self.add_world_rect(block_x, block_y, width, height, building, world);
+                self.add_world_rect(
+                    block_x,
+                    block_y - height * 0.42,
+                    width * 0.78,
+                    10.0,
+                    window,
+                    world,
+                );
+                for window_index in -2..=2 {
+                    self.add_world_rect(
+                        block_x + window_index as f32 * 56.0,
+                        block_y,
+                        22.0,
+                        42.0,
+                        window,
+                        world,
+                    );
+                }
+            }
+        }
+        self.add_grid(world);
+    }
+
+    fn add_entity(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.34).min(0.34)];
+        self.add_world_rect(
+            x + entity.size * 0.10,
+            y + entity.size * 0.30,
+            entity.size * 0.94,
+            entity.size * 0.24,
+            shadow,
+            world,
+        );
+        match entity.kind.as_str() {
+            "projectile" => self.add_projectile(entity, x, y, world),
+            "resource" => self.add_resource(entity, x, y, world),
+            "vehicle" => self.add_vehicle(entity, x, y, world),
+            "pickup" | "poi" => self.add_pickup(entity, x, y, world),
+            _ => self.add_humanoid(entity, x, y, world),
+        }
+    }
+
+    fn add_humanoid(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size;
+        let outline = [0.008, 0.014, 0.035, 0.94];
+        let skin = if entity.kind == "player" {
+            [1.0, 0.84, 0.72, 1.0]
+        } else {
+            [0.98, 0.72, 0.60, 1.0]
+        };
+        let hair = if entity.kind == "player" {
+            [0.15, 0.88, 1.0, 1.0]
+        } else if entity.faction == "punk_demon" {
+            [1.0, 0.16, 0.31, 1.0]
+        } else {
+            entity.color
+        };
+        self.add_world_rect(x, y + size * 0.10, size * 0.60, size * 0.62, outline, world);
+        self.add_world_rect(
+            x,
+            y + size * 0.08,
+            size * 0.50,
+            size * 0.54,
+            entity.color,
+            world,
+        );
+        self.add_world_circle(x, y - size * 0.28, size * 0.34, outline, 12, world);
+        self.add_world_circle(x, y - size * 0.30, size * 0.29, skin, 12, world);
+        self.add_world_circle(x, y - size * 0.43, size * 0.30, hair, 12, world);
+        self.add_world_rect(x, y - size * 0.29, size * 0.46, size * 0.12, hair, world);
+        let eye_offset = if entity.facing_left {
+            -size * 0.10
+        } else {
+            size * 0.10
+        };
+        self.add_world_circle(
+            x + eye_offset,
+            y - size * 0.30,
+            size * 0.045,
+            [0.02, 0.08, 0.13, 1.0],
+            8,
+            world,
+        );
+        let weapon_direction = if entity.facing_left { -1.0 } else { 1.0 };
+        self.add_world_rect(
+            x + weapon_direction * size * 0.42,
+            y + size * 0.04,
+            size * 0.46,
+            size * 0.12,
+            outline,
+            world,
+        );
+        self.add_world_rect(
+            x + weapon_direction * size * 0.42,
+            y + size * 0.01,
+            size * 0.34,
+            size * 0.06,
+            [0.58, 0.66, 0.76, 1.0],
+            world,
+        );
+        if entity.kind == "monster" {
+            let bar_width = size * 1.28;
+            self.add_world_rect(x, y - size * 0.86, bar_width, size * 0.11, outline, world);
+            self.add_world_rect(
+                x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
+                y - size * 0.86,
+                bar_width * entity.hp_ratio,
+                size * 0.065,
+                if entity.faction == "police" {
+                    [0.12, 0.86, 1.0, 1.0]
+                } else {
+                    [1.0, 0.18, 0.31, 1.0]
+                },
+                world,
+            );
+        }
+    }
+
+    fn add_projectile(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let radius = entity.size * 0.52;
+        self.add_world_circle(
+            x - entity.velocity_x.signum() * radius * 1.5,
+            y,
+            radius * 1.7,
+            [entity.color[0], entity.color[1], entity.color[2], 0.16],
+            10,
+            world,
+        );
+        self.add_world_circle(x, y, radius, entity.color, 10, world);
+        self.add_world_circle(x, y, radius * 0.34, [1.0, 0.95, 0.76, 1.0], 8, world);
+    }
+
+    fn add_resource(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size;
+        self.add_world_rect(
+            x,
+            y + size * 0.18,
+            size * 0.20,
+            size * 0.72,
+            [0.25, 0.12, 0.04, 1.0],
+            world,
+        );
+        self.add_world_circle(x, y - size * 0.23, size * 0.48, entity.color, 12, world);
+        self.add_world_circle(
+            x - size * 0.25,
+            y - size * 0.05,
+            size * 0.30,
+            entity.color,
+            10,
+            world,
+        );
+        self.add_world_circle(
+            x + size * 0.25,
+            y - size * 0.05,
+            size * 0.30,
+            entity.color,
+            10,
+            world,
+        );
+    }
+
+    fn add_vehicle(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size;
+        self.add_world_rect(
+            x,
+            y,
+            size * 1.65,
+            size * 0.78,
+            [0.01, 0.02, 0.05, 1.0],
+            world,
+        );
+        self.add_world_rect(
+            x,
+            y - size * 0.05,
+            size * 1.42,
+            size * 0.58,
+            entity.color,
+            world,
+        );
+        self.add_world_rect(
+            x,
+            y - size * 0.16,
+            size * 0.64,
+            size * 0.30,
+            [0.62, 0.85, 1.0, 0.86],
+            world,
+        );
+        self.add_world_circle(
+            x - size * 0.56,
+            y + size * 0.34,
+            size * 0.17,
+            [0.02, 0.02, 0.03, 1.0],
+            10,
+            world,
+        );
+        self.add_world_circle(
+            x + size * 0.56,
+            y + size * 0.34,
+            size * 0.17,
+            [0.02, 0.02, 0.03, 1.0],
+            10,
+            world,
+        );
+    }
+
+    fn add_pickup(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size;
+        self.add_world_rect(x, y, size, size * 0.72, [0.02, 0.04, 0.08, 1.0], world);
+        self.add_world_rect(x, y, size * 0.76, size * 0.52, entity.color, world);
+        self.add_world_circle(
+            x,
+            y - size * 0.05,
+            size * 0.14,
+            [1.0, 0.9, 0.25, 1.0],
+            8,
+            world,
+        );
     }
 
     fn add_grid(&mut self, world: &NativeRenderFrame) {
@@ -363,17 +713,6 @@ impl NativeWorldRenderer {
                 world,
             );
         }
-    }
-
-    fn add_world_quad(
-        &mut self,
-        x: f32,
-        y: f32,
-        size: f32,
-        color: [f32; 4],
-        world: &NativeRenderFrame,
-    ) {
-        self.add_world_rect(x, y, size, size, color, world);
     }
 
     fn add_world_rect(
@@ -417,6 +756,40 @@ impl NativeWorldRenderer {
                 color,
             },
         ]);
+    }
+
+    fn add_world_circle(
+        &mut self,
+        x: f32,
+        y: f32,
+        radius: f32,
+        color: [f32; 4],
+        segments: usize,
+        world: &NativeRenderFrame,
+    ) {
+        let center = self.world_to_ndc(x, y, world);
+        let segments = segments.clamp(3, 24);
+        for index in 0..segments {
+            let start = std::f32::consts::TAU * index as f32 / segments as f32;
+            let end = std::f32::consts::TAU * (index + 1) as f32 / segments as f32;
+            let first =
+                self.world_to_ndc(x + start.cos() * radius, y + start.sin() * radius, world);
+            let second = self.world_to_ndc(x + end.cos() * radius, y + end.sin() * radius, world);
+            self.vertices.extend_from_slice(&[
+                Vertex {
+                    position: center,
+                    color,
+                },
+                Vertex {
+                    position: first,
+                    color,
+                },
+                Vertex {
+                    position: second,
+                    color,
+                },
+            ]);
+        }
     }
 
     fn add_screen_quad(

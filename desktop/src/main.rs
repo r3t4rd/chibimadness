@@ -466,10 +466,10 @@ fn configured_server() -> Result<Option<ServerEndpoint>, Box<dyn Error>> {
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--server" => server = Some(arguments.next().ok_or("--server requires a WSS URL")?),
-            "--native-renderer" => {}
+            "--native-renderer" | "--canvas-renderer" => {}
             "--help" | "-h" => {
                 println!(
-                    "Usage: chibimadness-desktop [--server wss://game.example.com/ws] [--native-renderer]"
+                    "Usage: chibimadness-desktop [--server wss://game.example.com/ws] [--canvas-renderer]"
                 );
                 return Ok(None);
             }
@@ -480,9 +480,9 @@ fn configured_server() -> Result<Option<ServerEndpoint>, Box<dyn Error>> {
 }
 
 fn native_renderer_enabled() -> bool {
-    env::args()
+    !env::args()
         .skip(1)
-        .any(|argument| argument == "--native-renderer")
+        .any(|argument| argument == "--canvas-renderer")
 }
 
 fn parse_server_endpoint(value: String) -> Result<ServerEndpoint, Box<dyn Error>> {

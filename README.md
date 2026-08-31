@@ -21,10 +21,12 @@ git push origin v0.1.0
 .\chibimadness-desktop.exe --server wss://example.com/ws
 ```
 
-Native world-renderer preview (Rust/WGPU under the WebView HUD):
+Desktop uses the native Rust/WGPU world renderer by default. The WebView owns
+only HUD/input. For a temporary visual regression comparison, start the old
+Canvas2D renderer explicitly:
 
 ```powershell
-.\chibimadness-desktop.exe --native-renderer
+.\chibimadness-desktop.exe --canvas-renderer
 ```
 
 ### Hot updates без замены `.exe`

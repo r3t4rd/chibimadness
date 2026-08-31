@@ -95,6 +95,20 @@ function nativeMonsterColor(faction: string | undefined): [number, number, numbe
   return [0.75, 0.2, 0.9, 1];
 }
 
+function nativeResourceColor(type: string): [number, number, number, number] {
+  if (type === 'iron_ore') return [0.48, 0.58, 0.7, 1];
+  if (type === 'lumite_crystal') return [0.55, 0.25, 1, 1];
+  if (type === 'star_flower') return [1, 0.76, 0.18, 1];
+  return [0.12, 0.52, 0.28, 1];
+}
+
+function nativePoiColor(type: string): [number, number, number, number] {
+  if (type === 'fire_hydrant') return [1, 0.18, 0.22, 1];
+  if (type === 'vending_machine') return [0.08, 0.66, 1, 1];
+  if (type === 'steam_geyser') return [0.72, 0.86, 0.96, 1];
+  return [1, 0.68, 0.12, 1];
+}
+
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -131,15 +145,21 @@ export function App() {
     let animationId: number;
     let lastRenderedAt: number | null = null;
     const canvas = canvasRef.current;
-    if (!canvas || !createdPlayer) return;
+    if (!createdPlayer || (!nativeWorldRenderer && !canvas)) return;
 
-    const ctx = nativeWorldRenderer ? null : canvas.getContext('2d');
+    const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
     if (!nativeWorldRenderer && !ctx) return;
+    let viewportWidth = window.innerWidth;
+    let viewportHeight = window.innerHeight;
 
     // Responsive Canvas Resize Observer
     const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      viewportWidth = window.innerWidth;
+      viewportHeight = window.innerHeight;
+      if (canvas) {
+        canvas.width = viewportWidth;
+        canvas.height = viewportHeight;
+      }
     };
     handleResize();
     window.addEventListener('resize', handleResize);
@@ -154,6 +174,8 @@ export function App() {
         const entities = [
           {
             id: curEngine.player.id,
+            kind: 'player',
+            faction: '',
             x: curEngine.player.x,
             y: curEngine.player.y,
             size: 38,
@@ -161,10 +183,14 @@ export function App() {
             velocityX: curEngine.player.vx,
             velocityY: curEngine.player.vy,
             hasVelocity: true,
+            hpRatio: curEngine.player.stats.maxHp > 0 ? curEngine.player.stats.hp / curEngine.player.stats.maxHp : 1,
+            facingLeft: curEngine.player.facing === 'left',
             layer: 20,
           },
           ...(Object.values(curEngine.remotePlayers) as Player[]).map((player) => ({
             id: player.id,
+            kind: 'player',
+            faction: '',
             x: player.x,
             y: player.y,
             size: 34,
@@ -172,12 +198,16 @@ export function App() {
             velocityX: player.vx,
             velocityY: player.vy,
             hasVelocity: true,
+            hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 1,
+            facingLeft: player.facing === 'left',
             layer: 18,
           })),
           ...curEngine.monsters
             .filter((monster) => monster.state !== 'dead' && monster.hp > 0)
             .map((monster) => ({
               id: monster.id,
+              kind: 'monster',
+              faction: monster.faction || '',
               x: monster.x,
               y: monster.y - (monster.jumpZ || 0),
               size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
@@ -185,10 +215,14 @@ export function App() {
               velocityX: 0,
               velocityY: 0,
               hasVelocity: false,
+              hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 1,
+              facingLeft: monster.facing === 'left',
               layer: 10,
             })),
           ...curEngine.projectiles.map((projectile) => ({
             id: projectile.id,
+            kind: 'projectile',
+            faction: projectile.faction || '',
             x: projectile.x,
             y: projectile.y + (projectile.visualOffsetY || 0),
             size: Math.max(4, projectile.size * 1.8),
@@ -196,15 +230,80 @@ export function App() {
             velocityX: projectile.vx,
             velocityY: projectile.vy,
             hasVelocity: true,
+            hpRatio: 1,
+            facingLeft: projectile.vx < 0,
             layer: 30,
+          })),
+          ...curEngine.resourceNodes
+            .filter((node) => node.hp > 0)
+            .map((node) => ({
+              id: `resource:${node.id}`,
+              kind: 'resource',
+              faction: '',
+              x: node.x,
+              y: node.y,
+              size: Math.max(34, 52 * (node.scale || 1)),
+              color: nativeResourceColor(node.type),
+              velocityX: 0,
+              velocityY: 0,
+              hasVelocity: false,
+              hpRatio: node.maxHp > 0 ? node.hp / node.maxHp : 1,
+              facingLeft: false,
+              layer: 7,
+            })),
+          ...curEngine.dropItems.map((drop) => ({
+            id: `drop:${drop.id}`,
+            kind: 'pickup',
+            faction: '',
+            x: drop.x,
+            y: drop.y - drop.bounceOffset,
+            size: drop.isXpGem ? 14 : 20,
+            color: drop.isXpGem ? [0.32, 1, 0.74, 1] as [number, number, number, number] : [1, 0.72, 0.16, 1] as [number, number, number, number],
+            velocityX: drop.vx || 0,
+            velocityY: drop.vy || 0,
+            hasVelocity: Boolean(drop.vx || drop.vy),
+            hpRatio: 1,
+            facingLeft: false,
+            layer: 14,
+          })),
+          ...curEngine.cars.map((car) => ({
+            id: `car:${car.id}`,
+            kind: 'vehicle',
+            faction: car.type === 'police_car' ? 'police' : 'punk_demon',
+            x: car.x,
+            y: car.y,
+            size: Math.max(car.width, car.height),
+            color: car.type === 'police_car' ? [0.08, 0.68, 1, 1] as [number, number, number, number] : [1, 0.14, 0.35, 1] as [number, number, number, number],
+            velocityX: car.vx,
+            velocityY: car.vy,
+            hasVelocity: true,
+            hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 1,
+            facingLeft: car.facing === 'left',
+            layer: 16,
+          })),
+          ...curEngine.worldPois.map((poi) => ({
+            id: `poi:${poi.id}`,
+            kind: 'poi',
+            faction: '',
+            x: poi.x,
+            y: poi.y,
+            size: Math.max(20, poi.radius || Math.max(poi.width || 0, poi.height || 0) || 28),
+            color: nativePoiColor(poi.type),
+            velocityX: 0,
+            velocityY: 0,
+            hasVelocity: false,
+            hpRatio: 1,
+            facingLeft: false,
+            layer: 8,
           })),
         ];
         sendNativeWorldRenderFrame({
           cameraX: camera.x,
           cameraY: camera.y,
           zoom: camera.zoom,
-          viewportWidth: canvas.width,
-          viewportHeight: canvas.height,
+          viewportWidth,
+          viewportHeight,
+          theme: curEngine.player.currentZone,
           entities,
         });
         perfMonitor.setExtras({
@@ -212,8 +311,8 @@ export function App() {
           particles: curEngine.particles.length,
           projectiles: curEngine.projectiles.length,
           zoom: camera.zoom,
-          canvasW: canvas.width,
-          canvasH: canvas.height,
+          canvasW: viewportWidth,
+          canvasH: viewportHeight,
         });
         perfMonitor.recordDraw(0);
         perfMonitor.recordFrame(frameIntervalMs);
@@ -226,15 +325,15 @@ export function App() {
         particles: curEngine.particles.length,
         projectiles: curEngine.projectiles.length,
         zoom: getCameraState().zoom,
-        canvasW: canvas.width,
-        canvasH: canvas.height,
+        canvasW: viewportWidth,
+        canvasH: viewportHeight,
       });
 
       const drawStart = performance.now();
       drawWorld(
         ctx,
-        canvas.width,
-        canvas.height,
+        viewportWidth,
+        viewportHeight,
         curEngine.player,
         curEngine.remotePlayers,
         curEngine.monsters,
@@ -331,6 +430,35 @@ export function App() {
     engine.handleInteract();
   };
 
+  const handleWorldPointerDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete') {
+      return;
+    }
+    if (e.button === 2) {
+      e.preventDefault();
+      engine.setIsAiming(true);
+      return;
+    }
+    if (e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const targetWorldPos = screenToWorld(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    engine.setFireHeld(true);
+    engine.handleAttack(targetWorldPos.x, targetWorldPos.y);
+  };
+
+  const handleWorldPointerUp = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button === 2) {
+      e.preventDefault();
+      engine.setIsAiming(false);
+    }
+    if (e.button === 0) engine.setFireHeld(false);
+  };
+
   return (
     <div className={`relative w-screen h-screen overflow-hidden select-none ${nativeWorldRenderer ? 'bg-transparent' : 'bg-slate-950'}`}>
       {/* 1. Character Creation Screen if not yet spawned */}
@@ -342,44 +470,25 @@ export function App() {
         />
       ) : (
         <>
-          {/* 2. Main Open World Canvas */}
-          <canvas
-            ref={canvasRef}
-            onContextMenu={(e) => e.preventDefault()}
-            onMouseDown={(e) => {
-              if (engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete') {
-                return;
-              }
-
-              const canvas = canvasRef.current;
-              if (!canvas) return;
-              if (e.button === 2) {
-                // Right Mouse Button: Aim Mode
-                e.preventDefault();
-                engine.setIsAiming(true);
-                return;
-              }
-              if (e.button === 0) {
-                // Left Mouse Button: Fire Weapon accurately using world coordinates
-                const rect = canvas.getBoundingClientRect();
-                const screenX = e.clientX - rect.left;
-                const screenY = e.clientY - rect.top;
-                const targetWorldPos = screenToWorld(screenX, screenY, canvas.width, canvas.height);
-                engine.setFireHeld(true);
-                engine.handleAttack(targetWorldPos.x, targetWorldPos.y);
-              }
-            }}
-            onMouseUp={(e) => {
-              if (e.button === 2) {
-                e.preventDefault();
-                engine.setIsAiming(false);
-              }
-              if (e.button === 0) {
-                engine.setFireHeld(false);
-              }
-            }}
-            className="absolute inset-0 block w-full h-full cursor-crosshair"
-          />
+          {/* Native mode deliberately has no Canvas element: the transparent
+              WebView only owns input/HUD, while Rust owns every world pixel. */}
+          {nativeWorldRenderer ? (
+            <div
+              aria-label="Game world input"
+              onContextMenu={(e) => e.preventDefault()}
+              onMouseDown={handleWorldPointerDown}
+              onMouseUp={handleWorldPointerUp}
+              className="absolute inset-0 cursor-crosshair"
+            />
+          ) : (
+            <canvas
+              ref={canvasRef}
+              onContextMenu={(e) => e.preventDefault()}
+              onMouseDown={handleWorldPointerDown}
+              onMouseUp={handleWorldPointerUp}
+              className="absolute inset-0 block w-full h-full cursor-crosshair"
+            />
+          )}
 
           {/* 3. Floating In-Game Toast Notifications */}
           <AnimatePresence>
