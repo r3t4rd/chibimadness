@@ -298,6 +298,7 @@ dependencies = [
  "sha2",
  "ureq",
  "url",
+ "wry",
  "yuyib",
  "zip",
 ]

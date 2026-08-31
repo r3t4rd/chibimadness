@@ -22,5 +22,9 @@ serde_json = "1.0.149"
 sha2 = "0.10.9"
 ureq = "2.12.1"
 url = "2.5.8"
+# Yuyib's WebView host uses Wry, but its default dependency set intentionally
+# omits this opt-in feature. Without it WebView2 ignores `with_transparent`
+# and paints an opaque white controller over the sibling WGPU world surface.
+wry = { version = "0.55.1", default-features = false, features = ["transparent"] }
 yuyib = { git = "https://github.com/Anerson-Auf/yuyib.git", rev = "3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8", default-features = false, features = ["webview"] }
 zip = { version = "2.4.2", default-features = false, features = ["deflate"] }
