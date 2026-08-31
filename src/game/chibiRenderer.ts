@@ -6262,9 +6262,9 @@ function drawAkBananaMag(ctx: CanvasRenderingContext2D, fresh = false) {
   ctx.strokeStyle = '#451A03';
   ctx.beginPath();
   ctx.moveTo(-2, 0);
-  ctx.quadraticCurveTo(7, 6, 5, 11);
+  ctx.quadraticCurveTo(-2, 6, 5, 11);
   ctx.lineTo(1.2, 11.6);
-  ctx.quadraticCurveTo(2, 6, -4.2, 0);
+  ctx.quadraticCurveTo(-7, 6, -4.2, 0);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
@@ -7030,7 +7030,7 @@ export function drawHumanoidEnemy(
       // Curved banana magazine
       ctx.fillStyle = '#78350F';
       ctx.beginPath();
-      ctx.ellipse(8, 6, 4, 7, 0.4, 0, Math.PI * 2);
+      ctx.ellipse(8, 6, 4, 7, -0.4, 0, Math.PI * 2);
       ctx.fill();
       // Wooden stock
       ctx.fillStyle = '#92400E';
