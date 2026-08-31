@@ -38,6 +38,10 @@ const HORDE_MAX_X: f64 = -800.0;
 const HORDE_MAX_Y: f64 = 6_800.0;
 const HORDE_CENTER_X: f64 = -6_000.0;
 const HORDE_CENTER_Y: f64 = 2_200.0;
+// Nullspace is one shared server run, not a private instance. Keep a short
+// admission window for players who enter together, then close it so a late
+// click cannot drop someone into an elapsed run with extract/boss already up.
+const HORDE_JOIN_WINDOW: f64 = 8.0;
 const HORDE_EXTRACT_AFTER: f64 = 24.0;
 const HORDE_ENTRY_GRACE: Duration = Duration::from_millis(2_500);
 const LIFESTEAL_RATIO: f64 = 0.08;
@@ -580,31 +584,68 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
             number(&player.value, "x", WORLD_MIN_X).clamp(WORLD_MIN_X, WORLD_MAX_X),
             number(&player.value, "y", WORLD_MIN_Y).clamp(WORLD_MIN_Y, WORLD_MAX_Y),
         );
-        let horde = state.horde.get_or_insert_with(|| HordeRun {
-            participants: HashMap::new(),
-            elapsed: 0.0,
-            spawn_accumulator: 0.0,
-            next_unlock_at: 20.0,
-            next_boss_at: 60.0,
-            unlocked_count: 1,
-            boss_index: 0,
-            sequence: 1,
-        });
-        let entering_for_first_time = !horde.participants.contains_key(&player_id);
-        horde.participants.entry(player_id.clone()).or_insert(return_point);
-        if entering_for_first_time {
-            println!("Nullspace: {player_id} entered");
+        if let Some(active_run) = state.horde.as_ref() {
+            if active_run.participants.contains_key(&player_id) {
+                // A retransmitted enter or reconnect is not a new run. Keep
+                // the server-owned position and HP instead of granting a
+                // teleport/heal exploit, then resync the participant.
+                (recipients_except(&state, 0), world_snapshot(&state))
+            } else if active_run.elapsed > HORDE_JOIN_WINDOW {
+                let sender = state
+                    .sessions
+                    .get(&session_id)
+                    .expect("session exists")
+                    .sender
+                    .clone();
+                let retry_in = (HORDE_EXTRACT_AFTER - active_run.elapsed).max(0.0).ceil();
+                let rejection = json!({
+                    "type": "horde_join_rejected",
+                    "reason": "run_in_progress",
+                    "retryIn": retry_in,
+                })
+                .to_string();
+                println!("Nullspace join rejected for {player_id}: run already at {:.1}s", active_run.elapsed);
+                drop(state);
+                send_to(vec![sender], rejection);
+                return;
+            } else {
+                let horde = state.horde.as_mut().expect("active run exists");
+                horde.participants.insert(player_id.clone(), return_point);
+                println!("Nullspace: {player_id} joined the opening wave");
+                let player = state.players.get_mut(&player_id).expect("player exists");
+                player.value["x"] = json!(HORDE_CENTER_X);
+                player.value["y"] = json!(HORDE_CENTER_Y);
+                player.value["vx"] = json!(0.0);
+                player.value["vy"] = json!(0.0);
+                player.value["currentZone"] = json!("horde_crucible");
+                let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+                set_number(&mut player.value, "hp", max_hp);
+                player.immune_until = Some(Instant::now() + HORDE_ENTRY_GRACE);
+                (recipients_except(&state, 0), world_snapshot(&state))
+            }
+        } else {
+            state.horde = Some(HordeRun {
+                participants: HashMap::from([(player_id.clone(), return_point)]),
+                elapsed: 0.0,
+                spawn_accumulator: 0.0,
+                next_unlock_at: 20.0,
+                next_boss_at: 60.0,
+                unlocked_count: 1,
+                boss_index: 0,
+                sequence: 1,
+            });
+            println!("Nullspace: {player_id} started a shared run");
+            let player = state.players.get_mut(&player_id).expect("player exists");
+            player.value["x"] = json!(HORDE_CENTER_X);
+            player.value["y"] = json!(HORDE_CENTER_Y);
+            player.value["vx"] = json!(0.0);
+            player.value["vy"] = json!(0.0);
+            player.value["currentZone"] = json!("horde_crucible");
+            let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+            set_number(&mut player.value, "hp", max_hp);
+            player.immune_until = Some(Instant::now() + HORDE_ENTRY_GRACE);
+            (recipients_except(&state, 0), world_snapshot(&state))
         }
-        let player = state.players.get_mut(&player_id).expect("player exists");
-        player.value["x"] = json!(HORDE_CENTER_X);
-        player.value["y"] = json!(HORDE_CENTER_Y);
-        player.value["vx"] = json!(0.0);
-        player.value["vy"] = json!(0.0);
-        player.value["currentZone"] = json!("horde_crucible");
-        let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
-        set_number(&mut player.value, "hp", max_hp);
-        player.immune_until = Some(Instant::now() + HORDE_ENTRY_GRACE);
-        (recipients_except(&state, 0), world_snapshot(&state))
     };
     send_to(recipients, payload);
 }
@@ -1987,6 +2028,82 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nullspace_closes_late_admission_without_resetting_the_shared_run() {
+        let server = Arc::new(Server {
+            state: Mutex::new(WorldState::default()),
+            max_players: 4,
+        });
+        let mut first = session(&server, 1).await;
+        let mut second = session(&server, 2).await;
+        join(
+            &server,
+            1,
+            json!({ "player": player("first", 650.0, 750.0) }),
+        )
+        .await;
+        let _ = recv_text(&mut first, "first init").await;
+        world_bootstrap(
+            &server,
+            1,
+            json!({ "monsters": [{
+                "id": "overworld_mob", "x": 700.0, "y": 750.0,
+                "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0
+            }]}),
+        )
+        .await;
+        let _ = recv_text(&mut first, "world bootstrap").await;
+        join(
+            &server,
+            2,
+            json!({ "player": player("second", 700.0, 750.0) }),
+        )
+        .await;
+        let _ = recv_text(&mut second, "second init").await;
+        let _ = recv_text(&mut first, "second joined").await;
+
+        enter_horde(&server, 1).await;
+        let _ = recv_text(&mut first, "first horde snapshot").await;
+        let _ = recv_text(&mut second, "first horde snapshot").await;
+        {
+            let mut state = server.state.lock().await;
+            let player = state.players.get_mut("first").expect("first player");
+            player.value["x"] = json!(HORDE_CENTER_X + 120.0);
+            player.value["hp"] = json!(40.0);
+        }
+
+        // Repeated enter packets must only resync an existing participant.
+        // They must not rewind the run, move the player, or refill HP.
+        enter_horde(&server, 1).await;
+        let resumed = serde_json::from_str::<Value>(&recv_text(&mut first, "idempotent enter snapshot").await)
+            .expect("snapshot JSON");
+        let _ = recv_text(&mut second, "idempotent enter snapshot").await;
+        let first_player = resumed["players"]
+            .as_array()
+            .expect("players")
+            .iter()
+            .find(|player| player["id"] == "first")
+            .expect("first player in snapshot");
+        assert_eq!(first_player["x"], HORDE_CENTER_X + 120.0);
+        assert_eq!(first_player["hp"], 40.0);
+        {
+            let mut state = server.state.lock().await;
+            state.horde.as_mut().expect("shared run").elapsed = HORDE_JOIN_WINDOW + 1.0;
+        }
+
+        enter_horde(&server, 2).await;
+        let rejection = serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
+            .expect("rejection JSON");
+        assert_eq!(rejection["type"], "horde_join_rejected");
+        assert_eq!(rejection["reason"], "run_in_progress");
+
+        let state = server.state.lock().await;
+        let horde = state.horde.as_ref().expect("shared run remains");
+        assert!(horde.participants.contains_key("first"));
+        assert!(!horde.participants.contains_key("second"));
+        assert_eq!(number(&state.players["second"].value, "x", 0.0), 700.0);
+    }
+
+    #[tokio::test]
     async fn stale_overworld_movement_cannot_cancel_nullspace_entry() {
         let server = Arc::new(Server {
             state: Mutex::new(WorldState::default()),
@@ -2140,11 +2257,15 @@ mod tests {
         let (_, mut player_value) =
             sanitize_player(&player("player_one", 100.0, 100.0)).expect("valid player");
         player_value["hp"] = json!(40.0);
-        let monsters = sanitize_world_monsters(&[json!({
+        let mut monsters = sanitize_world_monsters(&[json!({
             "id": "monster_one", "x": 110.0, "y": 100.0,
             "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
         })])
         .expect("valid monster manifest");
+        monsters
+            .get_mut("monster_one")
+            .expect("monster")
+            ["attackCooldown"] = json!(1.0);
         let mut state = WorldState::default();
         state.players.insert(
             "player_one".into(),

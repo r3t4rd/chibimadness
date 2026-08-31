@@ -217,6 +217,11 @@ class MultiplayerClient {
         this.hordeTransition = null;
         this.lastPositionSentAt = performance.now();
       }
+    } else if (type === 'horde_join_rejected') {
+      // The server keeps one global run. A rejection must release the client
+      // transition lock immediately, otherwise repeated attempts look like a
+      // stuck "joining" state for six seconds.
+      this.hordeTransition = null;
     }
     this.listeners.forEach((fn) => fn(type, data));
   }

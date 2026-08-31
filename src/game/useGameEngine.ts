@@ -846,6 +846,17 @@ export function useGameEngine(initialPlayer: Player) {
           return [id, previous ? { ...target, x: previous.x, y: previous.y } : target];
         })));
       }
+    } else if (type === 'horde_join_rejected') {
+      hordeJoinPendingRef.current = false;
+      const retryIn = typeof data.retryIn === 'number' ? Math.max(0, Math.ceil(data.retryIn)) : null;
+      setToastNotification({
+        id: `nullspace_busy_${Date.now()}`,
+        title: 'NULLSPACE IN PROGRESS',
+        message: retryIn && retryIn > 0
+          ? `Shared run is underway. Try again in about ${retryIn}s.`
+          : 'Shared run is underway. Try again when it ends.',
+        icon: '⌛',
+      });
     } else if (type === 'player_left' && typeof data.id === 'string') {
       setRemotePlayers((current) => {
         if (!current[data.id]) return current;
