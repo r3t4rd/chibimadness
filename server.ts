@@ -44,8 +44,11 @@ const connectedPlayers = new Map<string, { ws: WebSocket; player: NetPlayer; res
 const chatHistory: any[] = [];
 
 function resumeTokenMatches(candidate: unknown, expected: string) {
-  if (typeof candidate !== 'string' || candidate.length !== expected.length) return false;
-  return timingSafeEqual(Buffer.from(candidate), Buffer.from(expected));
+  if (typeof candidate !== 'string') return false;
+  const candidateBytes = Buffer.from(candidate);
+  const expectedBytes = Buffer.from(expected);
+  if (candidateBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(candidateBytes, expectedBytes);
 }
 
 // Initialize WebSocket Server on same port 3000
