@@ -99,6 +99,17 @@ import {
   type HordeHazard,
   type HordeRunState,
 } from './hordeMode';
+import {
+  applyEvolution,
+  EVOLUTION_BY_ID,
+  getEvolutionMods,
+  getOrbitSlots,
+  mobSpeedMul,
+  rollLevelUpChoices,
+  type EvolutionDef,
+  type EvolutionId,
+} from './evolutions';
+import { upsertOperator } from './characterSave';
 
 // WEAPONS MAGAZINE & FIRE RATE CONFIGURATIONS
 export const WEAPON_CONFIGS: Record<GunType, { maxAmmo: number; reloadTime: number; fireRate: number; recoil: number; shake: number }> = {
@@ -542,6 +553,9 @@ export function useGameEngine(initialPlayer: Player) {
         equipment: { ...initialPlayer.equipment },
         skills: [...initialPlayer.skills],
         inventory: [...initialPlayer.inventory],
+        evolutions: { ...(initialPlayer.evolutions || {}) },
+        pendingEvolutionPicks: initialPlayer.pendingEvolutionPicks ?? 0,
+        saveId: initialPlayer.saveId,
         // Start off-screen for intro cinematic dive
         y: -200,
         jumpZ: 900,
@@ -551,6 +565,44 @@ export function useGameEngine(initialPlayer: Player) {
       }));
     }
   }, [initialPlayer]);
+
+  useEffect(() => {
+    if (!player.saveId || player.id === 'default') return;
+    const t = window.setTimeout(() => upsertOperator(player), 700);
+    return () => window.clearTimeout(t);
+  }, [
+    player.saveId,
+    player.stats.level,
+    player.stats.exp,
+    player.stats.hp,
+    player.gold,
+    player.evolutions,
+    player.pendingEvolutionPicks,
+    player.inventory,
+    player.equipment,
+  ]);
+
+  useEffect(() => {
+    const pending = player.pendingEvolutionPicks ?? 0;
+    if (pending <= 0) {
+      setLevelUpOffer(null);
+      return;
+    }
+    const choices = rollLevelUpChoices(player, 3);
+    if (choices.length === 0) {
+      setPlayer((prev) => ({
+        ...prev,
+        pendingEvolutionPicks: Math.max(0, (prev.pendingEvolutionPicks ?? 0) - 1),
+        stats: {
+          ...prev.stats,
+          maxHp: prev.stats.maxHp + 30,
+          hp: Math.min(prev.stats.maxHp + 30, prev.stats.hp + 30),
+        },
+      }));
+      return;
+    }
+    setLevelUpOffer(choices);
+  }, [player.pendingEvolutionPicks, player.evolutions, player.characterClass]);
 
   const [remotePlayers, setRemotePlayers] = useState<Record<string, Player>>({});
   const [monsters, setMonsters] = useState<Monster[]>(() =>
@@ -593,6 +645,18 @@ export function useGameEngine(initialPlayer: Player) {
     pending: null,
   });
   const endHordeRunRef = useRef<(reason: HordeEndReason, doTeleport: boolean) => void>(() => {});
+
+  const [levelUpOffer, setLevelUpOffer] = useState<EvolutionDef[] | null>(null);
+  const evoBurstDepthRef = useRef(0);
+  const blackHoleKillsRef = useRef(0);
+  const phoenixCdRef = useRef(0);
+  const thunderAccRef = useRef(0);
+  const hexAccRef = useRef(0);
+  const trailAccRef = useRef(0);
+  const trailRef = useRef<{ x: number; y: number; life: number }[]>([]);
+  const orbitHitRef = useRef<Record<string, number>>({});
+  const garlicHitRef = useRef<Record<string, number>>({});
+  const trailHitRef = useRef<Record<string, number>>({});
 
   // Active World Boss Target
   const [currentBoss, setCurrentBoss] = useState<Monster | null>(null);
@@ -890,6 +954,8 @@ export function useGameEngine(initialPlayer: Player) {
         if (it) addItemToInventory(it, ri.quantity);
       });
 
+      const levelsGained = newLevel - prev.stats.level;
+
       return {
         ...prev,
         gold: prev.gold + quest.rewardGold,
@@ -900,6 +966,7 @@ export function useGameEngine(initialPlayer: Player) {
           maxExp: newMaxExp,
           statPoints: newStatPoints,
         },
+        pendingEvolutionPicks: (prev.pendingEvolutionPicks ?? 0) + levelsGained,
         activeQuests: {
           ...prev.activeQuests,
           [questId]: { ...qp, status: 'turned_in' },
@@ -959,6 +1026,7 @@ export function useGameEngine(initialPlayer: Player) {
       let newDef = prev.stats.def;
 
       let leveledUp = false;
+      let levelsGained = 0;
       while (newExp >= newMaxExp) {
         newExp -= newMaxExp;
         newLevel += 1;
@@ -969,11 +1037,12 @@ export function useGameEngine(initialPlayer: Player) {
         newAtk += 4;
         newDef += 2;
         leveledUp = true;
+        levelsGained += 1;
       }
 
       if (leveledUp) {
         sound.playLevelUp();
-        showToast('Level Up! 🌟', `You reached Level ${newLevel}! +3 Stat Points`, '⬆️');
+        showToast('LEVEL UP! 🌟', `Уровень ${newLevel}! Выбери эволюцию`, '⬆️');
       }
 
       return {
@@ -990,6 +1059,7 @@ export function useGameEngine(initialPlayer: Player) {
           atk: newAtk,
           def: newDef,
         },
+        pendingEvolutionPicks: (prev.pendingEvolutionPicks ?? 0) + levelsGained,
       };
     });
   }, [showToast]);
@@ -1006,9 +1076,12 @@ export function useGameEngine(initialPlayer: Player) {
     // Only award EXP and quest progress if killed by player or player dealt damage to this monster
     const isPlayerKill = killedByPlayer || !!m.damagedByPlayer;
     if (isPlayerKill) {
+      const killer = playerRef.current;
+      const mods = getEvolutionMods(killer);
       if (m.zone === HORDE_ZONE_ID) {
-        spawnXpGem(m.x, m.y, Math.max(6, Math.round(m.expReward * 0.85)));
-        if (Math.random() < 0.12) spawnXpGem(m.x + 8, m.y - 6, Math.round(m.expReward * 0.4));
+        const gemVal = Math.max(6, Math.round(m.expReward * 0.85 * mods.greedGemMult));
+        spawnXpGem(m.x, m.y, gemVal);
+        if (Math.random() < 0.12 + mods.greedExtraChance) spawnXpGem(m.x + 8, m.y - 6, Math.round(m.expReward * 0.4 * mods.greedGemMult));
         if (hordeRunRef.current.active) {
           hordeRunRef.current.kills += 1;
           if (hordeRunRef.current.blindness.casterId === m.id) {
@@ -1029,6 +1102,111 @@ export function useGameEngine(initialPlayer: Player) {
       } else {
         awardExpAndGold(m.expReward, m.goldReward);
         updateQuestObjective('kill', m.type, 1);
+      }
+
+      const healAmt = mods.kissHeal + mods.harvestHeal;
+      if (healAmt > 0) {
+        setPlayer((prev) => ({
+          ...prev,
+          stats: { ...prev.stats, hp: Math.min(prev.stats.maxHp, prev.stats.hp + healAmt) },
+        }));
+        addDamagePopup(killer.x, killer.y - 28, `+${healAmt} HP`, '#FB7185', false, true, 'heal', 1.05);
+      }
+
+      if (evoBurstDepthRef.current < 3) {
+        evoBurstDepthRef.current += 1;
+        const splash = (ox: number, oy: number, radius: number, dmg: number, color: string, label: string) => {
+          spawnParticles(ox, oy, color, 22, 'spark');
+          addGroundDecal(ox, oy, color, Math.min(48, radius * 0.35));
+          triggerShake(6, 0.12);
+          monstersRef.current.forEach((other) => {
+            if (other.id === m.id || other.hp <= 0 || other.state === 'dead') return;
+            if (Math.hypot(other.x - ox, other.y - oy) <= radius) {
+              other.hp = Math.max(0, other.hp - Math.round(dmg));
+              other.hitFlash = 0.25;
+              other.damagedByPlayer = true;
+              other.knockbackX = (other.x - ox) * 2.2;
+              other.knockbackY = (other.y - oy) * 2.2;
+              addDamagePopup(other.x, other.y, label, color, true);
+              if (other.hp <= 0) handleMonsterDefeated(other, true);
+            }
+          });
+        };
+
+        if (mods.soulBurstChance > 0 && Math.random() < mods.soulBurstChance) {
+          splash(m.x, m.y, mods.soulBurstRadius, mods.soulBurstDamage, '#FB7185', 'BURST');
+        }
+        if (mods.harvestSlashChance > 0 && Math.random() < mods.harvestSlashChance) {
+          splash(m.x, m.y, 96, mods.soulBurstDamage * 0.55 + 12, '#E2E8F0', 'SLASH');
+        }
+        if (mods.frostChance > 0 && Math.random() < mods.frostChance) {
+          spawnParticles(m.x, m.y, '#67E8F9', 18, 'spark');
+          monstersRef.current.forEach((other) => {
+            if (other.hp <= 0 || other.state === 'dead') return;
+            if (Math.hypot(other.x - m.x, other.y - m.y) <= mods.frostRadius) {
+              other.frozenTimer = Math.max(other.frozenTimer || 0, mods.frostDuration);
+              other.hitFlash = 0.2;
+            }
+          });
+          addDamagePopup(m.x, m.y - 18, 'FREEZE', '#67E8F9', true, false, 'system', 1.2);
+        }
+        if (mods.chainChance > 0 && Math.random() < mods.chainChance) {
+          const hit = new Set<string>([m.id]);
+          let cx = m.x;
+          let cy = m.y;
+          for (let b = 0; b < mods.chainBounces; b++) {
+            let best: Monster | null = null;
+            let bestD = 220;
+            monstersRef.current.forEach((other) => {
+              if (hit.has(other.id) || other.hp <= 0 || other.state === 'dead') return;
+              const d = Math.hypot(other.x - cx, other.y - cy);
+              if (d < bestD) {
+                bestD = d;
+                best = other;
+              }
+            });
+            if (!best) break;
+            hit.add(best.id);
+            const steps = 6;
+            for (let s = 1; s <= steps; s++) {
+              const t = s / steps;
+              spawnParticles(cx + (best.x - cx) * t, cy + (best.y - cy) * t, '#FDE047', 2, 'spark');
+            }
+            best.hp = Math.max(0, best.hp - Math.round(mods.chainDamage));
+            best.hitFlash = 0.28;
+            best.damagedByPlayer = true;
+            addDamagePopup(best.x, best.y, 'ZAP', '#FACC15', true);
+            cx = best.x;
+            cy = best.y;
+            if (best.hp <= 0) handleMonsterDefeated(best, true);
+          }
+        }
+        if (mods.blackHoleEvery > 0) {
+          blackHoleKillsRef.current += 1;
+          if (blackHoleKillsRef.current >= mods.blackHoleEvery) {
+            blackHoleKillsRef.current = 0;
+            const px = killer.x;
+            const py = killer.y;
+            spawnParticles(px, py, '#C084FC', 36, 'spark');
+            triggerShake(10, 0.22);
+            addDamagePopup(px, py - 24, 'SINGULARITY', '#E879F9', true, false, 'manga', 1.4);
+            monstersRef.current.forEach((other) => {
+              if (other.hp <= 0 || other.state === 'dead') return;
+              const dx = px - other.x;
+              const dy = py - other.y;
+              const d = Math.hypot(dx, dy) || 1;
+              if (d < 320) {
+                other.x += (dx / d) * Math.min(90, 320 - d);
+                other.y += (dy / d) * Math.min(90, 320 - d);
+                other.hp = Math.max(0, other.hp - Math.round(mods.soulBurstDamage * 0.85 + 18));
+                other.hitFlash = 0.3;
+                other.damagedByPlayer = true;
+                if (other.hp <= 0) handleMonsterDefeated(other, true);
+              }
+            });
+          }
+        }
+        evoBurstDepthRef.current -= 1;
       }
     }
 
@@ -1440,6 +1618,7 @@ export function useGameEngine(initialPlayer: Player) {
   const handleAttack = useCallback((targetWorldX?: number, targetWorldY?: number) => {
     if (introCinematicRef.current.phase !== 'none' && introCinematicRef.current.phase !== 'complete') return;
     const curPlayer = playerRef.current;
+    if ((curPlayer.pendingEvolutionPicks ?? 0) > 0) return;
     if (isDrivingHijackCar(curPlayer)) return;
     if (curPlayer.stats.hp <= 0 || curPlayer.attackTimer > 0) return;
 
@@ -1485,13 +1664,14 @@ export function useGameEngine(initialPlayer: Player) {
     const aimDirY = Math.sin(aimAngle);
     const newFacing: 'left' | 'right' = aimDirX >= 0 ? 'right' : 'left';
 
+    const evoFire = getEvolutionMods(curPlayer).fireRateMult;
     playerRef.current = {
       ...playerRef.current,
       facing: newFacing,
       aimAngle,
       ammo: nextAmmo,
       maxAmmo: maxCapacity,
-      attackTimer: config.fireRate,
+      attackTimer: config.fireRate * evoFire,
     };
     setPlayer((prev) => ({
       ...prev,
@@ -1499,7 +1679,7 @@ export function useGameEngine(initialPlayer: Player) {
       aimAngle,
       ammo: nextAmmo,
       maxAmmo: maxCapacity,
-      attackTimer: config.fireRate,
+      attackTimer: config.fireRate * evoFire,
     }));
 
     if (usesAmmo && nextAmmo === 0) {
@@ -1947,6 +2127,7 @@ export function useGameEngine(initialPlayer: Player) {
   const handleUseSkill = useCallback((skillIndex: number, targetWorldX?: number, targetWorldY?: number) => {
     if (introCinematicRef.current.phase !== 'none' && introCinematicRef.current.phase !== 'complete') return;
     const curPlayer = playerRef.current;
+    if ((curPlayer.pendingEvolutionPicks ?? 0) > 0) return;
     if (isDrivingHijackCar(curPlayer)) return;
     if (curPlayer.stats.hp <= 0 || !curPlayer.skills[skillIndex]) return;
 
@@ -2233,6 +2414,7 @@ export function useGameEngine(initialPlayer: Player) {
       setHordeRun({ ...run, blindness: { ...run.blindness } });
       hordeHazardsRef.current = [];
       leakFireAccRef.current = 0;
+      blackHoleKillsRef.current = 0;
       clearHordeFx();
       const next: Player = {
         ...p,
@@ -2626,6 +2808,11 @@ export function useGameEngine(initialPlayer: Player) {
         }
       }
 
+      if ((curPlayer.pendingEvolutionPicks ?? 0) > 0) {
+        animationFrameId = requestAnimationFrame(tick);
+        return;
+      }
+
       // 1. Calculate Input Directions
       let moveX = 0;
       let moveY = 0;
@@ -2771,7 +2958,7 @@ export function useGameEngine(initialPlayer: Player) {
         });
       }
 
-      let baseSpeed = curPlayer.stats.speed * 48 * speedBuffMult;
+      let baseSpeed = curPlayer.stats.speed * 48 * speedBuffMult * getEvolutionMods(curPlayer).moveMult;
       if (drivingCar) baseSpeed *= 4.4;
       else if (skating) {
         const board = equippedSkate(curPlayer);
@@ -3137,6 +3324,8 @@ export function useGameEngine(initialPlayer: Player) {
         isReloading,
         reloadTimer,
         spawnBounce: nextSpawnBounce,
+        eyeLookX: facing === 'left' ? -Math.max(-2.8, Math.min(2.8, mDx * 0.028)) : Math.max(-2.8, Math.min(2.8, mDx * 0.028)),
+        eyeLookY: Math.max(-2.2, Math.min(2.2, mDy * 0.022)),
       };
 
       playerRef.current = nextPlayer;
@@ -3447,10 +3636,25 @@ export function useGameEngine(initialPlayer: Player) {
         const dy = nextY - drop.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
         if (drop.isXpGem) {
-          const mag = HORDE_GEM_MAGNET + Math.min(160, (hordeRunRef.current.elapsed || 0) * 2.2);
+          const mag = HORDE_GEM_MAGNET + Math.min(160, (hordeRunRef.current.elapsed || 0) * 2.2) + getEvolutionMods(nextPlayer).magnetBonus;
           if (dist < 32) {
             awardExpAndGold(drop.quantity, 0);
             if (hordeRunRef.current.active) hordeRunRef.current.gemsCollected += 1;
+            const gb = getEvolutionMods(nextPlayer);
+            if (gb.gemBombChance > 0 && Math.random() < gb.gemBombChance) {
+              spawnParticles(nextX, nextY, '#F472B6', 22, 'spark');
+              triggerShake(5, 0.1);
+              addDamagePopup(nextX, nextY - 16, 'GEM BOMB', '#F472B6', true);
+              monstersRef.current.forEach((om) => {
+                if (om.hp <= 0 || om.state === 'dead') return;
+                if (Math.hypot(om.x - nextX, om.y - nextY) <= gb.gemBombRadius) {
+                  om.hp = Math.max(0, om.hp - Math.round(gb.gemBombDamage));
+                  om.hitFlash = 0.22;
+                  om.damagedByPlayer = true;
+                  if (om.hp <= 0) handleMonsterDefeated(om, true);
+                }
+              });
+            }
             sound.playPickup();
           } else {
             if (dist < mag) {
@@ -3573,6 +3777,13 @@ export function useGameEngine(initialPlayer: Player) {
 
               m.hp = Math.max(0, m.hp - dmg);
               m.hitFlash = 0.2;
+              if (p.ownerId === nextPlayer.id && !m.isBoss && m.hp > 0) {
+                const exec = getEvolutionMods(nextPlayer).executeChance;
+                if (exec > 0 && Math.random() < exec) {
+                  m.hp = 0;
+                  addDamagePopup(m.x, m.y - 22, 'EXECUTE', '#F43F5E', true, false, 'manga', 1.35);
+                }
+              }
 
               // If shot by player, set individual retaliation aggro & damagedByPlayer
               if (p.ownerId === nextPlayer.id) {
@@ -3620,6 +3831,36 @@ export function useGameEngine(initialPlayer: Player) {
 
               if (m.hp <= 0) handleMonsterDefeated(m, p.ownerId === nextPlayer.id);
               if (!p.piercing) consumed = true;
+              if (consumed && p.ownerId === nextPlayer.id) {
+                const leftover = p.ricochetsRemaining ?? 0;
+                const bonus = p.isRicochet ? 0 : getEvolutionMods(nextPlayer).ricochetBounces;
+                const bounces = leftover > 0 ? leftover : bonus;
+                if (bounces > 0) {
+                  p.hitIds = [...(p.hitIds || []), m.id];
+                  let best: Monster | null = null;
+                  let bestD = 300;
+                  livingMonsters.forEach((other) => {
+                    if (other.id === m.id || other.hp <= 0 || other.state === 'dead') return;
+                    if (p.hitIds?.includes(other.id)) return;
+                    const dd = Math.hypot(other.x - p.x, other.y - p.y);
+                    if (dd < bestD) {
+                      bestD = dd;
+                      best = other;
+                    }
+                  });
+                  if (best) {
+                    const ang = Math.atan2(best.y - p.y, best.x - p.x);
+                    const spd = Math.hypot(p.vx, p.vy) || 16;
+                    p.vx = Math.cos(ang) * spd * 1.05;
+                    p.vy = Math.sin(ang) * spd * 1.05;
+                    p.ricochetsRemaining = bounces - 1;
+                    p.isRicochet = true;
+                    p.distanceTraveled *= 0.4;
+                    consumed = false;
+                    spawnParticles(p.x, p.y, '#FDE047', 6, 'spark');
+                  }
+                }
+              }
             }
           });
         }
@@ -3787,6 +4028,13 @@ export function useGameEngine(initialPlayer: Player) {
         if (m.knockbackX) m.knockbackX *= 0.85;
         if (m.knockbackY) m.knockbackY *= 0.85;
         if (m.hitFlash && m.hitFlash > 0) m.hitFlash = Math.max(0, m.hitFlash - dt);
+        if (m.frozenTimer && m.frozenTimer > 0) {
+          m.frozenTimer = Math.max(0, m.frozenTimer - dt);
+          if (Math.random() < 0.28) spawnParticles(m.x, m.y - 8, '#A5F3FC', 1, 'spark');
+        }
+        if (m.slowTimer && m.slowTimer > 0) {
+          m.slowTimer = Math.max(0, m.slowTimer - dt);
+        }
 
         // Update Monster Jump Physics
         if (m.jumpZ !== undefined && (m.jumpZ > 0 || (m.jumpVz && m.jumpVz !== 0))) {
@@ -3840,6 +4088,10 @@ export function useGameEngine(initialPlayer: Player) {
         const mdy = nextPlayer.y - m.y;
         const distToPlayer = Math.sqrt(mdx * mdx + mdy * mdy);
 
+        if ((m.frozenTimer || 0) > 0) {
+          return;
+        }
+
         m.attackCooldown = Math.max(0, m.attackCooldown - dt);
         m.specialCooldown = Math.max(0, m.specialCooldown - dt);
 
@@ -3857,7 +4109,7 @@ export function useGameEngine(initialPlayer: Player) {
             : kind === 'skycaller' || kind === 'boss_skyfall' ? 300
             : kind === 'bomber' ? 240
             : 0;
-          const spd = m.speed * 46 * dt;
+          const spd = m.speed * 46 * dt * mobSpeedMul(m);
           if (!m.isCharging) {
             if (hold > 0) {
               if (distToPlayer > hold + 40) {
@@ -4288,7 +4540,7 @@ export function useGameEngine(initialPlayer: Player) {
             // Move towards enemy faction target with obstacle sliding
             const idealDist = (m.weaponType === 'baton' || m.weaponType === 'bat' || m.weaponType === 'blade') ? 35 : 240;
             if (nearestDist > idealDist && (!m.isPinned || (m.pinTimer ?? 0) <= 0)) {
-              const spd = m.speed * 40 * dt;
+              const spd = m.speed * 40 * dt * mobSpeedMul(m);
               let nextMx = m.x + (edx / nearestDist) * spd + (m.knockbackX || 0) * dt;
               let nextMy = m.y + (edy / nearestDist) * spd + (m.knockbackY || 0) * dt;
               const resolvedM = resolveObstacleCollisions(nextMx, nextMy, 0, 0, 18, resourceNodesRef.current);
@@ -4305,7 +4557,7 @@ export function useGameEngine(initialPlayer: Player) {
           m.state = 'chase';
           m.facing = fdx >= 0 ? 'right' : 'left';
           if (fDist > 90 && (!m.isPinned || (m.pinTimer ?? 0) <= 0)) {
-            const spd = m.speed * 40 * dt;
+            const spd = m.speed * 40 * dt * mobSpeedMul(m);
             const nextMx = m.x + (fdx / fDist) * spd + (m.knockbackX || 0) * dt;
             const nextMy = m.y + (fdy / fDist) * spd + (m.knockbackY || 0) * dt;
             const resolvedM = resolveObstacleCollisions(nextMx, nextMy, 0, 0, 18, resourceNodesRef.current);
@@ -4386,7 +4638,7 @@ export function useGameEngine(initialPlayer: Player) {
             }
 
             if (distToPlayer > 80) {
-              const spd = m.speed * 40 * dt;
+              const spd = m.speed * 40 * dt * mobSpeedMul(m);
               m.x += (mdx / distToPlayer) * spd + (m.knockbackX || 0) * dt;
               m.y += (mdy / distToPlayer) * spd + (m.knockbackY || 0) * dt;
             }
@@ -4442,11 +4694,11 @@ export function useGameEngine(initialPlayer: Player) {
             }
 
             if (distToPlayer > 420) {
-              const spd = m.speed * 32 * dt;
+              const spd = m.speed * 32 * dt * mobSpeedMul(m);
               m.x += (mdx / distToPlayer) * spd + (m.knockbackX || 0) * dt;
               m.y += (mdy / distToPlayer) * spd + (m.knockbackY || 0) * dt;
             } else if (distToPlayer < 200) {
-              const spd = m.speed * 28 * dt;
+              const spd = m.speed * 28 * dt * mobSpeedMul(m);
               m.x -= (mdx / distToPlayer) * spd;
               m.y -= (mdy / distToPlayer) * spd;
             }
@@ -4491,7 +4743,7 @@ export function useGameEngine(initialPlayer: Player) {
             }
 
             if (distToPlayer > 80) {
-              const spd = m.speed * 44 * dt;
+              const spd = m.speed * 44 * dt * mobSpeedMul(m);
               m.x += (mdx / distToPlayer) * spd + (m.knockbackX || 0) * dt;
               m.y += (mdy / distToPlayer) * spd + (m.knockbackY || 0) * dt;
             }
@@ -4532,7 +4784,7 @@ export function useGameEngine(initialPlayer: Player) {
             }
 
             if (distToPlayer > 180) {
-              const spd = m.speed * 40 * dt;
+              const spd = m.speed * 40 * dt * mobSpeedMul(m);
               m.x += (mdx / distToPlayer) * spd + (m.knockbackX || 0) * dt;
               m.y += (mdy / distToPlayer) * spd + (m.knockbackY || 0) * dt;
             }
@@ -4551,6 +4803,141 @@ export function useGameEngine(initialPlayer: Player) {
           setMonsters([...monstersRef.current]);
         }
         setProjectiles([...projectilesRef.current]);
+      }
+
+      // Evolution combat (aura, orbit, trail, thunder, hex, phoenix, void slow)
+      {
+        const evo = getEvolutionMods(nextPlayer);
+        const tickHurt = (om: Monster, dmg: number, color: string, label?: string) => {
+          if (om.hp <= 0 || om.state === 'dead') return;
+          om.hp = Math.max(0, om.hp - Math.round(dmg));
+          om.hitFlash = 0.18;
+          om.damagedByPlayer = true;
+          if (label) addDamagePopup(om.x, om.y, label, color);
+          if (om.hp <= 0) handleMonsterDefeated(om, true);
+        };
+
+        for (const k of Object.keys(orbitHitRef.current)) orbitHitRef.current[k] = (orbitHitRef.current[k] || 0) - dt;
+        for (const k of Object.keys(garlicHitRef.current)) garlicHitRef.current[k] = (garlicHitRef.current[k] || 0) - dt;
+        for (const k of Object.keys(trailHitRef.current)) trailHitRef.current[k] = (trailHitRef.current[k] || 0) - dt;
+
+        if (evo.auraRadius > 0) {
+          monstersRef.current.forEach((om) => {
+            if (om.hp <= 0 || om.state === 'dead') return;
+            if (Math.hypot(om.x - nextX, om.y - nextY) <= evo.auraRadius) {
+              if ((garlicHitRef.current[om.id] || 0) > 0) return;
+              garlicHitRef.current[om.id] = 0.28;
+              tickHurt(om, evo.auraDps * 0.28, '#A3E635');
+            }
+          });
+        }
+
+        if (evo.voidSlowRadius > 0) {
+          monstersRef.current.forEach((om) => {
+            if (om.hp <= 0 || om.state === 'dead') return;
+            if (Math.hypot(om.x - nextX, om.y - nextY) <= evo.voidSlowRadius) {
+              om.slowTimer = Math.max(om.slowTimer || 0, evo.voidSlowDuration);
+            }
+          });
+        }
+
+        if (evo.orbitCount > 0) {
+          const slots = getOrbitSlots({ ...nextPlayer, x: nextX, y: nextY }, performance.now() / 1000);
+          slots.forEach((slot) => {
+            monstersRef.current.forEach((om) => {
+              if (om.hp <= 0 || om.state === 'dead') return;
+              if (Math.hypot(om.x - slot.x, om.y - slot.y) <= 22 + evo.orbitSize) {
+                const key = `${om.id}_${Math.round(slot.x)}`;
+                if ((orbitHitRef.current[key] || 0) > 0) return;
+                orbitHitRef.current[key] = 0.22;
+                tickHurt(om, evo.orbitDamage, slot.color);
+                spawnParticles(slot.x, slot.y, slot.color, 3, 'spark');
+              }
+            });
+          });
+        }
+
+        if (evo.trailDps > 0) {
+          trailAccRef.current += dt;
+          if (trailAccRef.current > 0.07) {
+            trailAccRef.current = 0;
+            trailRef.current.push({ x: nextX, y: nextY + 8, life: 1.15 });
+            if (trailRef.current.length > 48) trailRef.current.shift();
+          }
+          trailRef.current = trailRef.current
+            .map((t) => ({ ...t, life: t.life - dt }))
+            .filter((t) => t.life > 0);
+          trailRef.current.forEach((t) => {
+            if (Math.random() < 0.35) spawnParticles(t.x, t.y, '#FDE047', 1, 'spark');
+            monstersRef.current.forEach((om) => {
+              if (om.hp <= 0 || om.state === 'dead') return;
+              if (Math.hypot(om.x - t.x, om.y - t.y) <= evo.trailRadius) {
+                if ((trailHitRef.current[om.id] || 0) > 0) return;
+                trailHitRef.current[om.id] = 0.2;
+                tickHurt(om, evo.trailDps * 0.2, '#F59E0B');
+              }
+            });
+          });
+        }
+
+        if (evo.thunderEvery > 0) {
+          thunderAccRef.current += dt;
+          if (thunderAccRef.current >= evo.thunderEvery) {
+            thunderAccRef.current = 0;
+            const living = monstersRef.current.filter((om) => om.hp > 0 && om.state !== 'dead' && Math.hypot(om.x - nextX, om.y - nextY) < 520);
+            if (living.length) {
+              const t = living[Math.floor(Math.random() * living.length)];
+              spawnParticles(t.x, t.y - 40, '#FDE047', 16, 'spark');
+              spawnParticles(t.x, t.y, '#FACC15', 10, 'spark');
+              tickHurt(t, evo.thunderDamage, '#FDE047', 'THUNDER');
+              triggerShake(4, 0.08);
+            }
+          }
+        }
+
+        if (evo.hexEvery > 0) {
+          hexAccRef.current += dt;
+          if (hexAccRef.current >= evo.hexEvery) {
+            hexAccRef.current = 0;
+            const living = monstersRef.current.filter((om) => om.hp > 0 && om.state !== 'dead' && Math.hypot(om.x - nextX, om.y - nextY) < 480);
+            if (living.length) {
+              const t = living[Math.floor(Math.random() * living.length)];
+              spawnParticles(t.x, t.y, '#FB923C', 20, 'spark');
+              addGroundDecal(t.x, t.y, '#7C2D12', 28, 'scorch', 2.2, 0);
+              tickHurt(t, evo.hexDamage, '#FB923C', 'METEOR');
+              monstersRef.current.forEach((om) => {
+                if (om.id === t.id || om.hp <= 0) return;
+                if (Math.hypot(om.x - t.x, om.y - t.y) < 70) tickHurt(om, evo.hexDamage * 0.45, '#FB923C');
+              });
+            }
+          }
+        }
+
+        phoenixCdRef.current = Math.max(0, phoenixCdRef.current - dt);
+        if (
+          evo.phoenixHpPct > 0 &&
+          phoenixCdRef.current <= 0 &&
+          nextPlayer.stats.maxHp > 0 &&
+          nextPlayer.stats.hp / nextPlayer.stats.maxHp <= evo.phoenixHpPct &&
+          nextPlayer.stats.hp > 0
+        ) {
+          phoenixCdRef.current = evo.phoenixCd;
+          const heal = Math.round(nextPlayer.stats.maxHp * evo.phoenixHealPct);
+          setPlayer((prev) => ({
+            ...prev,
+            dodgeTimer: Math.max(prev.dodgeTimer || 0, 1.1),
+            stats: { ...prev.stats, hp: Math.min(prev.stats.maxHp, prev.stats.hp + heal) },
+          }));
+          spawnParticles(nextX, nextY, '#FB7185', 40, 'spark');
+          triggerShake(12, 0.28);
+          addDamagePopup(nextX, nextY - 30, 'PHOENIX', '#FB7185', true, false, 'manga', 1.5);
+          monstersRef.current.forEach((om) => {
+            if (om.hp <= 0 || om.state === 'dead') return;
+            if (Math.hypot(om.x - nextX, om.y - nextY) < 160) {
+              tickHurt(om, 28 + nextPlayer.stats.atk * 0.8, '#FB7185', 'NOVA');
+            }
+          });
+        }
       }
 
       // 7. Update Visual Particles & Popups
@@ -4862,6 +5249,12 @@ export function useGameEngine(initialPlayer: Player) {
     }
   }, []);
 
+  const handlePickEvolution = useCallback((id: EvolutionId) => {
+    setPlayer((prev) => applyEvolution(prev, id));
+    const def = EVOLUTION_BY_ID[id];
+    if (def) showToast(def.name, def.tagline, def.icon);
+  }, [showToast]);
+
   const handleAllocateStat = useCallback((stat: 'str' | 'agi' | 'int' | 'vit') => {
     setPlayer((prev) => {
       if (prev.stats.statPoints <= 0) return prev;
@@ -5033,6 +5426,8 @@ export function useGameEngine(initialPlayer: Player) {
     handleEquipItem,
     handleUseItem,
     handleAllocateStat,
+    handlePickEvolution,
+    levelUpOffer,
     handleSendEmote,
     handleSendChat,
     completeQuest,

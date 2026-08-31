@@ -14,6 +14,7 @@ import { ShopModal } from './components/ShopModal';
 import { DialogueModal } from './components/DialogueModal';
 import { SkillTreeModal } from './components/SkillTreeModal';
 import { WorldMapModal } from './components/WorldMapModal';
+import { LevelUpModal } from './components/LevelUpModal';
 import { GunsmithModal } from './components/GunsmithModal';
 import { ChatAndEmotes } from './components/ChatAndEmotes';
 import { BossBar } from './components/BossBar';
@@ -68,6 +69,8 @@ const FALLBACK_PLAYER: Player = {
   completedQuestIds: [],
   currentZone: 'cyber_city',
   activeBuffs: [],
+  evolutions: {},
+  pendingEvolutionPicks: 0,
 };
 
 export function App() {
@@ -421,6 +424,17 @@ export function App() {
               player={engine.player}
               onClose={() => engine.setActiveModal('none')}
               onAllocateStat={engine.handleAllocateStat}
+            />
+          )}
+
+          {engine.levelUpOffer &&
+            (engine.player.pendingEvolutionPicks ?? 0) > 0 &&
+            (engine.introCinematic.phase === 'none' || engine.introCinematic.phase === 'complete') && (
+            <LevelUpModal
+              player={engine.player}
+              offers={engine.levelUpOffer}
+              pending={engine.player.pendingEvolutionPicks ?? 0}
+              onPick={engine.handlePickEvolution}
             />
           )}
 

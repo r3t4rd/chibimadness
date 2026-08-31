@@ -24,6 +24,8 @@ import {
 import { Player, CharacterClass, ChibiConfig } from '../types/game';
 import { CLASS_DEFAULTS, ITEMS_DATABASE } from '../game/constants';
 import { WEAPON_CONFIGS } from '../game/useGameEngine';
+import { createOperatorPlayer, listOperators, upsertOperator } from '../game/characterSave';
+import { OperatorArchive } from './OperatorArchive';
 import {
   drawChibiCharacter,
   drawFrontHairThumbnail,
@@ -1714,6 +1716,7 @@ const HaloCard: React.FC<{
 };
 
 export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame }) => {
+  const [showArchive, setShowArchive] = useState(() => listOperators().length > 0);
   const [name, setName] = useState<string>('Kasane Teto');
   const [characterClass, setCharacterClass] = useState<CharacterClass>('swordmaster');
   const [activeTab, setActiveTab] = useState<
@@ -1825,6 +1828,7 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
       else if (charX > 10) facing = 'right';
       previewFacingRef.current = facing;
 
+      // Character is mirrored when facing left, so negate look X into local space
       eyeLookX = facing === 'left' ? -rawLookX : rawLookX;
       eyeLookY = rawLookY;
     }
@@ -1986,8 +1990,8 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
       if (bgCanvas && bgCtx) {
         bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
         bgCtx.save();
-        bgCtx.translate(bgCanvas.width / 2, bgCanvas.height / 2 + 60);
-        bgCtx.scale(2.6, 2.6);
+        bgCtx.translate(bgCanvas.width / 2 + 320, bgCanvas.height / 2 + 380);
+        bgCtx.scale(9.45, 9.45);
         drawChibiCharacter(bgCtx, previewPlayer, elapsed, true);
         bgCtx.restore();
       }
@@ -2228,71 +2232,15 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
       // Handover to game world cutscene at t >= 3.3s
       if (elapsed >= 3.3 && !hasStartedGameRef.current) {
         hasStartedGameRef.current = true;
-        const newPlayer: Player = {
-          id: 'local_player',
+        const newPlayer = createOperatorPlayer({
           name: name.trim() || 'Hero',
           characterClass,
           chibi: { ...previewPlayer.chibi },
-          x: 650,
-          y: 750,
-          vx: 0,
-          vy: 0,
-          facing: 'right',
-          state: 'idle',
-          stats: { ...previewPlayer.stats },
-          stamina: 100,
-          maxStamina: 100,
-          isSprinting: false,
-          jumpZ: 0,
-          jumpVz: 0,
-          isJumping: false,
-          bhopStreak: 0,
-          bhopTimer: 0,
-          bhopSpeedMult: 1.0,
-          gold: 100,
-          inventory: [
-            { slotId: 1, item: starterWeapon!, quantity: 1 },
-            { slotId: 2, item: ITEMS_DATABASE['item_hp_potion_s']!, quantity: 5 },
-            { slotId: 3, item: ITEMS_DATABASE['item_ramen_bowl']!, quantity: 3 },
-          ],
-          equipment: {
-            weapon: starterWeapon,
-            headwear: null,
-            outfit: null,
-            vehicle: null,
-            accessory: null,
-          },
-          skills: JSON.parse(JSON.stringify(selectedClassData.starterSkills)),
-          activeVehicleId: null,
-          isRiding: false,
-          spawnBounce: 1,
-          attackTimer: 0,
-          dodgeTimer: 0,
-          combo: 0,
-          lastAttackTime: 0,
-          ammo: WEAPON_CONFIGS[starterWeapon?.gunType || 'pistol']?.maxAmmo || 12,
-          maxAmmo: WEAPON_CONFIGS[starterWeapon?.gunType || 'pistol']?.maxAmmo || 12,
-          isReloading: false,
-          reloadTimer: 0,
-          activeQuests: {
-            q_first_steps: {
-              questId: 'q_first_steps',
-              status: 'active',
-              objectives: [
-                {
-                  type: 'kill',
-                  targetId: 'cyber_drone',
-                  targetName: 'Cyber Drones',
-                  current: 0,
-                  required: 2,
-                },
-              ],
-            },
-          },
-          completedQuestIds: [],
-          currentZone: 'cyber_city',
-          activeBuffs: [],
-        };
+        });
+        const ammo = WEAPON_CONFIGS[starterWeapon?.gunType || 'pistol']?.maxAmmo || 12;
+        newPlayer.ammo = ammo;
+        newPlayer.maxAmmo = ammo;
+        upsertOperator(newPlayer);
         onStartGame(newPlayer);
         return;
       }
@@ -2326,13 +2274,26 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
     onStartGame,
   ]);
 
+  if (showArchive && !isDeploying) {
+    return (
+      <OperatorArchive
+        onContinue={onStartGame}
+        onNew={() => setShowArchive(false)}
+      />
+    );
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-2xl p-2 sm:p-4 overflow-y-auto font-mono select-none">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-2xl p-2 sm:p-4 overflow-y-auto font-mono select-none"
+      onMouseMove={handleBannerMouseMove}
+      onMouseLeave={handleBannerMouseLeave}
+    >
       <canvas
         ref={bgCanvasRef}
-        width={640}
-        height={640}
-        className={`fixed right-[-6%] sm:right-[1%] top-1/2 -translate-y-1/2 w-[min(68vw,560px)] h-[min(68vw,560px)] opacity-10 pointer-events-none z-[1] blur-[32px] scale-[1.4] transition-opacity duration-700 ${isDeploying ? 'opacity-0' : ''}`}
+        width={1920}
+        height={1920}
+        className={`fixed right-[-36%] bottom-[-44%] sm:right-[-26%] sm:bottom-[-36%] w-[min(180vw,2400px)] h-[min(180vw,2400px)] opacity-35 pointer-events-none z-[1] blur-[6px] transition-opacity duration-700 ${isDeploying ? 'opacity-0' : ''}`}
         aria-hidden
       />
       {/* Heavy Cyberpunk Anime Background Ambient Graphic Stencils (Valorant Thick Display Font) */}
@@ -2511,6 +2472,15 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
             {/* Header Title */}
             <div className="flex items-center justify-between border-b border-red-900/50 pb-2">
               <div>
+                {listOperators().length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowArchive(true)}
+                    className="mb-1 text-[10px] font-black uppercase tracking-widest text-amber-400 hover:text-amber-200 cursor-pointer"
+                  >
+                    ← Архив операторов
+                  </button>
+                )}
                 <h1 className="text-xl sm:text-2xl font-black text-white italic uppercase tracking-wider flex items-center gap-2">
                   <Wand2 className="text-red-500" size={20} />
                   // OPERATOR_CUSTOMIZATION

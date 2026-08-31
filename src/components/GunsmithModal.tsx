@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { Player, WeaponAttachment, AttachmentSlot, GunType } from '../types/game';
 import { sound } from '../game/audioEngine';
 import { WEAPON_CONFIGS } from '../game/useGameEngine';
+import { gunsmithAttachScreenOffset } from '../game/weaponAttachPoints';
 
 interface GunsmithModalProps {
   player: Player;
@@ -152,8 +153,56 @@ export const GunsmithModal: React.FC<GunsmithModalProps> = ({
   const effectiveReloadTime = (baseConfig.reloadTime * curReloadMult).toFixed(2);
   const totalMaxAmmo = baseConfig.maxAmmo + curAmmoBonus;
 
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const opticHubRef = useRef<HTMLDivElement>(null);
+  const muzzleHubRef = useRef<HTMLDivElement>(null);
+  const underHubRef = useRef<HTMLDivElement>(null);
+  const magHubRef = useRef<HTMLDivElement>(null);
+  const [lines, setLines] = useState<
+    { slot: AttachmentSlot; x1: number; y1: number; x2: number; y2: number; color: string }[]
+  >([]);
+
+  useLayoutEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+
+    const measure = () => {
+      const box = overlay.getBoundingClientRect();
+      if (box.width < 8 || box.height < 8) return;
+      const facing = player.facing === 'left' ? 'left' : 'right';
+      const hubs: { slot: AttachmentSlot; el: HTMLDivElement | null; color: string }[] = [
+        { slot: 'optic', el: opticHubRef.current, color: '#06B6D4' },
+        { slot: 'muzzle', el: muzzleHubRef.current, color: '#F59E0B' },
+        { slot: 'underbarrel', el: underHubRef.current, color: '#10B981' },
+        { slot: 'magazine', el: magHubRef.current, color: '#A855F7' },
+      ];
+      const next = hubs.flatMap(({ slot, el, color }) => {
+        if (!el) return [];
+        const hub = el.getBoundingClientRect();
+        const off = gunsmithAttachScreenOffset(gunType, slot, facing);
+        const gx = box.left + box.width / 2 + off.x;
+        const gy = box.top + box.height / 2 + off.y;
+        const hx = Math.max(hub.left, Math.min(hub.right, gx));
+        const hy = Math.max(hub.top, Math.min(hub.bottom, gy));
+        return [{
+          slot,
+          x1: ((hx - box.left) / box.width) * 100,
+          y1: ((hy - box.top) / box.height) * 100,
+          x2: ((gx - box.left) / box.width) * 100,
+          y2: ((gy - box.top) / box.height) * 100,
+          color,
+        }];
+      });
+      setLines(next);
+    };
+
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [gunType, player.facing, isOpen]);
+
   return (
-    <div className="fixed inset-0 z-40 pointer-events-none select-none overflow-hidden flex flex-col justify-between p-3 md:p-5 animate-fade-in">
+    <div ref={overlayRef} className="fixed inset-0 z-40 pointer-events-none select-none overflow-hidden flex flex-col justify-between p-3 md:p-5 animate-fade-in">
       {/* Tactical Vignette & Grid Lines (Unobtrusive) */}
       <div
         className="absolute inset-0 pointer-events-none opacity-20"
@@ -226,49 +275,27 @@ export const GunsmithModal: React.FC<GunsmithModalProps> = ({
         <line x1="50%" y1="44%" x2="50%" y2="56%" stroke="#EF4444" strokeWidth="1" opacity="0.5" />
         <line x1="44%" y1="50%" x2="56%" y2="50%" stroke="#EF4444" strokeWidth="1" opacity="0.5" />
 
-        {/* 1. Connector to TOP (Optic Hub) */}
-        <path
-          d="M 50% calc(50% - 24px) L 50% calc(50% - 75px) L 50% 21%"
-          fill="none"
-          stroke="#06B6D4"
-          strokeWidth="1.6"
-          strokeDasharray="4 3"
-          filter="url(#glowCyan)"
-        />
-        <circle cx="50%" cy="calc(50% - 24px)" r="4" fill="#06B6D4" stroke="#FFFFFF" strokeWidth="1" />
-
-        {/* 2. Connector to RIGHT (Muzzle Hub) */}
-        <path
-          d="M calc(50% + 40px) calc(50% - 6px) L calc(50% + 110px) calc(50% - 6px) L 80% calc(50% - 6px)"
-          fill="none"
-          stroke="#F59E0B"
-          strokeWidth="1.6"
-          strokeDasharray="4 3"
-          filter="url(#glowAmber)"
-        />
-        <circle cx="calc(50% + 40px)" cy="calc(50% - 6px)" r="4" fill="#F59E0B" stroke="#FFFFFF" strokeWidth="1" />
-
-        {/* 3. Connector to BOTTOM-RIGHT (Underbarrel Hub) */}
-        <path
-          d="M calc(50% + 18px) calc(50% + 18px) L calc(50% + 80px) calc(50% + 90px) L 76% 76%"
-          fill="none"
-          stroke="#10B981"
-          strokeWidth="1.6"
-          strokeDasharray="4 3"
-          filter="url(#glowEmerald)"
-        />
-        <circle cx="calc(50% + 18px)" cy="calc(50% + 18px)" r="4" fill="#10B981" stroke="#FFFFFF" strokeWidth="1" />
-
-        {/* 4. Connector to BOTTOM-LEFT (Magazine Hub) */}
-        <path
-          d="M calc(50% - 14px) calc(50% + 22px) L calc(50% - 80px) calc(50% + 90px) L 24% 76%"
-          fill="none"
-          stroke="#A855F7"
-          strokeWidth="1.6"
-          strokeDasharray="4 3"
-          filter="url(#glowPurple)"
-        />
-        <circle cx="calc(50% - 14px)" cy="calc(50% + 22px)" r="4" fill="#A855F7" stroke="#FFFFFF" strokeWidth="1" />
+        {/* Connector lines from each hub to the real mount on the gun */}
+        {lines.map((ln) => (
+          <g key={ln.slot}>
+            <line
+              x1={`${ln.x1}%`}
+              y1={`${ln.y1}%`}
+              x2={`${ln.x2}%`}
+              y2={`${ln.y2}%`}
+              stroke={ln.color}
+              strokeWidth="1.8"
+              strokeDasharray="5 3"
+              filter={
+                ln.slot === 'optic' ? 'url(#glowCyan)'
+                  : ln.slot === 'muzzle' ? 'url(#glowAmber)'
+                    : ln.slot === 'underbarrel' ? 'url(#glowEmerald)'
+                      : 'url(#glowPurple)'
+              }
+            />
+            <circle cx={`${ln.x2}%`} cy={`${ln.y2}%`} r="4.5" fill={ln.color} stroke="#FFFFFF" strokeWidth="1.2" />
+          </g>
+        ))}
       </svg>
 
       {/* 4 FLOATING ATTACHMENT HUBS WITH CLEAN SQUARES ("КВАДРАТИКИ") */}
@@ -276,7 +303,7 @@ export const GunsmithModal: React.FC<GunsmithModalProps> = ({
         {/* ========================================================================= */}
         {/* HUB 1: TOP (OPTIC / SIGHTS)                                              */}
         {/* ========================================================================= */}
-        <div className="absolute top-[12%] left-1/2 -translate-x-1/2 pointer-events-auto bg-black/85 border border-cyan-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(6,182,212,0.3)] flex flex-col items-center">
+        <div ref={opticHubRef} className="absolute top-[12%] left-1/2 -translate-x-1/2 pointer-events-auto bg-black/85 border border-cyan-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(6,182,212,0.3)] flex flex-col items-center">
           <div className="flex items-center gap-1.5 mb-1.5">
             <span className="text-xs">🔭</span>
             <span className="text-[10px] font-black text-cyan-400 tracking-wider font-mono uppercase">
@@ -344,7 +371,7 @@ export const GunsmithModal: React.FC<GunsmithModalProps> = ({
         {/* ========================================================================= */}
         {/* HUB 2: RIGHT / FRONT (MUZZLE DEVICE)                                     */}
         {/* ========================================================================= */}
-        <div className="absolute top-[38%] right-[4%] md:right-[10%] pointer-events-auto bg-black/85 border border-amber-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(245,158,11,0.3)] flex flex-col items-center">
+        <div ref={muzzleHubRef} className="absolute top-[38%] right-[4%] md:right-[10%] pointer-events-auto bg-black/85 border border-amber-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(245,158,11,0.3)] flex flex-col items-center">
           <div className="flex items-center gap-1.5 mb-1.5">
             <span className="text-xs">🔥</span>
             <span className="text-[10px] font-black text-amber-400 tracking-wider font-mono uppercase">
@@ -412,7 +439,7 @@ export const GunsmithModal: React.FC<GunsmithModalProps> = ({
         {/* ========================================================================= */}
         {/* HUB 3: BOTTOM-RIGHT (UNDERBARREL / GRIP / LASER)                         */}
         {/* ========================================================================= */}
-        <div className="absolute bottom-[16%] right-[6%] md:right-[15%] pointer-events-auto bg-black/85 border border-emerald-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(16,185,129,0.3)] flex flex-col items-center">
+        <div ref={underHubRef} className="absolute bottom-[16%] right-[6%] md:right-[15%] pointer-events-auto bg-black/85 border border-emerald-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(16,185,129,0.3)] flex flex-col items-center">
           <div className="flex items-center gap-1.5 mb-1.5">
             <span className="text-xs">🎯</span>
             <span className="text-[10px] font-black text-emerald-400 tracking-wider font-mono uppercase">
@@ -480,7 +507,7 @@ export const GunsmithModal: React.FC<GunsmithModalProps> = ({
         {/* ========================================================================= */}
         {/* HUB 4: BOTTOM-LEFT (MAGAZINE CLIP)                                       */}
         {/* ========================================================================= */}
-        <div className="absolute bottom-[16%] left-[6%] md:left-[15%] pointer-events-auto bg-black/85 border border-purple-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(168,85,247,0.3)] flex flex-col items-center">
+        <div ref={magHubRef} className="absolute bottom-[16%] left-[6%] md:left-[15%] pointer-events-auto bg-black/85 border border-purple-500/60 backdrop-blur-md p-2.5 rounded-xl shadow-[0_0_24px_rgba(168,85,247,0.3)] flex flex-col items-center">
           <div className="flex items-center gap-1.5 mb-1.5">
             <span className="text-xs">⚡</span>
             <span className="text-[10px] font-black text-purple-400 tracking-wider font-mono uppercase">

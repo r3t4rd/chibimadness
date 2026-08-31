@@ -2,6 +2,7 @@ import { Monster, DropItem, ResourceNode, NPC, Projectile, DamagePopup, VisualPa
 import { drawChibiCharacter, drawHumanoidEnemy, drawPoliceCruiser, drawCyberMuscleCar } from './chibiRenderer';
 import { WORLD_WIDTH, WORLD_HEIGHT, ZONES, NPCS_DATABASE, OBSTACLES, INITIAL_INTERACTIVE_OBJECTS, PLATFORMS, WORLD_POIS } from './constants';
 import { HORDE_ARENA, HORDE_FEATURES, getHordeBlindness, getHordeHazards, isInHordeArena, type HordeHazard } from './hordeMode';
+import { drawEvolutionFx } from './evolutions';
 import { clipToViewBounds, getViewBounds, isInViewBounds } from './viewCull';
 import { drawWorldBuildings, drawInteriorPrompt, drawBuildingOccluders, drawInteriorActors } from './buildingRenderer';
 import { occupancyMatchesObject, isInteriorWorld } from './buildings';
@@ -329,6 +330,7 @@ export function renderWorld(
 
   for (const p of allPlayers) {
     if (p.id === localPlayer.id || inView(p.x, p.y)) {
+      if (p.id === localPlayer.id) drawEvolutionFx(ctx, p, time);
       drawChibiCharacter(ctx, p, time);
     }
   }

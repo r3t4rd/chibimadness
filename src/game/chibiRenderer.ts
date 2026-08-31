@@ -1,4 +1,5 @@
 import { ChibiConfig, Player, Monster } from '../types/game';
+import { WEAPON_ATTACH_POINTS } from './weaponAttachPoints';
 
 /**
  * Procedural Vector Chibi Character Renderer
@@ -231,10 +232,16 @@ export function drawChibiCharacter(
     drawVehicleUnder(ctx, activeVehicleId, time, facing, jumpOffsetY, player);
   }
 
-  // Apply scales and offsets
-  ctx.scale(scaleX, scaleY);
+  if (player.isInspectingWeapon) {
+    bobY = 0;
+    bodyRot = 0;
+    waddle = 0;
+    scaleY = 1;
+    scaleX = facing === 'left' ? -1 : 1;
+  }
   ctx.translate(0, offsetY - bobY);
   ctx.rotate(bodyRot);
+  ctx.scale(scaleX, scaleY);
 
   // 3.5 Draw Animated Floating Wings (behind back hair)
   drawWings(ctx, chibi, time);
@@ -5965,51 +5972,65 @@ function drawHandsAndWeapon(
       // ==========================================
       // CHEYTAC M200 INTERVENTION (.408 SNIPER)
       // ==========================================
-      // Long Fluted Barrel
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(-18, -3.5, 12, 8);
+      ctx.strokeRect(-18, -3.5, 12, 8);
+
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(-8, 2.5, 4.5, 8);
+      ctx.strokeRect(-8, 2.5, 4.5, 8);
+
       ctx.fillStyle = '#334155';
-      ctx.fillRect(0, -3.5, 36, 4.5);
-      ctx.strokeRect(0, -3.5, 36, 4.5);
+      ctx.fillRect(-8, -4.8, 20, 8);
+      ctx.strokeRect(-8, -4.8, 20, 8);
 
-      // Match Muzzle Brake (quad vents)
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(-4, -6.2, 18, 1.6);
       ctx.fillStyle = '#1E293B';
-      ctx.fillRect(36, -5, 6, 7.5);
-      ctx.strokeRect(36, -5, 6, 7.5);
+      for (let i = 0; i < 6; i++) ctx.fillRect(-3 + i * 3, -6.2, 1.4, 1.6);
 
-      // Chassis & Receiver
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(12, -3.2, 24, 3.6);
+      ctx.strokeRect(12, -3.2, 24, 3.6);
+
       ctx.fillStyle = '#1E293B';
-      ctx.fillRect(-8, -4.5, 18, 7.5);
-      ctx.strokeRect(-8, -4.5, 18, 7.5);
+      ctx.fillRect(36, -5, 6, 7.2);
+      ctx.strokeRect(36, -5, 6, 7.2);
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(37.5, -5, 1.2, 3);
+      ctx.fillRect(39.8, -5, 1.2, 3);
 
-      // Default optical scope (if no custom optic equipped)
       if (!player.weaponAttachments?.optic) {
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(4, -6.2, 2.2, 2);
+        ctx.fillRect(14, -6.2, 2.2, 2);
         ctx.fillStyle = '#0F172A';
-        ctx.fillRect(2, -10, 16, 5);
-        ctx.strokeRect(2, -10, 16, 5);
-        // Lens
+        ctx.fillRect(2, -11, 16, 5);
+        ctx.strokeRect(2, -11, 16, 5);
         ctx.fillStyle = '#38BDF8';
         ctx.shadowColor = '#38BDF8';
         ctx.shadowBlur = 6;
-        ctx.fillRect(18, -10, 2, 5);
+        ctx.fillRect(18, -11, 2, 5);
         ctx.shadowBlur = 0;
-
-        // Scope Mounts
-        ctx.fillStyle = '#475569';
-        ctx.fillRect(4, -5, 2, 2);
-        ctx.fillRect(14, -5, 2, 2);
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(8, -12.4, 4, 1.6);
       }
 
-      // Folded Bipod legs (if no custom underbarrel equipped)
       if (!player.weaponAttachments?.underbarrel) {
         ctx.fillStyle = '#64748B';
-        ctx.fillRect(24, 1, 8, 2);
+        ctx.fillRect(20, 1.2, 8, 1.6);
+        ctx.fillRect(20, 2.8, 1.6, 5);
+        ctx.fillRect(26.4, 2.8, 1.6, 5);
       }
 
-      // Tactical Magazine & Grip
-      ctx.fillStyle = '#0F172A';
-      ctx.fillRect(0, 3, 5, 8);
-      ctx.fillRect(-6, 3, 4, 7);
+      if (!player.weaponAttachments?.magazine) {
+        ctx.fillStyle = '#0F172A';
+        ctx.fillRect(0.5, 3.2, 5, 7);
+        ctx.strokeRect(0.5, 3.2, 5, 7);
+        ctx.fillStyle = '#F59E0B';
+        ctx.fillRect(0.3, 9.4, 5.4, 1.4);
+      }
 
-      // Heavy Muzzle Flash on attack
       if (isAttacking && attackProgress < 0.4) {
         ctx.fillStyle = '#38BDF8';
         ctx.shadowColor = '#38BDF8';
@@ -6023,91 +6044,89 @@ function drawHandsAndWeapon(
       // ==========================================
       // AK-47 KALASHNIKOV (7.62MM ASSAULT RIFLE)
       // ==========================================
-      // Stamped Steel Receiver
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(-4, -4.5, 20, 7);
-      ctx.strokeRect(-4, -4.5, 20, 7);
-
-      // Wooden Handguard
       ctx.fillStyle = '#B45309';
-      ctx.fillRect(10, -3.5, 10, 5.5);
-      ctx.strokeRect(10, -3.5, 10, 5.5);
+      ctx.fillRect(-16, -3, 12, 7);
+      ctx.strokeRect(-16, -3, 12, 7);
 
-      // Long Barrel & Gas Tube & Front Sight
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(-5, -4.8, 16, 7.4);
+      ctx.strokeRect(-5, -4.8, 16, 7.4);
+
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(-3, -6, 12, 1.5);
       ctx.fillStyle = '#1E293B';
-      ctx.fillRect(20, -3, 10, 3.5);
-      ctx.fillRect(28, -6, 2, 3); // front post
+      ctx.fillRect(-2, -7.4, 3.5, 2);
 
-      // Banana mag swap (same eject/insert as MAC-10)
+      ctx.fillStyle = '#B45309';
+      ctx.fillRect(10, -4, 11, 6.4);
+      ctx.strokeRect(10, -4, 11, 6.4);
+
+      ctx.fillStyle = '#1E293B';
+      ctx.fillRect(10, -6.2, 13, 2);
+      ctx.fillRect(21, -3, 12, 3.2);
+      ctx.fillRect(31, -7.2, 2, 4.4);
+      ctx.fillRect(33, -3.6, 3.2, 4);
+
+      ctx.fillStyle = '#78350F';
+      ctx.fillRect(-2, 2.4, 4.2, 7.2);
+      ctx.strokeRect(-2, 2.4, 4.2, 7.2);
+
       if (!player.weaponAttachments?.magazine) {
         ctx.save();
-        ctx.translate(4, 2.5 + magOffY);
+        ctx.translate(4, 2.6 + magOffY);
         ctx.rotate(magOffR);
         ctx.globalAlpha = magAlpha;
-        ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#1E293B' : '#9A3412';
-        ctx.strokeStyle = '#451A03';
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(8, 8, 6, 14);
-        ctx.lineTo(2, 14);
-        ctx.quadraticCurveTo(3, 7, -4, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#22C55E' : '#F59E0B';
-        ctx.fillRect(0, 12, 5, 2);
+        drawAkBananaMag(ctx, reloadProgress > 0.4 && reloadProgress < 0.8);
         ctx.restore();
       }
-
-      // Wooden Stock
-      ctx.fillStyle = '#B45309';
-      ctx.fillRect(-12, -2.5, 8, 6.5);
-      ctx.strokeRect(-12, -2.5, 8, 6.5);
 
       if (isAttacking && attackProgress < 0.4) {
         ctx.fillStyle = '#F59E0B';
         ctx.beginPath();
-        ctx.arc(34, -1.5, 6, 0, Math.PI * 2);
+        ctx.arc(38, -1.5, 6, 0, Math.PI * 2);
         ctx.fill();
       }
     } else if (gunType === 'mac10') {
       // ==========================================
       // MAC-10 (MICRO SUBMACHINE GUN)
       // ==========================================
-      // Box Receiver
       ctx.fillStyle = '#18181B';
-      ctx.fillRect(-2, -5, 18, 9);
-      ctx.strokeRect(-2, -5, 18, 9);
+      ctx.fillRect(-3, -6, 20, 10);
+      ctx.strokeRect(-3, -6, 20, 10);
 
-      // Short Threaded Barrel / Heat Shroud
+      ctx.fillStyle = '#3F3F46';
+      ctx.fillRect(5, -8, 6, 2.2);
+      ctx.strokeRect(5, -8, 6, 2.2);
+
       ctx.fillStyle = '#27272A';
-      ctx.fillRect(16, -3, 5, 5);
-      ctx.strokeRect(16, -3, 5, 5);
+      ctx.fillRect(17, -3, 6, 4.2);
+      ctx.strokeRect(17, -3, 6, 4.2);
 
-      // Stick mag eject / insert
+      ctx.fillStyle = '#09090B';
+      ctx.fillRect(4, -3.5, 6, 3.5);
+
       if (!player.weaponAttachments?.magazine) {
         ctx.save();
         ctx.translate(0, magOffY);
         ctx.rotate(magOffR);
         ctx.globalAlpha = magAlpha;
         ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#1E293B' : '#3F3F46';
-        ctx.fillRect(4, 4, 4, 13);
-        ctx.strokeRect(4, 4, 4, 13);
+        ctx.fillRect(4, 4, 5, 10);
+        ctx.strokeRect(4, 4, 5, 10);
         ctx.fillStyle = reloadProgress > 0.4 && reloadProgress < 0.8 ? '#22C55E' : '#F59E0B';
-        ctx.fillRect(4, 15, 4, 2);
+        ctx.fillRect(4, 13, 5, 1.6);
         ctx.restore();
       }
 
-      // Front Nylon Strap (if no underbarrel grip)
       if (!player.weaponAttachments?.underbarrel) {
         ctx.fillStyle = '#15803D';
-        ctx.fillRect(13, 4, 2.5, 7);
+        ctx.fillRect(12, 4, 2.4, 6);
       }
 
       if (isAttacking && attackProgress < 0.5) {
         ctx.fillStyle = '#FDE047';
         ctx.beginPath();
-        ctx.arc(23, -0.5, 5.5, 0, Math.PI * 2);
+        ctx.arc(25, -1, 5.5, 0, Math.PI * 2);
         ctx.fill();
       }
     } else if (gunType === 'shotgun') {
@@ -6238,6 +6257,21 @@ function drawHandsAndWeapon(
   ctx.restore();
 }
 
+function drawAkBananaMag(ctx: CanvasRenderingContext2D, fresh = false) {
+  ctx.fillStyle = fresh ? '#1E293B' : '#9A3412';
+  ctx.strokeStyle = '#451A03';
+  ctx.beginPath();
+  ctx.moveTo(-2, 0);
+  ctx.quadraticCurveTo(7, 6, 5, 11);
+  ctx.lineTo(1.2, 11.6);
+  ctx.quadraticCurveTo(2, 6, -4.2, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = fresh ? '#22C55E' : '#F59E0B';
+  ctx.fillRect(0.4, 10.4, 4.4, 1.5);
+}
+
 /**
  * Procedural Vector Weapon Attachments Renderer
  * Accurately mounts Muzzle, Optic, Underbarrel, and Magazine onto any firearm
@@ -6253,16 +6287,7 @@ function drawWeaponAttachments(
   magOffR = 0,
   magAlpha = 1,
 ) {
-  const attachPoints: Record<string, { optic: { x: number; y: number }; muzzle: { x: number; y: number }; underbarrel: { x: number; y: number }; magazine: { x: number; y: number } }> = {
-    cheytac: { optic: { x: 8, y: -10 }, muzzle: { x: 42, y: -1.5 }, underbarrel: { x: 20, y: 1 }, magazine: { x: 2, y: 10 } },
-    ak47: { optic: { x: 5, y: -5 }, muzzle: { x: 30, y: -1.2 }, underbarrel: { x: 15, y: 2.5 }, magazine: { x: 8, y: 12 } },
-    mac10: { optic: { x: 6, y: -5.5 }, muzzle: { x: 21, y: -0.5 }, underbarrel: { x: 13, y: 4 }, magazine: { x: 6, y: 16 } },
-    shotgun: { optic: { x: 6, y: -5.5 }, muzzle: { x: 20, y: -1.5 }, underbarrel: { x: 10, y: 3.5 }, magazine: { x: 2, y: 4 } },
-    revolver: { optic: { x: 10, y: -6 }, muzzle: { x: 20, y: -1.5 }, underbarrel: { x: 10, y: 1.5 }, magazine: { x: 1, y: 2 } },
-    pistol: { optic: { x: 5, y: -5 }, muzzle: { x: 17, y: -1.5 }, underbarrel: { x: 7, y: 2.5 }, magazine: { x: 2, y: 8 } },
-  };
-
-  const pts = attachPoints[gunType] || attachPoints.pistol;
+  const pts = WEAPON_ATTACH_POINTS[gunType] || WEAPON_ATTACH_POINTS.pistol;
 
   // 1. OPTIC / SIGHT ATTACHMENT
   if (attachments.optic) {
@@ -6270,60 +6295,55 @@ function drawWeaponAttachments(
     const { x, y } = pts.optic;
     ctx.save();
 
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(x - 3, y - 2, 2.2, 2.2);
+    ctx.fillRect(x + 1.5, y - 2, 2.2, 2.2);
+
     if (optId === 'optic_holo') {
-      // Cyan Holo Red-Dot
       ctx.fillStyle = '#0F172A';
-      ctx.fillRect(x - 4, y - 2, 9, 2.5);
-      ctx.fillRect(x - 3, y - 7, 7, 5.5);
-      ctx.strokeRect(x - 3, y - 7, 7, 5.5);
+      ctx.fillRect(x - 4, y - 2, 9, 2);
+      ctx.fillRect(x - 3, y - 7.2, 7, 5.4);
+      ctx.strokeRect(x - 3, y - 7.2, 7, 5.4);
 
-      // Cyan tinted optical lens
       ctx.fillStyle = 'rgba(6, 182, 212, 0.45)';
-      ctx.fillRect(x - 1.5, y - 6, 4.5, 4);
+      ctx.fillRect(x - 1.5, y - 6.2, 4.5, 4);
 
-      // Glowing reticle dot
       ctx.fillStyle = '#22D3EE';
       ctx.shadowColor = '#06B6D4';
       ctx.shadowBlur = 5;
       ctx.beginPath();
-      ctx.arc(x + 0.75, y - 4, 1.2, 0, Math.PI * 2);
+      ctx.arc(x + 0.75, y - 4.2, 1.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
     } else if (optId === 'optic_acog') {
-      // 4x Tactical ACOG Scope
       ctx.fillStyle = '#1E293B';
-      ctx.fillRect(x - 5, y - 7, 12, 5.5);
-      ctx.strokeRect(x - 5, y - 7, 12, 5.5);
+      ctx.fillRect(x - 5, y - 6.8, 12, 5);
+      ctx.strokeRect(x - 5, y - 6.8, 12, 5);
 
-      // Objective Bell & Turret
       ctx.fillStyle = '#0F172A';
-      ctx.fillRect(x + 6, y - 8, 3, 7.5);
-      ctx.strokeRect(x + 6, y - 8, 3, 7.5);
+      ctx.fillRect(x + 6, y - 7.6, 3, 6.4);
+      ctx.strokeRect(x + 6, y - 7.6, 3, 6.4);
       ctx.fillStyle = '#F59E0B';
-      ctx.fillRect(x, y - 9, 2.5, 2);
+      ctx.fillRect(x, y - 8.4, 2.5, 1.8);
 
-      // Tinted Coated Blue Lens
       ctx.fillStyle = '#38BDF8';
       ctx.shadowColor = '#38BDF8';
       ctx.shadowBlur = 6;
-      ctx.fillRect(x + 8, y - 7, 1.5, 5.5);
+      ctx.fillRect(x + 8, y - 6.8, 1.5, 5);
       ctx.shadowBlur = 0;
     } else if (optId === 'optic_thermal') {
-      // Thermal Hunter V2 (Angular Cyber Sight)
       ctx.fillStyle = '#18181B';
-      ctx.fillRect(x - 4, y - 8, 11, 6.5);
-      ctx.strokeRect(x - 4, y - 8, 11, 6.5);
+      ctx.fillRect(x - 4, y - 7.4, 11, 5.6);
+      ctx.strokeRect(x - 4, y - 7.4, 11, 5.6);
 
-      // Amber Sensor Lens
       ctx.fillStyle = '#F59E0B';
       ctx.shadowColor = '#F59E0B';
       ctx.shadowBlur = 7;
-      ctx.fillRect(x + 6, y - 7, 2, 5);
+      ctx.fillRect(x + 6, y - 6.6, 2, 4.4);
       ctx.shadowBlur = 0;
 
-      // Status LED
       ctx.fillStyle = '#10B981';
-      ctx.fillRect(x - 2.5, y - 7.5, 1.5, 1.5);
+      ctx.fillRect(x - 2.5, y - 6.8, 1.5, 1.5);
     }
     ctx.restore();
   }
@@ -6430,45 +6450,53 @@ function drawWeaponAttachments(
     ctx.rotate(magOffR);
     ctx.globalAlpha *= magAlpha;
 
-    if (magId === 'mag_extended') {
-      // Extended High-Cap Magazine
+    if (gunType === 'ak47' && magId !== 'mag_drum') {
+      ctx.translate(x, y);
+      if (magId === 'mag_extended') {
+        ctx.scale(1.08, 1.22);
+      } else {
+        ctx.scale(1, 0.88);
+      }
+      drawAkBananaMag(ctx, magId === 'mag_speed');
+      if (magId === 'mag_speed') {
+        ctx.strokeStyle = '#06B6D4';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(2.2, 12.4, 2.2, 0, Math.PI);
+        ctx.stroke();
+      }
+    } else if (magId === 'mag_extended') {
+      const h = gunType === 'mac10' ? 12 : gunType === 'cheytac' ? 9 : 10;
       ctx.fillStyle = '#18181B';
-      ctx.fillRect(x - 2, y, 4.5, 10);
-      ctx.strokeRect(x - 2, y, 4.5, 10);
-
-      // Gold anodized floor plate
+      ctx.fillRect(x - 2.2, y, 5, h);
+      ctx.strokeRect(x - 2.2, y, 5, h);
       ctx.fillStyle = '#F59E0B';
-      ctx.fillRect(x - 2.5, y + 9, 5.5, 2);
+      ctx.fillRect(x - 2.6, y + h - 1.4, 5.8, 1.6);
     } else if (magId === 'mag_speed') {
-      // Fast-Pull Quick Mag with loop
+      const h = gunType === 'mac10' ? 9 : 6.5;
       ctx.fillStyle = '#27272A';
-      ctx.fillRect(x - 2, y, 4.5, 6);
-      ctx.strokeRect(x - 2, y, 4.5, 6);
-
-      // Neon Cyan Magpul loop
-      ctx.fillStyle = '#06B6D4';
+      ctx.fillRect(x - 2.2, y, 5, h);
+      ctx.strokeRect(x - 2.2, y, 5, h);
+      ctx.strokeStyle = '#06B6D4';
+      ctx.lineWidth = 1.4;
       ctx.shadowColor = '#06B6D4';
       ctx.shadowBlur = 4;
       ctx.beginPath();
-      ctx.arc(x + 0.25, y + 7.5, 2.5, 0, Math.PI);
+      ctx.arc(x + 0.3, y + h + 1.4, 2.3, 0, Math.PI);
       ctx.stroke();
       ctx.shadowBlur = 0;
     } else if (magId === 'mag_drum') {
-      // Chaos Drum Mag (50-round round drum)
       ctx.fillStyle = '#1E293B';
       ctx.beginPath();
-      ctx.arc(x + 1, y + 4, 6.5, 0, Math.PI * 2);
+      ctx.arc(x + 0.5, y + 5.2, 6.2, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-
-      // Inner hub & orange ammo window
       ctx.fillStyle = '#0F172A';
       ctx.beginPath();
-      ctx.arc(x + 1, y + 4, 2.5, 0, Math.PI * 2);
+      ctx.arc(x + 0.5, y + 5.2, 2.4, 0, Math.PI * 2);
       ctx.fill();
-
       ctx.fillStyle = '#EA580C';
-      ctx.fillRect(x + 3.5, y + 3, 2, 2.5);
+      ctx.fillRect(x + 3, y + 4.2, 2, 2.2);
     }
     ctx.restore();
   }

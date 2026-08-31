@@ -10,6 +10,7 @@ import { formatGameTime, getTimeOfDayLabel } from '../game/fogOfWar';
 import { getBuilding } from '../game/buildings';
 import { HandheldWeaponHUD } from './HandheldWeaponHUD';
 import { formatHordeTime, type HordeRunState } from '../game/hordeMode';
+import { ownedEvolutions } from '../game/evolutions';
 
 interface HUDProps {
   player: Player;
@@ -160,6 +161,21 @@ export const HUD: React.FC<HUDProps> = ({
         <span className="text-white/40">·</span>
         <span className="text-rose-400">{stats.hp}/{stats.maxHp} HP</span>
       </div>
+
+      {ownedEvolutions(player).length > 0 && (
+        <div className="fixed top-8 left-4 z-40 flex flex-wrap gap-1 max-w-xs pointer-events-none">
+          {ownedEvolutions(player).map(({ def, rank }) => (
+            <span
+              key={def.id}
+              title={`${def.name} ${rank}/${def.maxRank}`}
+              className="text-[11px] px-1.5 py-0.5 rounded-md bg-black/55 border border-white/15 text-white/90 font-mono"
+            >
+              {def.icon}
+              <span className="text-amber-300 ml-0.5">{rank}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 3. TOP-CENTER MINIMALIST ZONE & BHOP STREAK */}
       <div className="fixed top-2.5 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 select-none pointer-events-none">

@@ -687,6 +687,12 @@ export interface Player {
     value: number;
     expiresAt: number;
   }[];
+  /** Persistent operator slot id (localStorage). */
+  saveId?: string;
+  /** Vampire-Survivors style evolution ranks, keyed by evolution id. */
+  evolutions?: Record<string, number>;
+  /** Unspent level-up picks — game pauses until the player chooses. */
+  pendingEvolutionPicks?: number;
 }
 
 export type IntroCinematicPhase = 'black_fade_in' | 'dive' | 'impact' | 'skid' | 'dazed' | 'brush' | 'gun_fall_bonk' | 'pickup_ready' | 'complete' | 'none';
@@ -812,6 +818,8 @@ export interface Monster {
   animTimer?: number;
   respawnTime?: number;
   isRespawning?: boolean;
+  frozenTimer?: number;
+  slowTimer?: number;
   hordeKind?:
     | 'shade'
     | 'mite'

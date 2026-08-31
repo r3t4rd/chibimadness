@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { X, Sparkles, Plus, Zap, Heart, Crosshair } from 'lucide-react';
 import { Player } from '../types/game';
+import { ownedEvolutions } from '../game/evolutions';
 
 interface SkillTreeModalProps {
   player: Player;
@@ -110,6 +111,33 @@ export const SkillTreeModal: React.FC<SkillTreeModalProps> = ({ player, onClose,
               </div>
             );
           })}
+        </div>
+
+        {/* Active Combat Skills Showcase */}
+        <div className="mt-6">
+          <h3 className="font-['Fredoka'] text-xs font-black text-gray-700 uppercase tracking-wider mb-3">
+            Evolutions
+          </h3>
+          {ownedEvolutions(player).length === 0 ? (
+            <p className="text-[11px] text-gray-500 font-medium mb-4">
+              Качай уровень — на каждый LVL открывается выбор эволюции, как в Vampire Survivors.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-4">
+              {ownedEvolutions(player).map(({ def, rank }) => (
+                <div key={def.id} className="p-2.5 rounded-2xl bg-white/45 border border-white shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg">{def.icon}</span>
+                    <span className="text-[10px] font-mono font-black text-amber-600">
+                      {rank}/{def.maxRank}
+                    </span>
+                  </div>
+                  <h4 className="font-['Fredoka'] font-black text-[11px] text-gray-900 mt-1">{def.name}</h4>
+                  <p className="text-[10px] text-gray-600 leading-snug">{def.tagline}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Active Combat Skills Showcase */}
