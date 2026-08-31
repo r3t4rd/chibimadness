@@ -33,6 +33,7 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) =>
           avg {stats.avgFrameMs.toFixed(1)} ms
         </div>
         <div className="mt-1 pt-1 border-t border-white/10 space-y-0.5">
+          <div>frame gap {stats.frameGapMs.toFixed(1)} ms</div>
           <div>draw {stats.drawMs.toFixed(1)} ms</div>
           <div>update {stats.updateMs.toFixed(1)} ms</div>
           <div>parse/apply {stats.networkParseMs.toFixed(1)}/{stats.snapshotApplyMs.toFixed(1)} ms</div>
