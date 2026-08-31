@@ -121,6 +121,7 @@ export function App() {
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lastNativeFrameAt = useRef(0);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -185,6 +186,13 @@ export function App() {
       const curEngine = engineRef.current;
       if (nativeWorldRendererRequested) {
         const camera = updateNativeCamera(curEngine.player, time);
+        const nativeViewPadding = 180;
+        const nativeHalfWidth = viewportWidth / camera.zoom / 2 + nativeViewPadding;
+        const nativeHalfHeight = viewportHeight / camera.zoom / 2 + nativeViewPadding;
+        const inNativeView = (x: number, y: number, size = 0) => (
+          Math.abs(x - camera.x) <= nativeHalfWidth + size
+          && Math.abs(y - camera.y) <= nativeHalfHeight + size
+        );
         const entities = [
           {
             id: curEngine.player.id,
@@ -201,7 +209,9 @@ export function App() {
             facingLeft: curEngine.player.facing === 'left',
             layer: 20,
           },
-          ...(Object.values(curEngine.remotePlayers) as Player[]).map((player) => ({
+          ...(Object.values(curEngine.remotePlayers) as Player[])
+            .filter((player) => inNativeView(player.x, player.y, 48))
+            .map((player) => ({
             id: player.id,
             kind: 'player',
             faction: '',
@@ -217,7 +227,7 @@ export function App() {
             layer: 18,
           })),
           ...curEngine.monsters
-            .filter((monster) => monster.state !== 'dead' && monster.hp > 0)
+            .filter((monster) => monster.state !== 'dead' && monster.hp > 0 && inNativeView(monster.x, monster.y, 90))
             .map((monster) => ({
               id: monster.id,
               kind: 'monster',
@@ -233,7 +243,7 @@ export function App() {
               facingLeft: monster.facing === 'left',
               layer: 10,
             })),
-          ...curEngine.projectiles.map((projectile) => ({
+          ...curEngine.projectiles.filter((projectile) => inNativeView(projectile.x, projectile.y, 48)).map((projectile) => ({
             id: projectile.id,
             kind: 'projectile',
             faction: projectile.faction || '',
@@ -249,7 +259,7 @@ export function App() {
             layer: 30,
           })),
           ...curEngine.resourceNodes
-            .filter((node) => node.hp > 0)
+            .filter((node) => node.hp > 0 && inNativeView(node.x, node.y, 80))
             .map((node) => ({
               id: `resource:${node.id}`,
               kind: 'resource',
@@ -265,7 +275,7 @@ export function App() {
               facingLeft: false,
               layer: 7,
             })),
-          ...curEngine.dropItems.map((drop) => ({
+          ...curEngine.dropItems.filter((drop) => inNativeView(drop.x, drop.y, 28)).map((drop) => ({
             id: `drop:${drop.id}`,
             kind: 'pickup',
             faction: '',
@@ -280,7 +290,7 @@ export function App() {
             facingLeft: false,
             layer: 14,
           })),
-          ...curEngine.cars.map((car) => ({
+          ...curEngine.cars.filter((car) => inNativeView(car.x, car.y, 160)).map((car) => ({
             id: `car:${car.id}`,
             kind: 'vehicle',
             faction: car.type === 'police_car' ? 'police' : 'punk_demon',
@@ -295,7 +305,7 @@ export function App() {
             facingLeft: car.facing === 'left',
             layer: 16,
           })),
-          ...curEngine.worldPois.map((poi) => ({
+          ...curEngine.worldPois.filter((poi) => inNativeView(poi.x, poi.y, 80)).map((poi) => ({
             id: `poi:${poi.id}`,
             kind: 'poi',
             faction: '',
@@ -310,16 +320,19 @@ export function App() {
             facingLeft: false,
             layer: 8,
           })),
-        ];
-        sendNativeWorldRenderFrame({
-          cameraX: camera.x,
-          cameraY: camera.y,
-          zoom: camera.zoom,
-          viewportWidth,
-          viewportHeight,
-          theme: curEngine.player.currentZone,
-          entities,
-        });
+        ].slice(0, 128);
+        if (time - lastNativeFrameAt.current >= 1000 / 30) {
+          lastNativeFrameAt.current = time;
+          sendNativeWorldRenderFrame({
+            cameraX: camera.x,
+            cameraY: camera.y,
+            zoom: camera.zoom,
+            viewportWidth,
+            viewportHeight,
+            theme: curEngine.player.currentZone,
+            entities,
+          });
+        }
         perfMonitor.setExtras({
           monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
           particles: curEngine.particles.length,
