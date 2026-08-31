@@ -153,33 +153,49 @@ export function App() {
         const camera = updateNativeCamera(curEngine.player, time);
         const entities = [
           {
+            id: curEngine.player.id,
             x: curEngine.player.x,
             y: curEngine.player.y,
             size: 38,
             color: [0.1, 0.9, 1, 1] as [number, number, number, number],
+            velocityX: curEngine.player.vx,
+            velocityY: curEngine.player.vy,
+            hasVelocity: true,
             layer: 20,
           },
           ...(Object.values(curEngine.remotePlayers) as Player[]).map((player) => ({
+            id: player.id,
             x: player.x,
             y: player.y,
             size: 34,
             color: [0.35, 0.65, 1, 1] as [number, number, number, number],
+            velocityX: player.vx,
+            velocityY: player.vy,
+            hasVelocity: true,
             layer: 18,
           })),
           ...curEngine.monsters
             .filter((monster) => monster.state !== 'dead' && monster.hp > 0)
             .map((monster) => ({
+              id: monster.id,
               x: monster.x,
               y: monster.y - (monster.jumpZ || 0),
               size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
               color: nativeMonsterColor(monster.faction),
+              velocityX: 0,
+              velocityY: 0,
+              hasVelocity: false,
               layer: 10,
             })),
           ...curEngine.projectiles.map((projectile) => ({
+            id: projectile.id,
             x: projectile.x,
             y: projectile.y + (projectile.visualOffsetY || 0),
             size: Math.max(4, projectile.size * 1.8),
             color: hexColor(projectile.color, [1, 0.9, 0.2, 1]),
+            velocityX: projectile.vx,
+            velocityY: projectile.vy,
+            hasVelocity: true,
             layer: 30,
           })),
         ];

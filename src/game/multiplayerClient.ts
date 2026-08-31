@@ -14,10 +14,14 @@ export type NativeWorldRenderFrame = {
   viewportWidth: number;
   viewportHeight: number;
   entities: Array<{
+    id: string;
     x: number;
     y: number;
     size: number;
     color: [number, number, number, number];
+    velocityX: number;
+    velocityY: number;
+    hasVelocity: boolean;
     layer: number;
   }>;
 };

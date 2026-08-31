@@ -1,4 +1,4 @@
-use std::{borrow::Cow, time::Instant};
+use std::{borrow::Cow, collections::HashMap, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,8 @@ use yuyib::render::{RenderFrame, wgpu};
 const MAX_RENDER_ENTITIES: usize = 2_048;
 const GRID_SPACING: f32 = 160.0;
 const MAX_GRID_LINES: usize = 96;
+const MAX_PREDICTION_SECONDS: f32 = 0.12;
+const MAX_ENTITY_SPEED: f32 = 10_000.0;
 
 const WORLD_SHADER: &str = r#"
 struct VertexOutput {
@@ -31,10 +33,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeRenderEntity {
+    pub id: String,
     pub x: f32,
     pub y: f32,
     pub size: f32,
     pub color: [f32; 4],
+    #[serde(default)]
+    pub velocity_x: f32,
+    #[serde(default)]
+    pub velocity_y: f32,
+    #[serde(default)]
+    pub has_velocity: bool,
     #[serde(default)]
     pub layer: i16,
 }
@@ -54,6 +63,7 @@ pub struct NativeRenderFrame {
 #[derive(Default)]
 pub struct NativeWorldState {
     frame: Option<NativeRenderFrame>,
+    received_at: Option<Instant>,
 }
 
 impl NativeWorldState {
@@ -71,23 +81,64 @@ impl NativeWorldState {
         frame.viewport_height = frame.viewport_height.clamp(1.0, 16_384.0);
         frame.entities.truncate(MAX_RENDER_ENTITIES);
         frame.entities.retain(|entity| {
-            entity.x.is_finite()
+            !entity.id.is_empty()
+                && entity.id.len() <= 128
+                && entity.x.is_finite()
                 && entity.y.is_finite()
                 && entity.size.is_finite()
+                && entity.velocity_x.is_finite()
+                && entity.velocity_y.is_finite()
                 && entity.color.iter().all(|value| value.is_finite())
         });
+        let received_at = Instant::now();
+        let prior_positions =
+            self.frame
+                .as_ref()
+                .zip(self.received_at)
+                .map(|(previous, previous_received_at)| {
+                    let elapsed = (received_at - previous_received_at)
+                        .as_secs_f32()
+                        .clamp(1.0 / 240.0, 0.25);
+                    let positions = previous
+                        .entities
+                        .iter()
+                        .map(|entity| (entity.id.as_str(), (entity.x, entity.y)))
+                        .collect::<HashMap<_, _>>();
+                    (positions, elapsed)
+                });
         for entity in &mut frame.entities {
             entity.size = entity.size.clamp(1.0, 256.0);
+            if !entity.has_velocity {
+                if let Some((positions, elapsed)) = &prior_positions {
+                    if let Some((previous_x, previous_y)) = positions.get(entity.id.as_str()) {
+                        entity.velocity_x = (entity.x - *previous_x) / elapsed;
+                        entity.velocity_y = (entity.y - *previous_y) / elapsed;
+                    }
+                }
+            }
+            entity.velocity_x = entity.velocity_x.clamp(-MAX_ENTITY_SPEED, MAX_ENTITY_SPEED);
+            entity.velocity_y = entity.velocity_y.clamp(-MAX_ENTITY_SPEED, MAX_ENTITY_SPEED);
             for channel in &mut entity.color {
                 *channel = channel.clamp(0.0, 1.0);
             }
         }
         frame.entities.sort_by_key(|entity| entity.layer);
         self.frame = Some(frame);
+        self.received_at = Some(received_at);
     }
 
-    fn frame(&self) -> Option<&NativeRenderFrame> {
-        self.frame.as_ref()
+    fn frame_with_prediction(&self) -> Option<(&NativeRenderFrame, f32)> {
+        self.frame.as_ref().map(|frame| {
+            let prediction_seconds = self
+                .received_at
+                .map(|received_at| {
+                    (Instant::now() - received_at)
+                        .as_secs_f32()
+                        .clamp(0.0, MAX_PREDICTION_SECONDS)
+                })
+                .unwrap_or_default();
+            (frame, prediction_seconds)
+        })
     }
 }
 
@@ -160,10 +211,10 @@ impl NativeWorldRenderer {
     }
 
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) {
-        let Some(world) = state.frame() else {
+        let Some((world, prediction_seconds)) = state.frame_with_prediction() else {
             return;
         };
-        self.build_vertices(world);
+        self.build_vertices(world, prediction_seconds);
         if self.vertices.is_empty() {
             return;
         }
@@ -256,7 +307,7 @@ impl NativeWorldRenderer {
         }
     }
 
-    fn build_vertices(&mut self, world: &NativeRenderFrame) {
+    fn build_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
         self.vertices.clear();
         // The native pass intentionally owns the base world surface. The UI
         // WebView is transparent, so no WebView2 canvas is composited here.
@@ -268,15 +319,17 @@ impl NativeWorldRenderer {
         );
         self.add_grid(world);
         for entity in &world.entities {
+            let x = entity.x + entity.velocity_x * prediction_seconds;
+            let y = entity.y + entity.velocity_y * prediction_seconds;
             let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.32).min(0.32)];
             self.add_world_quad(
-                entity.x + entity.size * 0.12,
-                entity.y + entity.size * 0.28,
+                x + entity.size * 0.12,
+                y + entity.size * 0.28,
                 entity.size * 1.12,
                 shadow,
                 world,
             );
-            self.add_world_quad(entity.x, entity.y, entity.size, entity.color, world);
+            self.add_world_quad(x, y, entity.size, entity.color, world);
         }
     }
 
