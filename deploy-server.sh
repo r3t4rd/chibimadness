@@ -4,33 +4,42 @@
 set -e
 
 # Configuration
+REPO_URL="https://github.com/r3t4rd/chibimadness.git" # Change to git@github.com:r3t4rd/chibimadness.git if using SSH keys
 SERVER_DIR="/home/dash/chibimadness-server/chibimadness-server"
 BIN_DIR="/home/dash/chibimadness-server/bin"
 PM2_APP="6" # or "chibimadness-server"
 
-echo "=== [1/4] Updating repository ==="
-if [ -d "$SERVER_DIR" ]; then
-    cd "$SERVER_DIR"
+echo "=== [1/4] Downloading latest server source code ==="
+
+# Create temporary directory for cloning
+TEMP_DIR=$(mktemp -d)
+echo "Created temp directory: $TEMP_DIR"
+
+# Perform sparse clone (downloading only metadata and server folder to save bandwidth)
+echo "Cloning repository..."
+git clone --depth 1 --filter=blob:none --sparse "$REPO_URL" "$TEMP_DIR"
+
+cd "$TEMP_DIR"
+echo "Downloading only 'server' directory..."
+git sparse-checkout set server
+
+# Update target server directory with downloaded files
+echo "Syncing files to $SERVER_DIR..."
+mkdir -p "$SERVER_DIR"
+if command -v rsync >/dev/null 2>&1; then
+    rsync -av --delete "$TEMP_DIR/server/" "$SERVER_DIR/"
 else
-    echo "Directory $SERVER_DIR not found!"
-    exit 1
+    # Fallback to rm + cp if rsync is not installed
+    rm -rf "${SERVER_DIR:?}"/*
+    cp -rp "$TEMP_DIR/server/"* "$SERVER_DIR/"
 fi
 
-# Pull changes
-if [ -d ".git" ] || git rev-parse --git-dir > /dev/null 2>&1; then
-    echo "Pulling latest code..."
-    git pull
-else
-    echo "Not a git repository, skipping git pull (or update files manually)."
-fi
+# Clean up temporary directory
+rm -rf "$TEMP_DIR"
 
 echo "=== [2/4] Building Rust server ==="
-# Check if Cargo.toml is in the current directory or a subdirectory
+cd "$SERVER_DIR"
 if [ -f "Cargo.toml" ]; then
-    cargo build --release
-    BUILD_PATH="target/release/chibimadness-server"
-elif [ -f "server/Cargo.toml" ]; then
-    cd server
     cargo build --release
     BUILD_PATH="target/release/chibimadness-server"
 else
