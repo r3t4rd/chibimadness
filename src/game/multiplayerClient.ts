@@ -9,6 +9,7 @@ declare global {
 }
 
 let configuredServerUrl: string | null = null;
+const serverConfigurationListeners = new Set<() => void>();
 
 if (typeof window !== 'undefined') {
   window.addEventListener('yuyib:event', (event: Event) => {
@@ -18,6 +19,7 @@ if (typeof window !== 'undefined') {
       configuredServerUrl = typeof candidate === 'string' && candidate.startsWith('wss://')
         ? candidate
         : null;
+      serverConfigurationListeners.forEach((listener) => listener());
     }
   });
 
@@ -41,6 +43,9 @@ class MultiplayerClient {
   private serverHordeActive = false;
 
   constructor() {
+    serverConfigurationListeners.add(() => {
+      if (this.localPlayer) this.connect(this.localPlayer);
+    });
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       this.broadcastChannel = new BroadcastChannel('chibiverse_mmo_bus');
       this.broadcastChannel.onmessage = (event) => {
@@ -51,6 +56,9 @@ class MultiplayerClient {
 
   public connect(player: Player) {
     this.localPlayer = player;
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
     const isEmbeddedDesktop =
       window.location.protocol === 'app:' || window.location.hostname === 'app.localhost';
 
@@ -260,6 +268,7 @@ class MultiplayerClient {
     this.isConnected = false;
     this.sharedWorldReady = false;
     this.serverHordeActive = false;
+    this.localPlayer = null;
   }
 }
 
