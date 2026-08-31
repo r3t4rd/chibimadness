@@ -9,6 +9,7 @@ on:
       - 'v*'
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -131,15 +132,31 @@ jobs:
     needs: build-windows-client
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: chibimadness-windows
-          path: artifacts
+      - name: Download release artifact with retry
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -rf artifacts
+            mkdir -p artifacts
+            if gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name chibimadness-windows --dir artifacts; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Artifact download failed on attempt $attempt; retrying in $((attempt * 10)) seconds."
+              sleep "$((attempt * 10))"
+            fi
+          done
+          echo "Artifact download failed after three attempts."
+          exit 1
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
