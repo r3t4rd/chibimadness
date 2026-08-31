@@ -27,7 +27,7 @@ use world_renderer::{
 };
 use yuyib::{
     platform::{
-        ChildWindowPlacement, Window, WindowConfig, WindowMode,
+        Window, WindowConfig, WindowMode,
         winit::{
             application::ApplicationHandler,
             dpi::{PhysicalPosition, PhysicalSize},
@@ -105,11 +105,12 @@ struct LaunchAssets {
     source: ContentSource,
 }
 
-/// Owns the two native child surfaces explicitly instead of using Yuyib's
-/// convenience `Application` facade. WebView2 is a windowed child: a
-/// transparent WebView cannot reveal a DXGI swapchain on its *parent* HWND.
-/// The game world therefore has to be a sibling child HWND beneath the
-/// transparent WebView/HUD.
+/// Owns the native game surface and its WebView HUD explicitly instead of
+/// using Yuyib's convenience `Application` facade. A windowed WebView2 child
+/// cannot reveal a DXGI surface behind it, even if CSS and the controller are
+/// transparent. Native mode therefore places the JS/TS HUD in a separate,
+/// transparent top-level window owned by the WGPU game window; DWM composites
+/// those two top-level surfaces correctly.
 struct GameDesktopApp {
     native_renderer: bool,
     session: PageSessionId,
@@ -118,14 +119,14 @@ struct GameDesktopApp {
     outbound: Rc<RefCell<Option<WebViewHost>>>,
     native_world: Rc<RefCell<NativeWorldState>>,
     parent_window: Option<Window>,
-    world_window: Option<Window>,
+    overlay_window: Option<Window>,
     renderer: Option<Renderer>,
     world_renderer: NativeWorldRenderer,
     native_world_rendered: bool,
 }
 
 impl GameDesktopApp {
-    fn resize_children(&mut self) {
+    fn sync_webview_surface(&mut self) {
         let Some(parent) = &self.parent_window else {
             return;
         };
@@ -144,16 +145,20 @@ impl GameDesktopApp {
                 eprintln!("could not resize local WebView: {error}");
             }
         }
-        if let Some(child) = &self.world_window {
-            // Do not call Window::set_child_placement here: it raises the child
-            // above the WebView. The world must remain below the transparent HUD.
-            child.raw().set_outer_position(PhysicalPosition::new(0, 0));
-            let _ = child
+        if let Some(overlay) = &self.overlay_window {
+            // The owned overlay is a second top-level window, so its origin is
+            // the main window's client area in screen coordinates. Ownership
+            // preserves z-order/minimise/teardown without pinning it above
+            // unrelated desktop applications.
+            let position = parent
+                .raw()
+                .inner_position()
+                .or_else(|_| parent.raw().outer_position())
+                .unwrap_or_else(|_| PhysicalPosition::new(0, 0));
+            overlay.raw().set_outer_position(position);
+            let _ = overlay
                 .raw()
                 .request_inner_size(PhysicalSize::new(width, height));
-            if let Some(renderer) = &mut self.renderer {
-                renderer.resize(width, height);
-            }
         }
     }
 
@@ -186,10 +191,44 @@ impl GameDesktopApp {
 
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
         self.renderer.take();
-        self.world_window.take();
         self.outbound.borrow_mut().take();
+        self.overlay_window.take();
         self.parent_window.take();
         event_loop.exit();
+    }
+
+    fn finish_webview_initialisation(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        parent: Window,
+        native_surfaces: Option<(Window, Renderer)>,
+    ) {
+        let Some(builder) = self.builder.take() else {
+            eprintln!("game WebView was already consumed");
+            event_loop.exit();
+            return;
+        };
+        let webview_parent = native_surfaces
+            .as_ref()
+            .map_or(&parent, |(overlay, _)| overlay);
+        let webview = match builder.build(webview_parent) {
+            Ok(webview) => webview,
+            Err(error) => {
+                eprintln!("could not create game WebView: {error}");
+                event_loop.exit();
+                return;
+            }
+        };
+        *self.outbound.borrow_mut() = Some(webview);
+        self.parent_window = Some(parent);
+        if let Some((overlay, renderer)) = native_surfaces {
+            self.overlay_window = Some(overlay);
+            self.renderer = Some(renderer);
+            self.sync_webview_surface();
+            if let Some(parent) = &self.parent_window {
+                parent.request_redraw();
+            }
+        }
     }
 }
 
@@ -217,62 +256,35 @@ impl ApplicationHandler for GameDesktopApp {
             }
         };
 
-        // Creation order is intentional. The game child is created first, then
-        // WebView2 is layered above it and routes all HTML input. A parent WGPU
-        // surface cannot appear through WebView2 transparency on Windows.
-        let (world_window, renderer) = if self.native_renderer {
-            let size = parent.physical_size();
-            let placement =
-                match ChildWindowPlacement::new(0, 0, size.width.max(1), size.height.max(1)) {
-                    Ok(placement) => placement,
-                    Err(error) => {
-                        eprintln!("could not size native world child: {error}");
-                        event_loop.exit();
-                        return;
-                    }
-                };
-            let child = match Window::create_child(event_loop, &parent, placement) {
-                Ok(child) => child,
-                Err(error) => {
-                    eprintln!("could not create native world child: {error}");
-                    event_loop.exit();
-                    return;
-                }
-            };
-            let renderer = match Renderer::new(&child) {
+        let renderer = if self.native_renderer {
+            match Renderer::new(&parent) {
                 Ok(renderer) => renderer,
                 Err(error) => {
                     eprintln!("could not initialise native world renderer: {error}");
                     event_loop.exit();
                     return;
                 }
-            };
-            (Some(child), Some(renderer))
+            }
         } else {
-            (None, None)
+            // Canvas compatibility mode owns the visual surface in WebView.
+            // It does not allocate an unused WGPU swapchain.
+            return self.finish_webview_initialisation(event_loop, parent, None);
         };
-
-        let Some(builder) = self.builder.take() else {
-            eprintln!("game WebView was already consumed");
-            event_loop.exit();
-            return;
-        };
-        let webview = match builder.build(&parent) {
-            Ok(webview) => webview,
+        let size = parent.physical_size();
+        let position = parent
+            .raw()
+            .inner_position()
+            .or_else(|_| parent.raw().outer_position())
+            .unwrap_or_else(|_| PhysicalPosition::new(0, 0));
+        let overlay = match Window::create_owned_overlay(event_loop, &parent, position, size) {
+            Ok(overlay) => overlay,
             Err(error) => {
-                eprintln!("could not create game WebView: {error}");
+                eprintln!("could not create transparent game HUD overlay: {error}");
                 event_loop.exit();
                 return;
             }
         };
-        *self.outbound.borrow_mut() = Some(webview);
-        self.parent_window = Some(parent);
-        self.world_window = world_window;
-        self.renderer = renderer;
-        self.resize_children();
-        if let Some(child) = &self.world_window {
-            child.request_redraw();
-        }
+        self.finish_webview_initialisation(event_loop, parent, Some((overlay, renderer)));
     }
 
     fn window_event(
@@ -282,26 +294,34 @@ impl ApplicationHandler for GameDesktopApp {
         event: WindowEvent,
     ) {
         let parent_id = self.parent_window.as_ref().map(|window| window.raw().id());
-        let world_id = self.world_window.as_ref().map(|window| window.raw().id());
+        let overlay_id = self.overlay_window.as_ref().map(|window| window.raw().id());
         if parent_id == Some(window_id) {
             match event {
                 WindowEvent::CloseRequested => self.shutdown(event_loop),
                 WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
-                    self.resize_children();
-                    if let Some(child) = &self.world_window {
-                        child.request_redraw();
-                    }
-                }
-                _ => {}
-            }
-        } else if world_id == Some(window_id) {
-            match event {
-                WindowEvent::Resized(size) => {
                     if let Some(renderer) = &mut self.renderer {
+                        let size = self
+                            .parent_window
+                            .as_ref()
+                            .map(Window::physical_size)
+                            .unwrap_or_default();
                         renderer.resize(size.width, size.height);
                     }
+                    self.sync_webview_surface();
+                    if let Some(parent) = &self.parent_window {
+                        parent.request_redraw();
+                    }
                 }
+                WindowEvent::Moved(_) => self.sync_webview_surface(),
                 WindowEvent::RedrawRequested => self.render_world(),
+                _ => {}
+            }
+        } else if overlay_id == Some(window_id) {
+            match event {
+                WindowEvent::CloseRequested => self.shutdown(event_loop),
+                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    self.sync_webview_surface()
+                }
                 _ => {}
             }
         }
@@ -309,8 +329,8 @@ impl ApplicationHandler for GameDesktopApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if self.native_renderer {
-            if let Some(child) = &self.world_window {
-                child.request_redraw();
+            if let Some(parent) = &self.parent_window {
+                parent.request_redraw();
             }
             event_loop.set_control_flow(ControlFlow::Poll);
         } else {
@@ -379,7 +399,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         outbound,
         native_world,
         parent_window: None,
-        world_window: None,
+        overlay_window: None,
         renderer: None,
         world_renderer: NativeWorldRenderer::default(),
         native_world_rendered: false,
