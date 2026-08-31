@@ -39,11 +39,13 @@ const HORDE_MAX_Y: f64 = 6_800.0;
 const HORDE_CENTER_X: f64 = -6_000.0;
 const HORDE_CENTER_Y: f64 = 2_200.0;
 const HORDE_EXTRACT_AFTER: f64 = 24.0;
+const HORDE_ENTRY_GRACE: Duration = Duration::from_millis(2_500);
+const LIFESTEAL_RATIO: f64 = 0.08;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_CHAT_HISTORY: usize = 50;
-const POSITION_INTERVAL: Duration = Duration::from_millis(90);
-const WORLD_TICK: Duration = Duration::from_millis(33);
-const WORLD_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
+const POSITION_INTERVAL: Duration = Duration::from_millis(50);
+const WORLD_TICK: Duration = Duration::from_millis(20);
+const WORLD_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_WORLD_MONSTERS: usize = 256;
 const MAX_WORLD_PROJECTILES: usize = 1_024;
 const MAX_TRAVEL_PER_SECOND: f64 = 600.0;
@@ -104,6 +106,7 @@ struct PlayerRecord {
     session_id: u64,
     value: Value,
     respawn_at: Option<Instant>,
+    immune_until: Option<Instant>,
     resume_token: String,
 }
 
@@ -350,6 +353,7 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
                 session_id,
                 value: authoritative_player,
                 respawn_at,
+                immune_until: None,
                 resume_token,
             },
         );
@@ -597,6 +601,9 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
         player.value["vx"] = json!(0.0);
         player.value["vy"] = json!(0.0);
         player.value["currentZone"] = json!("horde_crucible");
+        let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+        set_number(&mut player.value, "hp", max_hp);
+        player.immune_until = Some(Instant::now() + HORDE_ENTRY_GRACE);
         (recipients_except(&state, 0), world_snapshot(&state))
     };
     send_to(recipients, payload);
@@ -946,7 +953,7 @@ fn horde_boss_kind(index: usize) -> &'static str {
 fn spawn_horde_monster(horde: &mut HordeRun, targets: &[(String, f64, f64)], kind: &str) -> Value {
     let target = &targets[(next_horde_random(horde) * targets.len() as f64).floor() as usize];
     let angle = next_horde_random(horde) * std::f64::consts::TAU;
-    let distance = 420.0 + next_horde_random(horde) * 300.0;
+    let distance = 680.0 + next_horde_random(horde) * 260.0;
     let x = (target.1 + angle.cos() * distance).clamp(HORDE_MIN_X + 80.0, HORDE_MAX_X - 80.0);
     let y = (target.2 + angle.sin() * distance).clamp(HORDE_MIN_Y + 80.0, HORDE_MAX_Y - 80.0);
     let scale = 1.0 + horde.elapsed / 78.0;
@@ -1090,7 +1097,41 @@ fn is_horde_coordinate(x: f64, y: f64) -> bool {
     (HORDE_MIN_X..=HORDE_MAX_X).contains(&x) && (HORDE_MIN_Y..=HORDE_MAX_Y).contains(&y)
 }
 
+fn is_ranged_horde_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "raider"
+            | "laser"
+            | "shotgun"
+            | "bomber"
+            | "skycaller"
+            | "sniper"
+            | "orbiter"
+            | "blindcaster"
+            | "boss_beam"
+            | "boss_skyfall"
+            | "boss_void"
+            | "boss_storm"
+    )
+}
+
+fn player_cannot_be_hurt(player: &PlayerRecord, now: Instant) -> bool {
+    player.immune_until.is_some_and(|until| until > now)
+        || player.value.get("state").and_then(Value::as_str) == Some("dodge")
+}
+
+fn projectile_delta() -> f64 {
+    WORLD_TICK.as_secs_f64() * 60.0
+}
+
+fn monster_move_delta() -> f64 {
+    WORLD_TICK.as_secs_f64() * 40.0
+}
+
 fn tick_combat_world(state: &mut WorldState) {
+    let now = Instant::now();
+    let step = monster_move_delta();
+    let shot_step = projectile_delta();
     let players = state
         .players
         .iter()
@@ -1104,6 +1145,7 @@ fn tick_combat_world(state: &mut WorldState) {
                     .horde
                     .as_ref()
                     .is_some_and(|horde| horde.participants.contains_key(id)),
+                player_cannot_be_hurt(player, now),
             )
         })
         .collect::<Vec<_>>();
@@ -1115,6 +1157,7 @@ fn tick_combat_world(state: &mut WorldState) {
             .expect("combat world checked before tick"),
     );
     let mut enemy_projectiles = Vec::new();
+    let mut melee_hits = Vec::new();
     for monster in world.monsters.values_mut() {
         let hp = number(monster, "hp", 0.0);
         if hp <= 0.0 {
@@ -1123,7 +1166,7 @@ fn tick_combat_world(state: &mut WorldState) {
         let x = number(monster, "x", WORLD_MIN_X);
         let y = number(monster, "y", WORLD_MIN_Y);
         let monster_is_horde = is_horde_monster(monster);
-        let Some((target_id, target_x, target_y, _)) = players
+        let Some((target_id, target_x, target_y, _, target_immune)) = players
             .iter()
             .filter(|player| player.3 == monster_is_horde)
             .min_by(|left, right| {
@@ -1149,12 +1192,12 @@ fn tick_combat_world(state: &mut WorldState) {
             set_number(
                 monster,
                 "x",
-                (x + dx / distance * speed * 1.32).clamp(min_x, max_x),
+                (x + dx / distance * speed * step).clamp(min_x, max_x),
             );
             set_number(
                 monster,
                 "y",
-                (y + dy / distance * speed * 1.32).clamp(min_y, max_y),
+                (y + dy / distance * speed * step).clamp(min_y, max_y),
             );
             set_string(monster, "state", "chase");
             set_string(monster, "facing", if dx < 0.0 { "left" } else { "right" });
@@ -1165,34 +1208,62 @@ fn tick_combat_world(state: &mut WorldState) {
         }
         set_string(monster, "targetPlayerId", target_id.as_str());
         let cooldown = (number(monster, "attackCooldown", 0.0) - WORLD_TICK.as_secs_f64()).max(0.0);
-        if distance < 520.0 && cooldown <= 0.0 {
-            set_number(monster, "attackCooldown", 1.4);
+        let kind = monster
+            .get("hordeKind")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if target_immune {
+            set_number(monster, "attackCooldown", cooldown.max(0.35));
+            continue;
+        }
+        if monster_is_horde && !is_ranged_horde_kind(kind) {
+            if distance <= 92.0 && cooldown <= 0.0 {
+                set_number(monster, "attackCooldown", 1.1);
+                melee_hits.push((
+                    target_id.clone(),
+                    number(monster, "atk", 12.0).clamp(4.0, 80.0),
+                ));
+            } else {
+                set_number(monster, "attackCooldown", cooldown);
+            }
+        } else if distance < 520.0 && cooldown <= 0.0 {
+            set_number(monster, "attackCooldown", 1.6);
             enemy_projectiles.push(make_enemy_projectile(monster, target_x, target_y));
         } else {
             set_number(monster, "attackCooldown", cooldown);
         }
     }
+    for (player_id, damage) in melee_hits {
+        if let Some(player) = player_records.get_mut(&player_id) {
+            if player_cannot_be_hurt(player, now) {
+                continue;
+            }
+            let hp = (number(&player.value, "hp", 100.0) - damage).max(0.0);
+            set_number(&mut player.value, "hp", hp);
+        }
+    }
     world.projectiles.extend(enemy_projectiles);
     let mut remaining = Vec::with_capacity(world.projectiles.len());
     for mut projectile in std::mem::take(&mut world.projectiles) {
-        let x = number(&projectile, "x", 0.0) + number(&projectile, "vx", 0.0) * 1.98;
-        let y = number(&projectile, "y", 0.0) + number(&projectile, "vy", 0.0) * 1.98;
+        let x = number(&projectile, "x", 0.0) + number(&projectile, "vx", 0.0) * shot_step;
+        let y = number(&projectile, "y", 0.0) + number(&projectile, "vy", 0.0) * shot_step;
         let travelled = number(&projectile, "distanceTraveled", 0.0)
-            + number(&projectile, "vx", 0.0).hypot(number(&projectile, "vy", 0.0)) * 1.98;
+            + number(&projectile, "vx", 0.0).hypot(number(&projectile, "vy", 0.0)) * shot_step;
         set_number(&mut projectile, "x", x);
         set_number(&mut projectile, "y", y);
         set_number(&mut projectile, "distanceTraveled", travelled);
         let owner = projectile
             .get("ownerId")
             .and_then(Value::as_str)
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .to_owned();
         let damage = number(&projectile, "damage", 1.0).clamp(1.0, 250.0);
         let size = number(&projectile, "size", 4.0).clamp(2.0, 32.0);
         let mut consumed = false;
-        if player_records.contains_key(owner) {
+        if player_records.contains_key(&owner) {
             for monster in world.monsters.values_mut() {
                 if number(monster, "hp", 0.0) <= 0.0
-                    || monster.get("id").and_then(Value::as_str) == Some(owner)
+                    || monster.get("id").and_then(Value::as_str) == Some(owner.as_str())
                 {
                     continue;
                 }
@@ -1202,8 +1273,20 @@ fn tick_combat_world(state: &mut WorldState) {
                     let next_hp = (number(monster, "hp", 0.0) - damage).max(0.0);
                     set_number(monster, "hp", next_hp);
                     set_number(monster, "hitFlash", 0.2);
+                    monster["damagedByPlayer"] = json!(true);
                     if next_hp <= 0.0 {
                         set_string(monster, "state", "dead");
+                    }
+                    if let Some(player) = player_records.get_mut(&owner) {
+                        if number(&player.value, "hp", 0.0) > 0.0 {
+                            let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+                            let heal = (damage * LIFESTEAL_RATIO).max(1.0);
+                            set_number(
+                                &mut player.value,
+                                "hp",
+                                (number(&player.value, "hp", 0.0) + heal).min(max_hp),
+                            );
+                        }
                     }
                     consumed = true;
                     break;
@@ -1211,6 +1294,9 @@ fn tick_combat_world(state: &mut WorldState) {
             }
         } else {
             for player in player_records.values_mut() {
+                if player_cannot_be_hurt(player, now) {
+                    continue;
+                }
                 if (number(&player.value, "x", 0.0) - x).hypot(number(&player.value, "y", 0.0) - y)
                     <= 26.0 + size
                 {
@@ -1638,6 +1724,7 @@ mod tests {
                 session_id: 1,
                 value: player_value,
                 respawn_at: None,
+                immune_until: None,
                 resume_token: "test-token".into(),
             },
         );
@@ -1702,6 +1789,7 @@ mod tests {
                 session_id: 1,
                 value,
                 respawn_at: Some(Instant::now() - Duration::from_millis(1)),
+                immune_until: None,
                 resume_token: "test-token".into(),
             },
         );
@@ -1990,5 +2078,158 @@ mod tests {
             .expect("snapshot JSON");
         assert_eq!(snapshot["type"], "world_snapshot");
         assert_eq!(snapshot["players"][0]["hp"], 65.0);
+    }
+
+    #[tokio::test]
+    async fn nullspace_entry_restores_hp_and_grants_spawn_grace() {
+        let server = Arc::new(Server {
+            state: Mutex::new(WorldState::default()),
+            max_players: 4,
+        });
+        let mut receiver = session(&server, 1).await;
+        join(
+            &server,
+            1,
+            json!({ "player": player("pilot", 650.0, 750.0) }),
+        )
+        .await;
+        let _ = recv_text(&mut receiver, "join init").await;
+        world_bootstrap(
+            &server,
+            1,
+            json!({ "monsters": [{
+                "id": "overworld_mob", "x": 700.0, "y": 750.0,
+                "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0
+            }]}),
+        )
+        .await;
+        let _ = recv_text(&mut receiver, "world bootstrap").await;
+        {
+            let mut state = server.state.lock().await;
+            state
+                .players
+                .get_mut("pilot")
+                .expect("player")
+                .value["hp"] = json!(12.0);
+        }
+
+        enter_horde(&server, 1).await;
+        let snapshot =
+            serde_json::from_str::<Value>(&recv_text(&mut receiver, "horde snapshot").await)
+                .expect("snapshot JSON");
+        assert_eq!(snapshot["players"][0]["hp"], 100.0);
+        assert_eq!(snapshot["players"][0]["x"], HORDE_CENTER_X);
+
+        let mut state = server.state.lock().await;
+        tick_horde_director(&mut state);
+        tick_combat_world(&mut state);
+        let world = state.combat_world.as_ref().expect("world");
+        assert!(world.projectiles.is_empty());
+        let player = state.players.get("pilot").expect("player");
+        assert_eq!(number(&player.value, "hp", 0.0), 100.0);
+        for monster in world.monsters.values().filter(|monster| is_horde_monster(monster)) {
+            let dx = number(monster, "x", 0.0) - HORDE_CENTER_X;
+            let dy = number(monster, "y", 0.0) - HORDE_CENTER_Y;
+            assert!(dx.hypot(dy) >= 680.0);
+        }
+    }
+
+    #[test]
+    fn player_projectile_hit_applies_lifesteal() {
+        let (_, mut player_value) =
+            sanitize_player(&player("player_one", 100.0, 100.0)).expect("valid player");
+        player_value["hp"] = json!(40.0);
+        let monsters = sanitize_world_monsters(&[json!({
+            "id": "monster_one", "x": 110.0, "y": 100.0,
+            "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
+        })])
+        .expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.players.insert(
+            "player_one".into(),
+            PlayerRecord {
+                session_id: 1,
+                value: player_value,
+                respawn_at: None,
+                immune_until: None,
+                resume_token: "test-token".into(),
+            },
+        );
+        state.combat_world = Some(CombatWorld {
+            monsters,
+            projectiles: vec![json!({
+                "id": "projectile_one", "ownerId": "player_one", "type": "bullet",
+                "x": 110.0, "y": 100.0, "vx": 0.0, "vy": 0.0,
+                "damage": 40.0, "range": 400.0, "distanceTraveled": 0.0,
+                "color": "#fff", "size": 4.0,
+            })],
+        });
+
+        tick_combat_world(&mut state);
+
+        let player = state.players.get("player_one").expect("player");
+        assert!(
+            (number(&player.value, "hp", 0.0) - 43.2).abs() < 0.01,
+            "lifesteal should restore 8% of the 40 damage"
+        );
+        let world = state.combat_world.expect("world remains available");
+        assert_eq!(
+            number(
+                world.monsters.get("monster_one").expect("monster"),
+                "hp",
+                0.0
+            ),
+            60.0
+        );
+    }
+
+    #[test]
+    fn horde_melee_mobs_do_not_shoot_from_range() {
+        let (_, mut player_value) =
+            sanitize_player(&player("pilot", 650.0, 750.0)).expect("valid player");
+        player_value["x"] = json!(HORDE_CENTER_X);
+        player_value["y"] = json!(HORDE_CENTER_Y);
+        let mut state = WorldState::default();
+        state.players.insert(
+            "pilot".into(),
+            PlayerRecord {
+                session_id: 1,
+                value: player_value,
+                respawn_at: None,
+                immune_until: None,
+                resume_token: "test-token".into(),
+            },
+        );
+        state.horde = Some(HordeRun {
+            participants: HashMap::from([("pilot".into(), (650.0, 750.0))]),
+            elapsed: 8.0,
+            spawn_accumulator: 0.0,
+            next_unlock_at: 20.0,
+            next_boss_at: 60.0,
+            unlocked_count: 1,
+            boss_index: 0,
+            sequence: 1,
+        });
+        let mut monsters = HashMap::new();
+        monsters.insert(
+            "horde_shade".into(),
+            json!({
+                "id": "horde_shade", "zone": "horde_crucible", "hordeKind": "shade",
+                "x": HORDE_CENTER_X + 200.0, "y": HORDE_CENTER_Y,
+                "hp": 40.0, "maxHp": 40.0, "atk": 8.0, "speed": 2.7,
+                "attackCooldown": 0.0, "state": "chase",
+            }),
+        );
+        state.combat_world = Some(CombatWorld {
+            monsters,
+            projectiles: Vec::new(),
+        });
+
+        tick_combat_world(&mut state);
+
+        let world = state.combat_world.expect("world");
+        assert!(world.projectiles.is_empty());
+        let player = state.players.get("pilot").expect("player");
+        assert_eq!(number(&player.value, "hp", 0.0), 100.0);
     }
 }

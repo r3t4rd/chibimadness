@@ -247,7 +247,7 @@ class MultiplayerClient {
       if (now - this.hordeTransitionStartedAt < 6_000) return;
       this.hordeTransition = null;
     }
-    if (now - this.lastPositionSentAt < 1000 / 10) {
+    if (now - this.lastPositionSentAt < 1000 / 20) {
       return;
     }
     this.lastPositionSentAt = now;

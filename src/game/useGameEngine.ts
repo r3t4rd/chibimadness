@@ -750,7 +750,13 @@ export function useGameEngine(initialPlayer: Player) {
           const wasDead = prevMonster.hp <= 0 || prevMonster.state === 'dead';
           if (becameDead && !wasDead) {
             if (handleMonsterDefeatedRef.current) {
-              handleMonsterDefeatedRef.current(prevMonster, prevMonster.damagedByPlayer);
+              const killedByPlayer = !!(
+                prevMonster.damagedByPlayer
+                || serverMonster?.damagedByPlayer
+                || serverMonster?.targetPlayerId === initialPlayer.id
+                || prevMonster.targetPlayerId === initialPlayer.id
+              );
+              handleMonsterDefeatedRef.current(prevMonster, killedByPlayer);
             }
           }
         }
@@ -778,9 +784,12 @@ export function useGameEngine(initialPlayer: Player) {
           nextBossIn: typeof data.horde.nextBossIn === 'number' ? data.horde.nextBossIn : previous.nextBossIn,
           bossIndex: typeof data.horde.bossIndex === 'number' ? data.horde.bossIndex : previous.bossIndex,
           blindness: { active: false, remaining: 0, casterId: null },
+          bossRift: createEmptyHordeRun().bossRift,
+          riftWarp: 0,
         };
         hordeRunRef.current = run;
         hordeHazardsRef.current = [];
+        clearHordeFx();
         publishHordeFx([], run.blindness);
         setHordeRun(run);
       } else if (hordeRunRef.current.active) {
@@ -806,16 +815,21 @@ export function useGameEngine(initialPlayer: Player) {
           const serverSaysDead = self.stats.hp <= 0 || self.state === 'dead';
           const syncedState = serverSaysDead ? 'dead' : self.state;
           const serverRespawned = !serverSaysDead && (current.isRespawning || current.state === 'dead');
-          const serverMovedAcrossWorlds = isInHordeArena(self.x, self.y) || isInHordeArena(current.x, current.y);
+          const selfInHorde = isInHordeArena(self.x, self.y);
+          const currentInHorde = isInHordeArena(current.x, current.y);
+          const serverMovedAcrossWorlds = selfInHorde !== currentInHorde;
           // Normal-map respawns also move the player back to the camp.  Keep
           // movement client-predicted during play, but accept that one
           // server-authoritative transform when a death has just resolved.
+          // Crossing into or out of Nullspace is a world transition; remaining
+          // inside it is ordinary movement and must stay client-predicted.
           const shouldApplyServerTransform = serverMovedAcrossWorlds || serverRespawned;
+          const entryIFrames = serverMovedAcrossWorlds && selfInHorde ? 2.5 : 0;
           playerRef.current = shouldApplyServerTransform
-            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
+            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(current.dodgeTimer ?? 0, entryIFrames) }
             : { ...current, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined };
           setPlayer((previous) => shouldApplyServerTransform
-            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
+            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(previous.dodgeTimer ?? 0, entryIFrames) }
             : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined });
         }
         const remote = Object.fromEntries(players
@@ -851,7 +865,7 @@ export function useGameEngine(initialPlayer: Player) {
       const dt = Math.min(0.1, Math.max(0, (time - previousTime) / 1000));
       previousTime = time;
 
-      const interpolationDelay = 120; // 120ms delay is perfect for 100ms (10Hz) ticks
+      const interpolationDelay = 80; // 80ms delay tracks 50ms (20Hz) snapshots
       const renderTime = time - interpolationDelay;
 
       setRemotePlayers((current) => {
@@ -3518,7 +3532,7 @@ export function useGameEngine(initialPlayer: Player) {
         const pushed = pushOutOfHordeFeatures(nextX, nextY, 18);
         nextX = pushed.x;
         nextY = pushed.y;
-        if (pushed.inVoid && jumpZ < 12) {
+        if (pushed.inVoid && jumpZ < 12 && !net.hasSharedWorld()) {
           const voidDmg = Math.max(1, Math.round(14 * dt));
           setPlayer((prev) => ({
             ...prev,
@@ -4134,11 +4148,7 @@ export function useGameEngine(initialPlayer: Player) {
       }
       }
 
-      // The offline simulator owns drops, projectile collisions and monster
-      // AI only when no authoritative world has been received. In multiplayer
-      // those mutations must never race the server snapshot.
-      if (!net.hasSharedWorld()) {
-      // 3. Magnetic Item Pickup
+      // XP gems and local drops stay client-owned even in a shared combat world.
       const remainingDrops: DropItem[] = [];
       dropItemsRef.current.forEach((drop) => {
         const dx = nextX - drop.x;
@@ -4150,7 +4160,7 @@ export function useGameEngine(initialPlayer: Player) {
             awardExpAndGold(drop.quantity, 0);
             if (hordeRunRef.current.active) hordeRunRef.current.gemsCollected += 1;
             const gb = getEvolutionMods(nextPlayer, true);
-            if (gb.gemBombChance > 0 && Math.random() < gb.gemBombChance) {
+            if (!net.hasSharedWorld() && gb.gemBombChance > 0 && Math.random() < gb.gemBombChance) {
               spawnParticles(nextX, nextY, '#F472B6', 22, 'spark');
               triggerShake(5, 0.1);
               addDamagePopup(nextX, nextY - 16, 'GEM BOMB', '#F472B6', true);
@@ -4183,6 +4193,10 @@ export function useGameEngine(initialPlayer: Player) {
       dropItemsRef.current = remainingDrops;
       setDropItems(remainingDrops);
 
+      // The offline simulator owns projectile collisions and monster
+      // AI only when no authoritative world has been received. In multiplayer
+      // those mutations must never race the server snapshot.
+      if (!net.hasSharedWorld()) {
       // 4. Update Ground Decals & Fire Pool Hazard Damage
       groundDecalsRef.current = groundDecalsRef.current
         .map((decal) => {

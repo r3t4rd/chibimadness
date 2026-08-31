@@ -8,6 +8,8 @@ Inventory, drops and quests remain intentionally local.
 Reconnects use a server-issued in-memory token so another client cannot replace
 an active player merely by copying the public player ID.
 
+Simulation runs at 50 Hz; movement and world snapshots go out at 20 Hz.
+
 ## Linux deployment
 
 The server directory is standalone: copy only `Cargo.toml` and `src/` to the
