@@ -43,6 +43,7 @@ const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_CHAT_HISTORY: usize = 50;
 const POSITION_INTERVAL: Duration = Duration::from_millis(33);
 const WORLD_TICK: Duration = Duration::from_millis(33);
+const WORLD_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_WORLD_MONSTERS: usize = 256;
 const MAX_WORLD_PROJECTILES: usize = 1_024;
 const MAX_TRAVEL_PER_SECOND: f64 = 600.0;
@@ -246,7 +247,7 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
     let Some((player_id, player)) = message.get("player").and_then(sanitize_player) else {
         return;
     };
-    let (recipients, init_payload, joined_payload) = {
+    let (recipients, init_payload, joined_payload, online_count) = {
         let mut state = server.state.lock().await;
         let Some(session) = state.sessions.get(&session_id) else {
             return;
@@ -281,10 +282,16 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             },
         );
         let recipients = recipients_except(&state, session_id);
-        (recipients, init_payload, joined_payload)
+        (
+            recipients,
+            init_payload,
+            joined_payload,
+            state.players.len(),
+        )
     };
     send_to_session(server, session_id, init_payload).await;
     send_to(recipients, joined_payload);
+    println!("player joined ({online_count} online)");
 }
 
 async fn update_position(server: &Arc<Server>, session_id: u64, message: Value) {
@@ -552,9 +559,10 @@ async fn extract_horde(server: &Arc<Server>, session_id: u64) {
 
 async fn world_tick_loop(server: Arc<Server>) {
     let mut interval = tokio::time::interval(WORLD_TICK);
+    let mut last_snapshot = Instant::now() - WORLD_SNAPSHOT_INTERVAL;
     loop {
         interval.tick().await;
-        let (recipients, payload) = {
+        let snapshot = {
             let mut state = server.state.lock().await;
             if state.combat_world.is_none() || state.players.is_empty() {
                 continue;
@@ -562,9 +570,16 @@ async fn world_tick_loop(server: Arc<Server>) {
             tick_player_respawns(&mut state);
             tick_horde_director(&mut state);
             tick_combat_world(&mut state);
-            (recipients_except(&state, 0), world_snapshot(&state))
+            if last_snapshot.elapsed() < WORLD_SNAPSHOT_INTERVAL {
+                None
+            } else {
+                last_snapshot = Instant::now();
+                Some((recipients_except(&state, 0), world_snapshot(&state)))
+            }
         };
-        send_to(recipients, payload);
+        if let Some((recipients, payload)) = snapshot {
+            send_to(recipients, payload);
+        }
     }
 }
 
