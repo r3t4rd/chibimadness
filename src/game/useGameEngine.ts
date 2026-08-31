@@ -187,8 +187,27 @@ type CombatRenderState = {
   projectiles: Projectile[];
 };
 
+type PredictedProjectile = Projectile & {
+  clientShotId: string;
+  expiresAt: number;
+  lastSimulatedAt: number;
+};
+
 const REPLICATION_INTERPOLATION_DELAY_MS = 100;
 const MAX_REPLICATION_EXTRAPOLATION_MS = 150;
+const MAX_LOCAL_PROJECTILE_PREDICTION_MS = 1_500;
+
+function reconcilePredictedProjectiles(
+  predicted: PredictedProjectile[],
+  authoritative: Projectile[],
+) {
+  const confirmed = new Set(
+    authoritative
+      .map((projectile) => (projectile as Projectile & { clientShotId?: unknown }).clientShotId)
+      .filter((id): id is string => typeof id === 'string'),
+  );
+  return predicted.filter((projectile) => !confirmed.has(projectile.clientShotId));
+}
 
 function recordReplicationSnapshot<T extends { id: string }>(
   history: ReplicationHistory<T>,
@@ -824,6 +843,8 @@ export function useGameEngine(initialPlayer: Player) {
   const authoritativeMonstersRef = useRef<Record<string, Monster>>({});
   const authoritativeProjectilesRef = useRef<Record<string, Projectile>>({});
   const authoritativePlayersRef = useRef<Record<string, Player>>({});
+  const predictedProjectilesRef = useRef<PredictedProjectile[]>([]);
+  const clientShotSequenceRef = useRef(0);
   const replicationFrameReceivedRef = useRef(false);
   const combatRenderStateRef = useRef<CombatRenderState>({ monsters: [], projectiles: [] });
   const addPlayerHistory = (id: string, x: number, y: number, vx: number, vy: number) => {
@@ -858,6 +879,7 @@ export function useGameEngine(initialPlayer: Player) {
       authoritativeMonstersRef.current = {};
       authoritativeProjectilesRef.current = {};
       authoritativePlayersRef.current = {};
+      predictedProjectilesRef.current = [];
       replicationFrameReceivedRef.current = false;
       combatRenderStateRef.current = { monsters: [], projectiles: [] };
       const players = data.players
@@ -894,8 +916,13 @@ export function useGameEngine(initialPlayer: Player) {
     } else if (type === 'world_delta' && data.ready === true) {
       const deltaApplyStartedAt = performance.now();
       const authoritativeMonsters = applyReplicationDelta(authoritativeMonstersRef.current, data.monsters);
-      const authoritativeProjectiles = applyReplicationDelta(authoritativeProjectilesRef.current, data.projectiles);
+      const authoritativeProjectiles = applyReplicationDelta<Projectile>(authoritativeProjectilesRef.current, data.projectiles);
+      predictedProjectilesRef.current = reconcilePredictedProjectiles(
+        predictedProjectilesRef.current,
+        authoritativeProjectiles,
+      );
       const receivedAt = performance.now();
+      perfMonitor.recordReplication(data.sequence);
       const hasMonsterHistory = Object.keys(monsterReplicationHistoryRef.current).length > 0;
       const hasProjectileHistory = Object.keys(projectileReplicationHistoryRef.current).length > 0;
       recordReplicationSnapshot(monsterReplicationHistoryRef.current, authoritativeMonsters, receivedAt);
@@ -965,6 +992,10 @@ export function useGameEngine(initialPlayer: Player) {
       );
       authoritativeMonstersRef.current = Object.fromEntries(authoritativeMonsters.map((monster) => [monster.id, monster]));
       authoritativeProjectilesRef.current = Object.fromEntries(authoritativeProjectiles.map((projectile) => [projectile.id, projectile]));
+      predictedProjectilesRef.current = reconcilePredictedProjectiles(
+        predictedProjectilesRef.current,
+        authoritativeProjectiles,
+      );
       // Detect newly defeated horde monsters from snapshot difference
       monstersRef.current.forEach((prevMonster) => {
         if (prevMonster.zone === HORDE_ZONE_ID) {
@@ -986,6 +1017,7 @@ export function useGameEngine(initialPlayer: Player) {
       });
 
       const receivedAt = performance.now();
+      perfMonitor.recordReplication();
       const hasMonsterHistory = Object.keys(monsterReplicationHistoryRef.current).length > 0;
       const hasProjectileHistory = Object.keys(projectileReplicationHistoryRef.current).length > 0;
       recordReplicationSnapshot(monsterReplicationHistoryRef.current, authoritativeMonsters, receivedAt);
@@ -1274,6 +1306,21 @@ export function useGameEngine(initialPlayer: Player) {
   const projectilesRef = useRef<Projectile[]>(projectiles);
   if (!net.hasSharedWorld()) projectilesRef.current = projectiles;
 
+  const sendPredictedProjectile = (projectile: Projectile) => {
+    const now = performance.now();
+    const clientShotId = `shot_${Math.floor(now)}_${clientShotSequenceRef.current++}`;
+    const speed = Math.max(1, Math.hypot(projectile.vx, projectile.vy));
+    const travelMs = (Math.max(1, projectile.range) / (speed * 60)) * 1_000;
+    predictedProjectilesRef.current.push({
+      ...projectile,
+      id: `predicted_${clientShotId}`,
+      clientShotId,
+      expiresAt: now + Math.min(MAX_LOCAL_PROJECTILE_PREDICTION_MS, Math.max(250, travelMs + 150)),
+      lastSimulatedAt: now,
+    });
+    net.fireProjectile({ ...projectile, clientShotId } as Projectile);
+  };
+
   // Authoritative combat snapshots arrive at 20 Hz, but the canvas renders
   // every animation frame. Keep a small visual delay so most frames can be
   // drawn between two server states instead of snapping to the latest one.
@@ -1291,9 +1338,25 @@ export function useGameEngine(initialPlayer: Player) {
           .filter((frames) => frames.length > 0)
           .map((frames) => interpolatedProjectileState(frames, renderAt));
 
+        const predictedProjectiles = predictedProjectilesRef.current.flatMap((projectile) => {
+          const elapsedMs = Math.min(50, Math.max(0, time - projectile.lastSimulatedAt));
+          const travel = elapsedMs / 1_000 * 60;
+          const distance = Math.hypot(projectile.vx, projectile.vy) * travel;
+          const next = {
+            ...projectile,
+            x: projectile.x + projectile.vx * travel,
+            y: projectile.y + projectile.vy * travel,
+            distanceTraveled: projectile.distanceTraveled + distance,
+            lastSimulatedAt: time,
+          };
+          if (time >= next.expiresAt || next.distanceTraveled >= next.range) return [];
+          return [next];
+        });
+        predictedProjectilesRef.current = predictedProjectiles;
+
         combatRenderStateRef.current = {
           monsters: nextMonsters,
-          projectiles: nextProjectiles,
+          projectiles: [...nextProjectiles, ...predictedProjectiles],
         };
       }
       animationFrameId = requestAnimationFrame(renderReplicatedWorld);
@@ -2408,7 +2471,7 @@ export function useGameEngine(initialPlayer: Player) {
         ? proj
         : { ...proj, visualOffsetY: visualLaunchOffsetY };
       if (net.hasSharedWorld()) {
-        net.fireProjectile(launchedProjectile);
+        sendPredictedProjectile(launchedProjectile);
         return;
       }
       projectilesRef.current = [...projectilesRef.current, launchedProjectile];
@@ -2844,7 +2907,7 @@ export function useGameEngine(initialPlayer: Player) {
       // Adding the projectile locally made it disappear at the next snapshot
       // and, worse, never sent any Q/E/F skill projectile to the server.
       if (net.hasSharedWorld()) {
-        net.fireProjectile(proj);
+        sendPredictedProjectile(proj);
         return;
       }
       projectilesRef.current = [...projectilesRef.current, proj];

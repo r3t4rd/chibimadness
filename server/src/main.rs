@@ -6,7 +6,7 @@
 //! simulation before they can safely become shared state.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     error::Error,
     net::SocketAddr,
@@ -59,7 +59,10 @@ const WORLD_TICK: Duration = Duration::from_millis(20);
 const WORLD_SNAPSHOT_INTERVAL: Duration = Duration::from_millis(50);
 const MAX_WORLD_MONSTERS: usize = 256;
 const MAX_WORLD_PROJECTILES: usize = 1_024;
-const REPLICATION_INTEREST_RADIUS: f64 = 1_700.0;
+// AOI is deliberately hysteretic. A single radius makes entities flicker at
+// its edge as either the player or a monster moves one simulation step.
+const REPLICATION_INTEREST_ENTER_RADIUS: f64 = 1_700.0;
+const REPLICATION_INTEREST_EXIT_RADIUS: f64 = 2_050.0;
 const MAX_TRAVEL_PER_SECOND: f64 = 600.0;
 const TRAVEL_BURST_ALLOWANCE: f64 = 60.0;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
@@ -308,17 +311,14 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             return;
         }
 
-        let existing_session = state
-            .players
-            .get(&player_id)
-            .map(|record| {
-                (
-                    record.session_id,
-                    record.resume_token.clone(),
-                    record.value.clone(),
-                    record.respawn_at,
-                )
-            });
+        let existing_session = state.players.get(&player_id).map(|record| {
+            (
+                record.session_id,
+                record.resume_token.clone(),
+                record.value.clone(),
+                record.respawn_at,
+            )
+        });
         if let Some((_, expected_token, _, _)) = &existing_session
             && requested_resume_token.as_deref() != Some(expected_token.as_str())
         {
@@ -618,7 +618,10 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
                     "retryIn": retry_in,
                 })
                 .to_string();
-                println!("Nullspace join rejected for {player_id}: run already at {:.1}s", active_run.elapsed);
+                println!(
+                    "Nullspace join rejected for {player_id}: run already at {:.1}s",
+                    active_run.elapsed
+                );
                 drop(state);
                 send_to(vec![sender], rejection);
                 return;
@@ -866,8 +869,12 @@ fn tick_player_respawns(state: &mut WorldState) {
     if close_horde {
         state.horde = None;
         if let Some(world) = state.combat_world.as_mut() {
-            world.monsters.retain(|_, monster| !is_horde_monster(monster));
-            world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
+            world
+                .monsters
+                .retain(|_, monster| !is_horde_monster(monster));
+            world
+                .projectiles
+                .retain(|projectile| !is_horde_projectile(projectile));
         }
     }
 
@@ -920,11 +927,7 @@ fn tick_horde_director(state: &mut WorldState) {
     // A boss is a server-owned phase transition, not just another mob. The
     // client receives bossWarp in snapshots and applies the authoritative
     // transform even though both locations are inside Nullspace.
-    if let Some(boss_id) = state
-        .horde
-        .as_ref()
-        .and_then(|horde| horde.boss_id.clone())
-    {
+    if let Some(boss_id) = state.horde.as_ref().and_then(|horde| horde.boss_id.clone()) {
         let boss_is_alive = state
             .combat_world
             .as_ref()
@@ -965,8 +968,12 @@ fn tick_horde_director(state: &mut WorldState) {
             state.horde.as_mut().expect("run exists"),
             state.combat_world.as_mut().expect("world exists"),
         );
-        world.monsters.retain(|_, monster| !is_horde_monster(monster));
-        world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
+        world
+            .monsters
+            .retain(|_, monster| !is_horde_monster(monster));
+        world
+            .projectiles
+            .retain(|projectile| !is_horde_projectile(projectile));
         let mut boss = spawn_horde_monster(horde, &boss_targets, boss_kind);
         set_number(&mut boss, "x", arena_x + 170.0);
         set_number(&mut boss, "y", arena_y);
@@ -1491,7 +1498,10 @@ fn sanitize_player_projectile(
     } else {
         (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
     };
-    let requested_type = value.get("type").and_then(Value::as_str).unwrap_or("bullet");
+    let requested_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("bullet");
     let x = bounded_number(&Value::Object(value.clone()), "x", min_x, max_x)?;
     let y = bounded_number(&Value::Object(value.clone()), "y", min_y, max_y)?;
     // Most projectiles originate at the caster. Targeted meteor and falling
@@ -1501,9 +1511,7 @@ fn sanitize_player_projectile(
         "meteor" | "falling_sword" => 1_000.0,
         _ => 100.0,
     };
-    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0))
-        > max_origin_distance
-    {
+    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0)) > max_origin_distance {
         return None;
     }
     let kind = match requested_type {
@@ -1516,19 +1524,35 @@ fn sanitize_player_projectile(
     let vx = bounded_number(&Value::Object(value.clone()), "vx", -50.0, 50.0)?;
     let vy = bounded_number(&Value::Object(value.clone()), "vy", -50.0, 50.0)?;
     let size = bounded_number(&Value::Object(value.clone()), "size", 2.0, 32.0).unwrap_or(5.0);
-    let visual_offset_y = bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0)
-        .unwrap_or(0.0);
+    let visual_offset_y =
+        bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0).unwrap_or(0.0);
     let color = value
         .get("color")
         .and_then(Value::as_str)
         .filter(|color| color.len() <= 16)
         .unwrap_or("#38BDF8");
-    Some(json!({
+    let mut projectile = json!({
         "id": format!("srv_projectile_{}", NEXT_PROJECTILE_ID.fetch_add(1, Ordering::Relaxed)),
         "ownerId": owner_id, "type": kind.0, "x": x, "y": y, "vx": vx, "vy": vy,
         "damage": kind.1, "range": kind.2, "distanceTraveled": 0.0, "color": color,
         "size": size, "piercing": kind.0 == "laser", "visualOffsetY": visual_offset_y,
-    }))
+    });
+    // This opaque id is generated by the owning client and is only used to
+    // reconcile its short-lived visual prediction with this validated entity.
+    // Keep the wire value bounded; it must never become a general echo field.
+    if let Some(client_shot_id) = value
+        .get("clientShotId")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            id.len() <= 96
+                && id
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+        })
+    {
+        projectile["clientShotId"] = json!(client_shot_id);
+    }
+    Some(projectile)
 }
 
 fn make_enemy_projectile(monster: &Value, target_x: &f64, target_y: &f64) -> Value {
@@ -1584,12 +1608,22 @@ struct ReplicationView {
     horde: Value,
 }
 
-fn within_replication_interest(value: &Value, x: f64, y: f64) -> bool {
+fn within_replication_interest(value: &Value, x: f64, y: f64, was_replicated: bool) -> bool {
     (number(value, "x", x) - x).hypot(number(value, "y", y) - y)
-        <= REPLICATION_INTEREST_RADIUS
+        <= if was_replicated {
+            REPLICATION_INTEREST_EXIT_RADIUS
+        } else {
+            REPLICATION_INTEREST_ENTER_RADIUS
+        }
 }
 
-fn replication_view(state: &WorldState, player_id: &str) -> Option<ReplicationView> {
+fn replication_view(
+    state: &WorldState,
+    player_id: &str,
+    known_monsters: &HashSet<String>,
+    known_projectiles: &HashSet<String>,
+    known_players: &HashSet<String>,
+) -> Option<ReplicationView> {
     let player = state.players.get(player_id)?;
     let x = number(&player.value, "x", WORLD_MIN_X);
     let y = number(&player.value, "y", WORLD_MIN_Y);
@@ -1603,7 +1637,15 @@ fn replication_view(state: &WorldState, player_id: &str) -> Option<ReplicationVi
         .values()
         .filter(|monster| {
             is_horde_monster(monster) == player_in_horde
-                && within_replication_interest(monster, x, y)
+                && within_replication_interest(
+                    monster,
+                    x,
+                    y,
+                    monster
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| known_monsters.contains(id)),
+                )
         })
         .cloned()
         .collect();
@@ -1612,7 +1654,15 @@ fn replication_view(state: &WorldState, player_id: &str) -> Option<ReplicationVi
         .iter()
         .filter(|projectile| {
             is_horde_projectile(projectile) == player_in_horde
-                && within_replication_interest(projectile, x, y)
+                && within_replication_interest(
+                    projectile,
+                    x,
+                    y,
+                    projectile
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| known_projectiles.contains(id)),
+                )
         })
         .cloned()
         .collect();
@@ -1627,7 +1677,13 @@ fn replication_view(state: &WorldState, player_id: &str) -> Option<ReplicationVi
                 .horde
                 .as_ref()
                 .is_some_and(|horde| horde.participants.contains_key(id.as_str()));
-            other_in_horde == player_in_horde && within_replication_interest(&other.value, x, y)
+            other_in_horde == player_in_horde
+                && within_replication_interest(
+                    &other.value,
+                    x,
+                    y,
+                    known_players.contains(id.as_str()),
+                )
         })
         .map(|(_, other)| other.value.clone())
         .collect();
@@ -1670,11 +1726,47 @@ fn replication_payloads(state: &mut WorldState) -> Vec<(mpsc::Sender<Outbound>, 
     let session_players = state
         .sessions
         .iter()
-        .filter_map(|(session_id, session)| session.player_id.as_ref().map(|id| (*session_id, id.clone())))
+        .filter_map(|(session_id, session)| {
+            session.player_id.as_ref().map(|id| {
+                (
+                    *session_id,
+                    id.clone(),
+                    session
+                        .replication
+                        .monsters
+                        .keys()
+                        .cloned()
+                        .collect::<HashSet<_>>(),
+                    session
+                        .replication
+                        .projectiles
+                        .keys()
+                        .cloned()
+                        .collect::<HashSet<_>>(),
+                    session
+                        .replication
+                        .players
+                        .keys()
+                        .cloned()
+                        .collect::<HashSet<_>>(),
+                )
+            })
+        })
         .collect::<Vec<_>>();
     let views = session_players
         .into_iter()
-        .filter_map(|(session_id, player_id)| replication_view(state, &player_id).map(|view| (session_id, view)))
+        .filter_map(
+            |(session_id, player_id, known_monsters, known_projectiles, known_players)| {
+                replication_view(
+                    state,
+                    &player_id,
+                    &known_monsters,
+                    &known_projectiles,
+                    &known_players,
+                )
+                .map(|view| (session_id, view))
+            },
+        )
         .collect::<Vec<_>>();
     let mut payloads = Vec::with_capacity(views.len());
     for (session_id, view) in views {
@@ -1957,8 +2049,14 @@ mod tests {
         );
         state.combat_world = Some(CombatWorld {
             monsters: HashMap::from([
-                ("near_mob".into(), json!({ "id": "near_mob", "x": 700.0, "y": 700.0, "hp": 10.0 })),
-                ("far_mob".into(), json!({ "id": "far_mob", "x": 5_000.0, "y": 4_000.0, "hp": 10.0 })),
+                (
+                    "near_mob".into(),
+                    json!({ "id": "near_mob", "x": 700.0, "y": 700.0, "hp": 10.0 }),
+                ),
+                (
+                    "far_mob".into(),
+                    json!({ "id": "far_mob", "x": 5_000.0, "y": 4_000.0, "hp": 10.0 }),
+                ),
             ]),
             projectiles: Vec::new(),
         });
@@ -1967,12 +2065,53 @@ mod tests {
         assert_eq!(first.len(), 1);
         let first = serde_json::from_str::<Value>(&first[0].1).expect("delta JSON");
         assert_eq!(first["type"], "world_delta");
-        assert_eq!(first["monsters"]["upsert"].as_array().expect("upserts").len(), 1);
+        assert_eq!(
+            first["monsters"]["upsert"]
+                .as_array()
+                .expect("upserts")
+                .len(),
+            1
+        );
         assert_eq!(first["monsters"]["upsert"][0]["id"], "near_mob");
 
         let second = replication_payloads(&mut state);
         let second = serde_json::from_str::<Value>(&second[0].1).expect("delta JSON");
-        assert!(second["monsters"]["upsert"].as_array().expect("upserts").is_empty());
+        assert!(
+            second["monsters"]["upsert"]
+                .as_array()
+                .expect("upserts")
+                .is_empty()
+        );
+
+        // Known entities stay replicated through the exit radius, preventing
+        // an AOI-boundary step from removing and recreating them every tick.
+        state
+            .combat_world
+            .as_mut()
+            .expect("combat world")
+            .monsters
+            .get_mut("near_mob")
+            .expect("near monster")["x"] = json!(2_400.0);
+        let retained = serde_json::from_str::<Value>(&replication_payloads(&mut state)[0].1)
+            .expect("delta JSON");
+        assert!(
+            retained["monsters"]["remove"]
+                .as_array()
+                .expect("removals")
+                .is_empty()
+        );
+        assert_eq!(retained["monsters"]["upsert"][0]["id"], "near_mob");
+
+        state
+            .combat_world
+            .as_mut()
+            .expect("combat world")
+            .monsters
+            .get_mut("near_mob")
+            .expect("near monster")["x"] = json!(2_700.0);
+        let removed = serde_json::from_str::<Value>(&replication_payloads(&mut state)[0].1)
+            .expect("delta JSON");
+        assert_eq!(removed["monsters"]["remove"][0], "near_mob");
     }
 
     async fn recv_text(receiver: &mut mpsc::Receiver<Outbound>, description: &str) -> String {
@@ -2064,20 +2203,23 @@ mod tests {
         assert_eq!(projectile["type"], "magic_orb");
         assert_eq!(projectile["visualOffsetY"], -42.0);
 
-        assert!(sanitize_player_projectile(
-            Some(&json!({
-                "type": "meteor", "x": 1_700.0, "y": 750.0,
-                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
-            })),
-            "caster",
-            &player,
-        )
-        .is_none());
+        assert!(
+            sanitize_player_projectile(
+                Some(&json!({
+                    "type": "meteor", "x": 1_700.0, "y": 750.0,
+                    "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
+                })),
+                "caster",
+                &player,
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn server_revives_dead_player_at_camp() {
-        let (_, mut value) = sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
+        let (_, mut value) =
+            sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
         value["hp"] = json!(0.0);
         value["state"] = json!("dead");
         let mut state = WorldState::default();
@@ -2094,7 +2236,10 @@ mod tests {
 
         tick_player_respawns(&mut state);
 
-        let revived = state.players.get("downed").expect("player remains connected");
+        let revived = state
+            .players
+            .get("downed")
+            .expect("player remains connected");
         assert_eq!(number(&revived.value, "hp", 0.0), 100.0);
         assert_eq!(number(&revived.value, "x", 0.0), PLAYER_RESPAWN_X);
         assert_eq!(number(&revived.value, "y", 0.0), PLAYER_RESPAWN_Y);
@@ -2348,8 +2493,10 @@ mod tests {
         // Repeated enter packets must only resync an existing participant.
         // They must not rewind the run, move the player, or refill HP.
         enter_horde(&server, 1).await;
-        let resumed = serde_json::from_str::<Value>(&recv_text(&mut first, "idempotent enter snapshot").await)
-            .expect("snapshot JSON");
+        let resumed = serde_json::from_str::<Value>(
+            &recv_text(&mut first, "idempotent enter snapshot").await,
+        )
+        .expect("snapshot JSON");
         let _ = recv_text(&mut second, "idempotent enter snapshot").await;
         let first_player = resumed["players"]
             .as_array()
@@ -2365,8 +2512,9 @@ mod tests {
         }
 
         enter_horde(&server, 2).await;
-        let rejection = serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
-            .expect("rejection JSON");
+        let rejection =
+            serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
+                .expect("rejection JSON");
         assert_eq!(rejection["type"], "horde_join_rejected");
         assert_eq!(rejection["reason"], "run_in_progress");
 
@@ -2457,11 +2605,7 @@ mod tests {
         let _ = receiver.recv().await.expect("world bootstrap");
         {
             let mut state = server.state.lock().await;
-            state
-                .players
-                .get_mut("pilot")
-                .expect("player")
-                .value["hp"] = json!(40.0);
+            state.players.get_mut("pilot").expect("player").value["hp"] = json!(40.0);
         }
 
         heal_player(&server, 1, json!({ "amount": 25.0 })).await;
@@ -2501,11 +2645,7 @@ mod tests {
         let _ = recv_text(&mut receiver, "world bootstrap").await;
         {
             let mut state = server.state.lock().await;
-            state
-                .players
-                .get_mut("pilot")
-                .expect("player")
-                .value["hp"] = json!(12.0);
+            state.players.get_mut("pilot").expect("player").value["hp"] = json!(12.0);
         }
 
         enter_horde(&server, 1).await;
@@ -2522,7 +2662,11 @@ mod tests {
         assert!(world.projectiles.is_empty());
         let player = state.players.get("pilot").expect("player");
         assert_eq!(number(&player.value, "hp", 0.0), 100.0);
-        for monster in world.monsters.values().filter(|monster| is_horde_monster(monster)) {
+        for monster in world
+            .monsters
+            .values()
+            .filter(|monster| is_horde_monster(monster))
+        {
             let dx = number(monster, "x", 0.0) - HORDE_CENTER_X;
             let dy = number(monster, "y", 0.0) - HORDE_CENTER_Y;
             assert!(dx.hypot(dy) >= 680.0);
@@ -2539,10 +2683,7 @@ mod tests {
             "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
         })])
         .expect("valid monster manifest");
-        monsters
-            .get_mut("monster_one")
-            .expect("monster")
-            ["attackCooldown"] = json!(1.0);
+        monsters.get_mut("monster_one").expect("monster")["attackCooldown"] = json!(1.0);
         let mut state = WorldState::default();
         state.players.insert(
             "player_one".into(),

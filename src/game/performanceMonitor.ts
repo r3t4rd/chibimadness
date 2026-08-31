@@ -10,6 +10,8 @@ export type PerfSnapshot = {
   fogMs: number;
   lastLongTaskMs: number;
   longTaskCount: number;
+  replicationAgeMs: number | null;
+  replicationGapCount: number;
   monsters: number;
   particles: number;
   projectiles: number;
@@ -32,6 +34,9 @@ class PerformanceMonitor {
   private fogMs = 0;
   private lastLongTaskMs = 0;
   private longTaskCount = 0;
+  private lastReplicationAt: number | null = null;
+  private lastReplicationSequence: number | null = null;
+  private replicationGapCount = 0;
   private extras: Partial<PerfSnapshot> = {};
 
   recordFrame(totalMs: number) {
@@ -58,6 +63,15 @@ class PerformanceMonitor {
 
   recordSnapshotApply(ms: number) {
     this.snapshotApplyMs = ms;
+  }
+
+  recordReplication(sequence?: unknown) {
+    this.lastReplicationAt = performance.now();
+    if (typeof sequence !== 'number' || !Number.isFinite(sequence)) return;
+    if (this.lastReplicationSequence !== null && sequence > this.lastReplicationSequence + 1) {
+      this.replicationGapCount += sequence - this.lastReplicationSequence - 1;
+    }
+    this.lastReplicationSequence = sequence;
   }
 
   recordLongTask(ms: number) {
@@ -101,6 +115,8 @@ class PerformanceMonitor {
       fogMs: this.fogMs,
       lastLongTaskMs: this.lastLongTaskMs,
       longTaskCount: this.longTaskCount,
+      replicationAgeMs: this.lastReplicationAt === null ? null : performance.now() - this.lastReplicationAt,
+      replicationGapCount: this.replicationGapCount,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
       projectiles: this.extras.projectiles ?? 0,
