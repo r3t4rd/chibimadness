@@ -5,6 +5,8 @@ movement, chat and the live combat world. It owns the initial monster manifest,
 monster HP/movement, projectile movement, player damage and the shared
 Nullspace director (entry, extraction, waves, unlock timer and bosses).
 Inventory, drops and quests remain intentionally local.
+Reconnects use a server-issued in-memory token so another client cannot replace
+an active player merely by copying the public player ID.
 
 ## Linux deployment
 

@@ -84,6 +84,7 @@ class MultiplayerClient {
   private isConnected: boolean = false;
   private reconnectTimer: number | null = null;
   private localPlayer: Player | null = null;
+  private resumeToken: string | null = null;
   private lastPositionSentAt = 0;
   private sharedWorldReady = false;
   private serverHordeActive = false;
@@ -130,6 +131,7 @@ class MultiplayerClient {
         this.isConnected = true;
         this.send({
           type: 'join',
+          resumeToken: this.resumeToken,
           player: {
             id: player.id,
             name: player.name,
@@ -161,6 +163,9 @@ class MultiplayerClient {
         if (this.ws !== socket) return;
         try {
           const msg = JSON.parse(event.data);
+          if (msg.type === 'init_world' && typeof msg.resumeToken === 'string') {
+            this.resumeToken = msg.resumeToken;
+          }
           this.emitToListeners(msg.type, msg);
         } catch (e) {
           console.error('Error parsing WS message:', e);
@@ -233,6 +238,7 @@ class MultiplayerClient {
   }
 
   public updatePosition(player: Player) {
+    this.localPlayer = player;
     const now = performance.now();
     // Do not leak a pre-transition overworld transform after horde_enter (or
     // a pre-extract horde transform). The server commits the transition and
@@ -351,6 +357,7 @@ class MultiplayerClient {
     this.serverHordeActive = false;
     this.hordeTransition = null;
     this.localPlayer = null;
+    this.resumeToken = null;
   }
 }
 
