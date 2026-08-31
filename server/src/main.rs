@@ -253,15 +253,21 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             return;
         };
         if session.player_id.is_some()
-            || state.players.contains_key(&player_id)
-            || state.players.len() >= server.max_players
+            || (state.players.len() >= server.max_players && !state.players.contains_key(&player_id))
         {
             return;
         }
+        if let Some(existing_record) = state.players.get(&player_id) {
+            let old_session_id = existing_record.session_id;
+            if old_session_id != session_id {
+                state.sessions.remove(&old_session_id);
+            }
+        }
         let existing_players = state
             .players
-            .values()
-            .map(|player| player.value.clone())
+            .iter()
+            .filter(|(id, _)| id.as_str() != player_id.as_str())
+            .map(|(_, player)| player.value.clone())
             .collect::<Vec<_>>();
         let recent_chat = state.chat_history.iter().cloned().collect::<Vec<_>>();
         let init_payload =

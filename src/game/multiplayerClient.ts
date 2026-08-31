@@ -120,9 +120,11 @@ class MultiplayerClient {
     }
 
     try {
-      this.ws = new WebSocket(wsUrl);
+      const socket = new WebSocket(wsUrl);
+      this.ws = socket;
 
-      this.ws.onopen = () => {
+      socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.isConnected = true;
         this.send({
           type: 'join',
@@ -153,7 +155,8 @@ class MultiplayerClient {
         });
       };
 
-      this.ws.onmessage = (event) => {
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
         try {
           const msg = JSON.parse(event.data);
           this.emitToListeners(msg.type, msg);
@@ -162,7 +165,8 @@ class MultiplayerClient {
         }
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws !== socket) return;
         this.isConnected = false;
         this.sharedWorldReady = false;
         this.serverHordeActive = false;
@@ -175,7 +179,8 @@ class MultiplayerClient {
         }
       };
 
-      this.ws.onerror = () => {
+      socket.onerror = () => {
+        if (this.ws !== socket) return;
         this.isConnected = false;
       };
     } catch (e) {

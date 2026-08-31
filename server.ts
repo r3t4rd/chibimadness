@@ -60,6 +60,10 @@ wss.on('connection', (ws: WebSocket) => {
         };
 
         if (playerId) {
+          const existing = connectedPlayers.get(playerId);
+          if (existing) {
+            existing.ws.terminate();
+          }
           connectedPlayers.set(playerId, { ws, player });
         }
 
@@ -180,11 +184,14 @@ wss.on('connection', (ws: WebSocket) => {
 
   ws.on('close', () => {
     if (playerId) {
-      connectedPlayers.delete(playerId);
-      broadcast({
-        type: 'player_left',
-        id: playerId,
-      });
+      const stored = connectedPlayers.get(playerId);
+      if (stored && stored.ws === ws) {
+        connectedPlayers.delete(playerId);
+        broadcast({
+          type: 'player_left',
+          id: playerId,
+        });
+      }
     }
   });
 });
