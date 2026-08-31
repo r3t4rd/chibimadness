@@ -5,10 +5,40 @@ use serde::{Deserialize, Serialize};
 use yuyib::render::{RenderFrame, wgpu};
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
+// Kept only as a visual-regression baseline while the source-layout renderer
+// is being completed; this path is deliberately not selected at runtime.
+#[allow(dead_code)]
 const GRID_SPACING: f32 = 160.0;
+#[allow(dead_code)]
 const MAX_GRID_LINES: usize = 96;
 const MAX_PREDICTION_SECONDS: f32 = 0.12;
 const MAX_ENTITY_SPEED: f32 = 10_000.0;
+const SOURCE_WORLD_WIDTH: f32 = 5_400.0;
+const SOURCE_WORLD_HEIGHT: f32 = 4_400.0;
+
+/// Converts the source renderer's CSS palette to linear bridge colours once,
+/// avoiding a second, hand-maintained palette in the native renderer.
+fn hex(value: &str) -> [f32; 4] {
+    let bytes = value.as_bytes();
+    if bytes.len() != 7 || bytes[0] != b'#' {
+        return [1.0, 0.0, 1.0, 1.0];
+    }
+    let parse = |offset| {
+        std::str::from_utf8(&bytes[offset..offset + 2])
+            .ok()
+            .and_then(|part| u8::from_str_radix(part, 16).ok())
+            .map_or(0.0, |channel| channel as f32 / 255.0)
+    };
+    [parse(1), parse(3), parse(5), 1.0]
+}
+
+fn recipe_color(value: &str, fallback: [f32; 4]) -> [f32; 4] {
+    if value.len() == 7 && value.starts_with('#') {
+        hex(value)
+    } else {
+        fallback
+    }
+}
 
 const WORLD_SHADER: &str = r#"
 struct VertexOutput {
@@ -29,6 +59,70 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return input.color;
 }
 "#;
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeChibiRecipe {
+    #[serde(default)]
+    pub hair_style: String,
+    #[serde(default)]
+    pub front_hair_style: String,
+    #[serde(default)]
+    pub back_hair_style: String,
+    #[serde(default)]
+    pub hair_color: String,
+    #[serde(default)]
+    pub skin_tone: String,
+    #[serde(default)]
+    pub eye_color: String,
+    #[serde(default)]
+    pub eye_type: String,
+    #[serde(default)]
+    pub ear_type: String,
+    #[serde(default)]
+    pub ear_color: String,
+    #[serde(default)]
+    pub inner_ear_color: String,
+    #[serde(default)]
+    pub halo_type: String,
+    #[serde(default)]
+    pub halo_color: String,
+    #[serde(default)]
+    pub outfit_type: String,
+    #[serde(default)]
+    pub coat_color: String,
+    #[serde(default)]
+    pub skirt_color: String,
+    #[serde(default)]
+    pub accent_color: String,
+    #[serde(default)]
+    pub ribbon_color: String,
+    #[serde(default)]
+    pub hat_type: String,
+    #[serde(default)]
+    pub hat_color: String,
+    #[serde(default)]
+    pub wing_type: String,
+    #[serde(default)]
+    pub wing_color: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAnimationRecipe {
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub is_sprinting: bool,
+    #[serde(default)]
+    pub jump_z: f32,
+    #[serde(default = "default_spawn_bounce")]
+    pub spawn_bounce: f32,
+    #[serde(default)]
+    pub attack_timer: f32,
+    #[serde(default)]
+    pub dodge_timer: f32,
+}
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +148,20 @@ pub struct NativeRenderEntity {
     pub facing_left: bool,
     #[serde(default)]
     pub layer: i16,
+    #[serde(default)]
+    pub projectile_type: String,
+    #[serde(default)]
+    pub projectile_range: f32,
+    #[serde(default)]
+    pub tracer_length: f32,
+    #[serde(default)]
+    pub tracer_width: f32,
+    #[serde(default)]
+    pub distance_traveled: f32,
+    #[serde(default)]
+    pub chibi: Option<NativeChibiRecipe>,
+    #[serde(default)]
+    pub animation: Option<NativeAnimationRecipe>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -65,6 +173,8 @@ pub struct NativeRenderFrame {
     pub viewport_width: f32,
     pub viewport_height: f32,
     #[serde(default)]
+    pub time_seconds: f32,
+    #[serde(default)]
     pub theme: String,
     #[serde(default)]
     pub entities: Vec<NativeRenderEntity>,
@@ -72,6 +182,38 @@ pub struct NativeRenderFrame {
 
 fn default_hp_ratio() -> f32 {
     1.0
+}
+
+fn default_spawn_bounce() -> f32 {
+    1.0
+}
+
+fn visual_recipe_is_bounded(recipe: &NativeChibiRecipe) -> bool {
+    [
+        &recipe.hair_style,
+        &recipe.front_hair_style,
+        &recipe.back_hair_style,
+        &recipe.hair_color,
+        &recipe.skin_tone,
+        &recipe.eye_color,
+        &recipe.eye_type,
+        &recipe.ear_type,
+        &recipe.ear_color,
+        &recipe.inner_ear_color,
+        &recipe.halo_type,
+        &recipe.halo_color,
+        &recipe.outfit_type,
+        &recipe.coat_color,
+        &recipe.skirt_color,
+        &recipe.accent_color,
+        &recipe.ribbon_color,
+        &recipe.hat_type,
+        &recipe.hat_color,
+        &recipe.wing_type,
+        &recipe.wing_color,
+    ]
+    .iter()
+    .all(|value| value.len() <= 64)
 }
 
 #[derive(Default)]
@@ -87,12 +229,14 @@ impl NativeWorldState {
             || !frame.zoom.is_finite()
             || !frame.viewport_width.is_finite()
             || !frame.viewport_height.is_finite()
+            || !frame.time_seconds.is_finite()
         {
             return;
         }
         frame.zoom = frame.zoom.clamp(0.2, 8.0);
         frame.viewport_width = frame.viewport_width.clamp(1.0, 16_384.0);
         frame.viewport_height = frame.viewport_height.clamp(1.0, 16_384.0);
+        frame.time_seconds = frame.time_seconds.rem_euclid(10_000_000.0);
         frame.entities.truncate(MAX_RENDER_ENTITIES);
         frame.entities.retain(|entity| {
             !entity.id.is_empty()
@@ -103,8 +247,18 @@ impl NativeWorldState {
                 && entity.velocity_x.is_finite()
                 && entity.velocity_y.is_finite()
                 && entity.hp_ratio.is_finite()
+                && entity.projectile_range.is_finite()
+                && entity.tracer_length.is_finite()
+                && entity.tracer_width.is_finite()
+                && entity.distance_traveled.is_finite()
                 && entity.kind.len() <= 32
                 && entity.faction.len() <= 32
+                && entity.projectile_type.len() <= 32
+                && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
+                && entity
+                    .animation
+                    .as_ref()
+                    .is_none_or(|animation| animation.state.len() <= 16)
                 && entity.color.iter().all(|value| value.is_finite())
         });
         let received_at = Instant::now();
@@ -136,6 +290,24 @@ impl NativeWorldState {
             entity.velocity_x = entity.velocity_x.clamp(-MAX_ENTITY_SPEED, MAX_ENTITY_SPEED);
             entity.velocity_y = entity.velocity_y.clamp(-MAX_ENTITY_SPEED, MAX_ENTITY_SPEED);
             entity.hp_ratio = entity.hp_ratio.clamp(0.0, 1.0);
+            entity.projectile_range = entity.projectile_range.clamp(0.0, 20_000.0);
+            entity.tracer_length = entity.tracer_length.clamp(0.0, 512.0);
+            entity.tracer_width = entity.tracer_width.clamp(0.0, 64.0);
+            entity.distance_traveled = entity.distance_traveled.clamp(0.0, 100_000.0);
+            if let Some(animation) = &mut entity.animation {
+                if !animation.jump_z.is_finite()
+                    || !animation.spawn_bounce.is_finite()
+                    || !animation.attack_timer.is_finite()
+                    || !animation.dodge_timer.is_finite()
+                {
+                    entity.animation = None;
+                } else {
+                    animation.jump_z = animation.jump_z.clamp(0.0, 256.0);
+                    animation.spawn_bounce = animation.spawn_bounce.clamp(0.0, 1.0);
+                    animation.attack_timer = animation.attack_timer.clamp(0.0, 10.0);
+                    animation.dodge_timer = animation.dodge_timer.clamp(0.0, 10.0);
+                }
+            }
             for channel in &mut entity.color {
                 *channel = channel.clamp(0.0, 1.0);
             }
@@ -333,7 +505,7 @@ impl NativeWorldRenderer {
         // The native pass intentionally owns the world surface. The WebView
         // stays transparent and therefore cannot force WebView2 to composite
         // a full-screen Canvas2D texture every gameplay frame.
-        self.add_district(world);
+        self.add_source_world(world);
         for entity in &world.entities {
             let x = entity.x + entity.velocity_x * prediction_seconds;
             let y = entity.y + entity.velocity_y * prediction_seconds;
@@ -341,6 +513,431 @@ impl NativeWorldRenderer {
         }
     }
 
+    /// Faithful fixed-layout base layer mirrored from `worldRenderer.ts`.
+    ///
+    /// The former native renderer generated an unrelated infinite city grid.
+    /// That made a fast frame, but it was not ChibiMadness. This layer keeps
+    /// the canonical world coordinates, district boundaries and landmarks so
+    /// camera movement exposes the same geography as the Canvas renderer.
+    fn add_source_world(&mut self, world: &NativeRenderFrame) {
+        let outside_world = if world.theme == "horde_crucible" {
+            hex("#05070C")
+        } else {
+            [0.008, 0.012, 0.028, 1.0]
+        };
+        self.add_screen_quad(
+            [0.0, 0.0],
+            [world.viewport_width, world.viewport_height],
+            outside_world,
+            world,
+        );
+        if world.theme == "horde_crucible" {
+            self.add_source_horde_floor(world);
+            return;
+        }
+        self.add_world_rect(
+            SOURCE_WORLD_WIDTH * 0.5,
+            SOURCE_WORLD_HEIGHT * 0.5,
+            SOURCE_WORLD_WIDTH,
+            SOURCE_WORLD_HEIGHT,
+            hex("#162C1E"),
+            world,
+        );
+
+        // Source terrain regions (worldRenderer.ts/drawTerrain).
+        self.add_world_rect(1_000.0, 800.0, 2_000.0, 1_600.0, hex("#162C1E"), world);
+        self.add_world_rect(1_300.0, 2_350.0, 2_600.0, 1_600.0, hex("#0E1F14"), world);
+        self.add_world_rect(3_550.0, 800.0, 3_500.0, 1_600.0, hex("#261F1A"), world);
+        self.add_world_rect(3_950.0, 2_350.0, 2_700.0, 1_500.0, hex("#1A1820"), world);
+        self.add_world_rect(1_250.0, 3_750.0, 2_500.0, 1_300.0, hex("#0B132B"), world);
+        self.add_world_rect(3_950.0, 3_750.0, 2_900.0, 1_300.0, hex("#141115"), world);
+
+        // Survivor campsite clearing and paths.
+        self.add_world_ellipse(680.0, 650.0, 480.0, 340.0, hex("#30261A"), 30, world);
+        self.add_world_ellipse(
+            680.0,
+            650.0,
+            495.0,
+            355.0,
+            [0.153, 0.122, 0.082, 1.0],
+            30,
+            world,
+        );
+        self.add_world_ellipse(680.0, 650.0, 482.0, 342.0, hex("#30261A"), 30, world);
+        self.add_world_line(350.0, 750.0, 680.0, 650.0, 42.0, hex("#3F3223"), world);
+        self.add_world_line(680.0, 650.0, 1_000.0, 750.0, 42.0, hex("#3F3223"), world);
+        self.add_world_line(680.0, 480.0, 680.0, 850.0, 42.0, hex("#3F3223"), world);
+        self.add_world_line(1_100.0, 700.0, 2_400.0, 800.0, 55.0, hex("#383025"), world);
+
+        // Forest river, banks and the six stepping stones in their original
+        // positions. Segments intentionally use the same wide-stroke style.
+        let river = [
+            (0.0, 1_950.0),
+            (550.0, 2_050.0),
+            (950.0, 2_150.0),
+            (1_450.0, 2_250.0),
+            (1_900.0, 2_600.0),
+            (2_250.0, 2_850.0),
+            (2_600.0, 3_100.0),
+        ];
+        for edge in river.windows(2) {
+            self.add_world_line(
+                edge[0].0,
+                edge[0].1,
+                edge[1].0,
+                edge[1].1,
+                110.0,
+                hex("#2B3B28"),
+                world,
+            );
+        }
+        for edge in river.windows(2) {
+            self.add_world_line(
+                edge[0].0,
+                edge[0].1,
+                edge[1].0,
+                edge[1].1,
+                75.0,
+                hex("#0EA5E9"),
+                world,
+            );
+        }
+        for (x, y, r) in [
+            (920.0, 2_130.0, 16.0),
+            (950.0, 2_150.0, 18.0),
+            (980.0, 2_170.0, 15.0),
+            (1_870.0, 2_580.0, 16.0),
+            (1_900.0, 2_605.0, 18.0),
+            (1_930.0, 2_630.0, 15.0),
+        ] {
+            self.add_world_ellipse(x, y + 6.0, r, r * 0.55, [0.0, 0.0, 0.0, 0.35], 12, world);
+            self.add_world_circle(x, y, r, hex("#475569"), 12, world);
+            self.add_world_circle(x, y - r * 0.3, r * 0.45, hex("#15803D"), 10, world);
+        }
+
+        // Canyon, summit and their canonical platforms.
+        self.add_world_rect(3_550.0, 800.0, 3_300.0, 640.0, hex("#3D2F24"), world);
+        self.add_world_rect(3_725.0, 2_400.0, 1_750.0, 1_200.0, hex("#2A2430"), world);
+        self.add_world_rect(
+            3_725.0,
+            1_800.0,
+            1_550.0,
+            1_020.0,
+            [0.918, 0.345, 0.047, 0.10],
+            world,
+        );
+        self.add_world_rect(2_280.0, 120.0, 1_550.0, 360.0, hex("#6B3A2A"), world);
+        self.add_world_rect(2_280.0, 1_080.0, 1_600.0, 460.0, hex("#6B3A2A"), world);
+        self.add_world_rect(2_680.0, 490.0, 130.0, 600.0, hex("#6E4B2D"), world);
+        self.add_world_rect(3_420.0, 490.0, 130.0, 600.0, hex("#6E4B2D"), world);
+
+        // Police precinct, central frontline and the punk territory follow
+        // the source positions instead of the old repeating city blocks.
+        self.add_world_rect(1_300.0, 3_205.0, 2_100.0, 50.0, hex("#1E293B"), world);
+        self.add_world_rect(1_300.0, 3_745.0, 2_100.0, 50.0, hex("#1E293B"), world);
+        self.add_world_rect(
+            1_405.0,
+            3_725.0,
+            2_050.0,
+            1_050.0,
+            [0.22, 0.74, 0.97, 0.16],
+            world,
+        );
+        self.add_world_ellipse(
+            1_200.0,
+            3_750.0,
+            110.0,
+            110.0,
+            [0.22, 0.74, 0.97, 0.10],
+            24,
+            world,
+        );
+        self.add_world_rect(2_550.0, 3_750.0, 800.0, 1_300.0, hex("#09090B"), world);
+        self.add_world_rect(2_545.0, 3_750.0, 4.0, 1_300.0, hex("#EAB308"), world);
+        self.add_world_rect(2_555.0, 3_750.0, 4.0, 1_300.0, hex("#EAB308"), world);
+        self.add_world_rect(3_750.0, 3_205.0, 2_300.0, 48.0, hex("#1C1917"), world);
+        self.add_world_rect(3_750.0, 3_745.0, 2_300.0, 48.0, hex("#1C1917"), world);
+        self.add_world_rect(
+            3_900.0,
+            3_725.0,
+            2_600.0,
+            1_050.0,
+            [0.94, 0.27, 0.27, 0.12],
+            world,
+        );
+
+        for x in (2_170..=2_930).step_by(74) {
+            self.add_world_rect(x as f32, 3_360.0, 24.0, 62.0, [1.0, 1.0, 1.0, 0.28], world);
+            self.add_world_rect(x as f32, 3_650.0, 24.0, 62.0, [1.0, 1.0, 1.0, 0.28], world);
+        }
+
+        // Camp landmarks and forest decoration use the source coordinates.
+        self.add_source_tent(
+            580.0,
+            480.0,
+            140.0,
+            110.0,
+            hex("#334155"),
+            hex("#F59E0B"),
+            world,
+        );
+        self.add_source_tent(
+            860.0,
+            480.0,
+            130.0,
+            100.0,
+            hex("#451A03"),
+            hex("#EA580C"),
+            world,
+        );
+        self.add_source_tent(
+            420.0,
+            720.0,
+            120.0,
+            95.0,
+            hex("#064E3B"),
+            hex("#10B981"),
+            world,
+        );
+        self.add_source_tent(
+            920.0,
+            740.0,
+            115.0,
+            90.0,
+            hex("#1E3A8A"),
+            hex("#38BDF8"),
+            world,
+        );
+        self.add_source_campfire(680.0, 640.0, world);
+        for (x, y, r) in [
+            (260.0, 380.0, 38.0),
+            (1_250.0, 420.0, 46.0),
+            (1_520.0, 920.0, 50.0),
+            (480.0, 1_950.0, 42.0),
+            (1_450.0, 2_450.0, 55.0),
+            (3_350.0, 2_150.0, 44.0),
+            (4_050.0, 2_450.0, 46.0),
+        ] {
+            self.add_source_boulder(x, y, r, world);
+        }
+        for i in 0..74 {
+            let x = ((i * 197) % 2_450 + 65) as f32;
+            let y = ((i * 349) % 3_000 + 85) as f32;
+            if (x - 680.0).abs() > 540.0 || (y - 650.0).abs() > 420.0 {
+                self.add_source_tree(x, y, 0.78 + (i % 4) as f32 * 0.13, world);
+            }
+        }
+    }
+
+    fn add_source_horde_floor(&mut self, world: &NativeRenderFrame) {
+        let half_width = world.viewport_width / world.zoom * 0.5;
+        let half_height = world.viewport_height / world.zoom * 0.5;
+        let start_x = ((world.camera_x - half_width) / 72.0).floor() as i32 * 72;
+        let end_x = ((world.camera_x + half_width) / 72.0).ceil() as i32 * 72;
+        let start_y = ((world.camera_y - half_height) / 72.0).floor() as i32 * 72;
+        let end_y = ((world.camera_y + half_height) / 72.0).ceil() as i32 * 72;
+        for x in (start_x..=end_x).step_by(72) {
+            self.add_world_rect(
+                x as f32,
+                world.camera_y,
+                1.0,
+                half_height * 2.1,
+                [0.13, 0.83, 0.93, 0.07],
+                world,
+            );
+        }
+        for y in (start_y..=end_y).step_by(72) {
+            self.add_world_rect(
+                world.camera_x,
+                y as f32,
+                half_width * 2.1,
+                1.0,
+                [0.13, 0.83, 0.93, 0.07],
+                world,
+            );
+        }
+        // Source horde plaza: this is intentionally anchored at the canonical
+        // pocket-dimension centre, not the local camera origin.
+        self.add_world_circle(
+            -6_000.0,
+            2_200.0,
+            480.0,
+            [0.13, 0.83, 0.93, 0.08],
+            32,
+            world,
+        );
+        self.add_world_ellipse(
+            -6_000.0,
+            2_200.0,
+            210.0,
+            210.0,
+            [0.40, 0.91, 0.98, 0.24],
+            30,
+            world,
+        );
+        self.add_world_ellipse(
+            -6_000.0,
+            2_200.0,
+            268.0,
+            268.0,
+            [0.91, 0.47, 0.98, 0.16],
+            30,
+            world,
+        );
+    }
+
+    fn add_source_tree(&mut self, x: f32, y: f32, scale: f32, world: &NativeRenderFrame) {
+        self.add_world_ellipse(
+            x,
+            y + 20.0 * scale,
+            24.0 * scale,
+            8.0 * scale,
+            [0.0, 0.0, 0.0, 0.36],
+            10,
+            world,
+        );
+        self.add_world_rect(
+            x,
+            y + 4.0 * scale,
+            10.0 * scale,
+            42.0 * scale,
+            hex("#4A270B"),
+            world,
+        );
+        self.add_world_circle(x, y - 28.0 * scale, 28.0 * scale, hex("#0B6B45"), 12, world);
+        self.add_world_circle(
+            x - 16.0 * scale,
+            y - 12.0 * scale,
+            19.0 * scale,
+            hex("#15995A"),
+            10,
+            world,
+        );
+        self.add_world_circle(
+            x + 17.0 * scale,
+            y - 12.0 * scale,
+            19.0 * scale,
+            hex("#1DBA68"),
+            10,
+            world,
+        );
+    }
+
+    fn add_source_tent(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        canvas: [f32; 4],
+        trim: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        self.add_world_ellipse(
+            x,
+            y + height * 0.54,
+            width * 0.52,
+            height * 0.19,
+            [0.0, 0.0, 0.0, 0.42],
+            14,
+            world,
+        );
+        self.add_world_triangle(
+            [x - width * 0.5, y + height * 0.4],
+            [x, y - height * 0.55],
+            [x + width * 0.5, y + height * 0.4],
+            canvas,
+            world,
+        );
+        self.add_world_line(
+            x - width * 0.5,
+            y + height * 0.4,
+            x,
+            y - height * 0.55,
+            3.0,
+            trim,
+            world,
+        );
+        self.add_world_line(
+            x,
+            y - height * 0.55,
+            x + width * 0.5,
+            y + height * 0.4,
+            3.0,
+            trim,
+            world,
+        );
+        self.add_world_rect(
+            x,
+            y + height * 0.22,
+            width * 0.22,
+            height * 0.32,
+            [0.06, 0.04, 0.025, 1.0],
+            world,
+        );
+    }
+
+    fn add_source_campfire(&mut self, x: f32, y: f32, world: &NativeRenderFrame) {
+        self.add_world_ellipse(x, y + 12.0, 45.0, 20.0, [0.0, 0.0, 0.0, 0.42], 18, world);
+        self.add_world_circle(x, y, 35.0, [0.96, 0.61, 0.04, 0.08], 20, world);
+        for i in 0..12 {
+            let angle = std::f32::consts::TAU * i as f32 / 12.0;
+            self.add_world_circle(
+                x + angle.cos() * 32.0,
+                y + angle.sin() * 22.0,
+                9.0,
+                hex("#57534E"),
+                9,
+                world,
+            );
+        }
+        self.add_world_ellipse(x, y, 24.0, 15.0, hex("#7F1D1D"), 14, world);
+        self.add_world_triangle(
+            [x - 14.0, y + 4.0],
+            [x, y - 30.0],
+            [x + 14.0, y + 4.0],
+            hex("#F59E0B"),
+            world,
+        );
+        self.add_world_triangle(
+            [x - 7.0, y + 2.0],
+            [x, y - 20.0],
+            [x + 7.0, y + 2.0],
+            hex("#FEF08A"),
+            world,
+        );
+    }
+
+    fn add_source_boulder(&mut self, x: f32, y: f32, radius: f32, world: &NativeRenderFrame) {
+        self.add_world_ellipse(
+            x,
+            y + radius * 0.62,
+            radius * 1.05,
+            radius * 0.38,
+            [0.0, 0.0, 0.0, 0.38],
+            14,
+            world,
+        );
+        self.add_world_circle(x, y, radius, hex("#475569"), 14, world);
+        self.add_world_circle(
+            x - radius * 0.24,
+            y - radius * 0.28,
+            radius * 0.54,
+            hex("#64748B"),
+            12,
+            world,
+        );
+        self.add_world_circle(
+            x + radius * 0.24,
+            y - radius * 0.34,
+            radius * 0.33,
+            hex("#1E6544"),
+            10,
+            world,
+        );
+    }
+
+    #[allow(dead_code)]
     fn add_district(&mut self, world: &NativeRenderFrame) {
         let (ground, asphalt, building, window) = match world.theme.as_str() {
             "cop_precinct" | "warzone_frontline" => (
@@ -461,15 +1058,18 @@ impl NativeWorldRenderer {
         y: f32,
         world: &NativeRenderFrame,
     ) {
-        let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.34).min(0.34)];
-        self.add_world_rect(
-            x + entity.size * 0.10,
-            y + entity.size * 0.30,
-            entity.size * 0.94,
-            entity.size * 0.24,
-            shadow,
-            world,
-        );
+        if entity.kind != "projectile" {
+            let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.34).min(0.34)];
+            self.add_world_ellipse(
+                x + entity.size * 0.10,
+                y + entity.size * 0.30,
+                entity.size * 0.47,
+                entity.size * 0.12,
+                shadow,
+                12,
+                world,
+            );
+        }
         match entity.kind.as_str() {
             "projectile" => self.add_projectile(entity, x, y, world),
             "resource" => self.add_resource(entity, x, y, world),
@@ -483,49 +1083,334 @@ impl NativeWorldRenderer {
         &mut self,
         entity: &NativeRenderEntity,
         x: f32,
-        y: f32,
+        mut y: f32,
         world: &NativeRenderFrame,
     ) {
         let size = entity.size;
         let outline = [0.008, 0.014, 0.035, 0.94];
-        let skin = if entity.kind == "player" {
-            [1.0, 0.84, 0.72, 1.0]
+        let recipe = entity.chibi.as_ref();
+        let animation = entity.animation.as_ref();
+        let skin = recipe.map_or_else(
+            || {
+                if entity.kind == "player" {
+                    [1.0, 0.84, 0.72, 1.0]
+                } else {
+                    [0.98, 0.72, 0.60, 1.0]
+                }
+            },
+            |style| recipe_color(&style.skin_tone, [1.0, 0.84, 0.72, 1.0]),
+        );
+        let hair = recipe.map_or_else(
+            || {
+                if entity.faction == "punk_demon" {
+                    [1.0, 0.16, 0.31, 1.0]
+                } else {
+                    entity.color
+                }
+            },
+            |style| recipe_color(&style.hair_color, entity.color),
+        );
+        let coat = recipe.map_or(entity.color, |style| {
+            recipe_color(&style.coat_color, entity.color)
+        });
+        let skirt = recipe.map_or(coat, |style| recipe_color(&style.skirt_color, coat));
+        let eye = recipe.map_or([0.02, 0.08, 0.13, 1.0], |style| {
+            recipe_color(&style.eye_color, [0.02, 0.08, 0.13, 1.0])
+        });
+        let moving = animation.is_some_and(|state| state.state == "walk");
+        let bob = if moving {
+            (world.time_seconds
+                * if animation.is_some_and(|state| state.is_sprinting) {
+                    16.0
+                } else {
+                    11.0
+                })
+            .sin()
+            .abs()
+                * size
+                * 0.075
         } else {
-            [0.98, 0.72, 0.60, 1.0]
+            (world.time_seconds * 2.0).sin() * size * 0.025
         };
-        let hair = if entity.kind == "player" {
-            [0.15, 0.88, 1.0, 1.0]
-        } else if entity.faction == "punk_demon" {
-            [1.0, 0.16, 0.31, 1.0]
-        } else {
-            entity.color
-        };
-        self.add_world_rect(x, y + size * 0.10, size * 0.60, size * 0.62, outline, world);
-        self.add_world_rect(
+        y -= animation.map_or(0.0, |state| state.jump_z) + bob;
+
+        // The source Chibi order is shadow -> back hair/wings -> outfit ->
+        // face/front hair -> cosmetics/weapon. The primitives below retain
+        // that order and use the real `ChibiConfig` recipe, not faction paint.
+        if let Some(style) = recipe {
+            let halo = recipe_color(&style.halo_color, [0.9, 0.36, 0.55, 1.0]);
+            if style.halo_type != "none" && !style.halo_type.is_empty() {
+                self.add_world_ellipse(
+                    x,
+                    y - size * 0.83,
+                    size * 0.24,
+                    size * 0.08,
+                    [halo[0], halo[1], halo[2], 0.34],
+                    16,
+                    world,
+                );
+                self.add_world_ellipse(
+                    x,
+                    y - size * 0.83,
+                    size * 0.18,
+                    size * 0.045,
+                    halo,
+                    16,
+                    world,
+                );
+            }
+            let wing = recipe_color(&style.wing_color, [0.38, 0.76, 1.0, 1.0]);
+            if style.wing_type != "none" && !style.wing_type.is_empty() {
+                self.add_world_triangle(
+                    [x - size * 0.16, y - size * 0.08],
+                    [x - size * 0.68, y - size * 0.36],
+                    [x - size * 0.42, y + size * 0.34],
+                    wing,
+                    world,
+                );
+                self.add_world_triangle(
+                    [x + size * 0.16, y - size * 0.08],
+                    [x + size * 0.68, y - size * 0.36],
+                    [x + size * 0.42, y + size * 0.34],
+                    wing,
+                    world,
+                );
+            }
+            let back_hair = if style.back_hair_style.is_empty() {
+                style.hair_style.as_str()
+            } else {
+                style.back_hair_style.as_str()
+            };
+            match back_hair {
+                "twintails" | "miku_twintails" | "low_twintails" | "twin_bubble_tails"
+                | "twin_drill_tails" => {
+                    self.add_world_circle(
+                        x - size * 0.36,
+                        y - size * 0.35,
+                        size * 0.21,
+                        hair,
+                        10,
+                        world,
+                    );
+                    self.add_world_circle(
+                        x + size * 0.36,
+                        y - size * 0.35,
+                        size * 0.21,
+                        hair,
+                        10,
+                        world,
+                    );
+                }
+                "ponytail" | "side_ponytail" | "gyaru_ponytail" | "drill_ponytail" => {
+                    self.add_world_circle(
+                        x - size * 0.32,
+                        y - size * 0.25,
+                        size * 0.23,
+                        hair,
+                        11,
+                        world,
+                    );
+                }
+                "long_flowing" | "wavy" | "braids" | "rapunzel_braid" => {
+                    self.add_world_ellipse(
+                        x,
+                        y - size * 0.06,
+                        size * 0.37,
+                        size * 0.46,
+                        hair,
+                        14,
+                        world,
+                    );
+                }
+                _ => {}
+            }
+            match style.ear_type.as_str() {
+                "cat" | "fox" | "wolf" | "devil_horns" | "dragon_horns" => {
+                    let ears = recipe_color(&style.ear_color, hair);
+                    let inner_ears = recipe_color(&style.inner_ear_color, skin);
+                    self.add_world_triangle(
+                        [x - size * 0.28, y - size * 0.55],
+                        [x - size * 0.17, y - size * 0.86],
+                        [x - size * 0.02, y - size * 0.56],
+                        ears,
+                        world,
+                    );
+                    self.add_world_triangle(
+                        [x + size * 0.28, y - size * 0.55],
+                        [x + size * 0.17, y - size * 0.86],
+                        [x + size * 0.02, y - size * 0.56],
+                        ears,
+                        world,
+                    );
+                    self.add_world_triangle(
+                        [x - size * 0.20, y - size * 0.60],
+                        [x - size * 0.17, y - size * 0.75],
+                        [x - size * 0.09, y - size * 0.59],
+                        inner_ears,
+                        world,
+                    );
+                    self.add_world_triangle(
+                        [x + size * 0.20, y - size * 0.60],
+                        [x + size * 0.17, y - size * 0.75],
+                        [x + size * 0.09, y - size * 0.59],
+                        inner_ears,
+                        world,
+                    );
+                }
+                "bunny" | "dog_floppy" => {
+                    let ears = recipe_color(&style.ear_color, hair);
+                    self.add_world_ellipse(
+                        x - size * 0.22,
+                        y - size * 0.75,
+                        size * 0.10,
+                        size * 0.30,
+                        ears,
+                        10,
+                        world,
+                    );
+                    self.add_world_ellipse(
+                        x + size * 0.22,
+                        y - size * 0.75,
+                        size * 0.10,
+                        size * 0.30,
+                        ears,
+                        10,
+                        world,
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        self.add_world_rect(x, y + size * 0.10, size * 0.64, size * 0.66, outline, world);
+        self.add_world_rect(x, y + size * 0.06, size * 0.54, size * 0.53, coat, world);
+        self.add_world_ellipse(
             x,
-            y + size * 0.08,
-            size * 0.50,
-            size * 0.54,
-            entity.color,
+            y + size * 0.30,
+            size * 0.31,
+            size * 0.16,
+            skirt,
+            12,
             world,
         );
         self.add_world_circle(x, y - size * 0.28, size * 0.34, outline, 12, world);
         self.add_world_circle(x, y - size * 0.30, size * 0.29, skin, 12, world);
         self.add_world_circle(x, y - size * 0.43, size * 0.30, hair, 12, world);
-        self.add_world_rect(x, y - size * 0.29, size * 0.46, size * 0.12, hair, world);
-        let eye_offset = if entity.facing_left {
-            -size * 0.10
-        } else {
-            size * 0.10
-        };
+        self.add_world_ellipse(
+            x,
+            y - size * 0.36,
+            size * 0.30,
+            size * 0.13,
+            hair,
+            12,
+            world,
+        );
+        if let Some(style) = recipe {
+            match style.front_hair_style.as_str() {
+                "miku_fringe" | "straight_bangs" | "blunt_fringe" => {
+                    for offset in [-0.18_f32, -0.06, 0.06, 0.18] {
+                        self.add_world_ellipse(
+                            x + size * offset,
+                            y - size * 0.39,
+                            size * 0.09,
+                            size * 0.14,
+                            hair,
+                            7,
+                            world,
+                        );
+                    }
+                }
+                "side_swept" | "emo_fringe" | "bocchi_shaggy" => {
+                    self.add_world_triangle(
+                        [x - size * 0.26, y - size * 0.52],
+                        [x + size * 0.30, y - size * 0.50],
+                        [x - size * 0.10, y - size * 0.14],
+                        hair,
+                        world,
+                    );
+                }
+                _ => {}
+            }
+        }
+        let facing = if entity.facing_left { -1.0 } else { 1.0 };
         self.add_world_circle(
-            x + eye_offset,
+            x + facing * size * 0.10,
             y - size * 0.30,
-            size * 0.045,
-            [0.02, 0.08, 0.13, 1.0],
+            size * 0.055,
+            eye,
             8,
             world,
         );
+        self.add_world_circle(
+            x - facing * size * 0.10,
+            y - size * 0.30,
+            size * 0.055,
+            eye,
+            8,
+            world,
+        );
+        self.add_world_circle(
+            x + facing * size * 0.10,
+            y - size * 0.30,
+            size * 0.022,
+            [1.0, 1.0, 1.0, 0.92],
+            6,
+            world,
+        );
+        if let Some(style) = recipe {
+            let accent = recipe_color(
+                &style.ribbon_color,
+                recipe_color(&style.accent_color, [0.96, 0.36, 0.55, 1.0]),
+            );
+            self.add_world_circle(x, y + size * 0.01, size * 0.06, accent, 8, world);
+            if style.eye_type == "dead_x" || style.eye_type == "dizzy_spiral" {
+                self.add_world_line(
+                    x - size * 0.16,
+                    y - size * 0.36,
+                    x - size * 0.04,
+                    y - size * 0.24,
+                    size * 0.025,
+                    hex("#0F172A"),
+                    world,
+                );
+                self.add_world_line(
+                    x - size * 0.16,
+                    y - size * 0.24,
+                    x - size * 0.04,
+                    y - size * 0.36,
+                    size * 0.025,
+                    hex("#0F172A"),
+                    world,
+                );
+            }
+            if matches!(
+                style.outfit_type.as_str(),
+                "magic_robe" | "kimono_yukata" | "goth_lolita" | "winter_coat" | "detective_coat"
+            ) {
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.24,
+                    size * 0.40,
+                    size * 0.25,
+                    coat,
+                    14,
+                    world,
+                );
+            }
+            if style.hat_type != "none" && !style.hat_type.is_empty() {
+                let hat = recipe_color(&style.hat_color, hair);
+                self.add_world_ellipse(
+                    x,
+                    y - size * 0.62,
+                    size * 0.34,
+                    size * 0.15,
+                    hat,
+                    14,
+                    world,
+                );
+                self.add_world_rect(x, y - size * 0.70, size * 0.30, size * 0.16, hat, world);
+            }
+        }
         let weapon_direction = if entity.facing_left { -1.0 } else { 1.0 };
         self.add_world_rect(
             x + weapon_direction * size * 0.42,
@@ -540,7 +1425,7 @@ impl NativeWorldRenderer {
             y + size * 0.01,
             size * 0.34,
             size * 0.06,
-            [0.58, 0.66, 0.76, 1.0],
+            [0.70, 0.80, 0.92, 1.0],
             world,
         );
         if entity.kind == "monster" {
@@ -569,16 +1454,174 @@ impl NativeWorldRenderer {
         world: &NativeRenderFrame,
     ) {
         let radius = entity.size * 0.52;
-        self.add_world_circle(
-            x - entity.velocity_x.signum() * radius * 1.5,
-            y,
-            radius * 1.7,
-            [entity.color[0], entity.color[1], entity.color[2], 0.16],
-            10,
-            world,
-        );
-        self.add_world_circle(x, y, radius, entity.color, 10, world);
-        self.add_world_circle(x, y, radius * 0.34, [1.0, 0.95, 0.76, 1.0], 8, world);
+        let velocity_length =
+            (entity.velocity_x * entity.velocity_x + entity.velocity_y * entity.velocity_y).sqrt();
+        let direction_x = if velocity_length > 0.001 {
+            entity.velocity_x / velocity_length
+        } else {
+            1.0
+        };
+        let direction_y = if velocity_length > 0.001 {
+            entity.velocity_y / velocity_length
+        } else {
+            0.0
+        };
+        let tracer = if entity.tracer_length > 0.0 {
+            entity.tracer_length
+        } else if entity.projectile_range > 1_800.0 {
+            72.0
+        } else {
+            18.0
+        };
+        let width = if entity.tracer_width > 0.0 {
+            entity.tracer_width
+        } else if entity.projectile_range > 1_800.0 {
+            4.8
+        } else {
+            2.0
+        };
+        match entity.projectile_type.as_str() {
+            "magic_orb" | "fireball" => {
+                self.add_world_circle(
+                    x,
+                    y,
+                    radius * 1.8,
+                    [entity.color[0], entity.color[1], entity.color[2], 0.13],
+                    16,
+                    world,
+                );
+                self.add_world_circle(x, y, radius, entity.color, 14, world);
+                self.add_world_circle(x, y, radius * 0.42, [1.0, 0.97, 0.93, 1.0], 10, world);
+            }
+            "slash_wave" => {
+                for step in 0..5 {
+                    let angle = -0.78 + step as f32 * 0.39;
+                    let r = radius * 1.55;
+                    self.add_world_line(
+                        x + angle.cos() * r,
+                        y + angle.sin() * r,
+                        x + (angle + 0.22).cos() * r,
+                        y + (angle + 0.22).sin() * r,
+                        3.5,
+                        entity.color,
+                        world,
+                    );
+                }
+            }
+            "thrown_knife" => {
+                self.add_world_triangle(
+                    [
+                        x + direction_x * radius * 1.4,
+                        y + direction_y * radius * 1.4,
+                    ],
+                    [
+                        x - direction_y * radius * 0.38 - direction_x * radius,
+                        y + direction_x * radius * 0.38 - direction_y * radius,
+                    ],
+                    [
+                        x + direction_y * radius * 0.38 - direction_x * radius,
+                        y - direction_x * radius * 0.38 - direction_y * radius,
+                    ],
+                    [0.89, 0.93, 0.96, 1.0],
+                    world,
+                );
+            }
+            "meteor" | "boss_meteor" => {
+                self.add_world_ellipse(x, y, radius, radius * 0.7, hex("#1C1917"), 14, world);
+                self.add_world_triangle(
+                    [x - direction_x * radius, y - direction_y * radius],
+                    [
+                        x - direction_x * radius * 2.6 - direction_y * radius * 0.38,
+                        y - direction_y * radius * 2.6 + direction_x * radius * 0.38,
+                    ],
+                    [
+                        x - direction_x * radius * 2.6 + direction_y * radius * 0.38,
+                        y - direction_y * radius * 2.6 - direction_x * radius * 0.38,
+                    ],
+                    hex("#FB7185"),
+                    world,
+                );
+            }
+            "spinning_blade" => {
+                let rotation = entity.distance_traveled * 0.18;
+                let points = (0..6)
+                    .map(|index| {
+                        let angle = rotation + std::f32::consts::TAU * index as f32 / 6.0;
+                        let r = if index % 2 == 0 {
+                            radius
+                        } else {
+                            radius * 0.45
+                        };
+                        [x + angle.cos() * r, y + angle.sin() * r]
+                    })
+                    .collect::<Vec<_>>();
+                for edge in 0..6 {
+                    self.add_world_triangle(
+                        [x, y],
+                        points[edge],
+                        points[(edge + 1) % 6],
+                        [0.80, 0.84, 0.89, 1.0],
+                        world,
+                    );
+                }
+            }
+            "laser" if entity.projectile_range > 1_800.0 => {
+                self.add_world_line(
+                    x - direction_x * tracer,
+                    y - direction_y * tracer,
+                    x + direction_x * 12.0,
+                    y + direction_y * 12.0,
+                    width * 2.4,
+                    [entity.color[0], entity.color[1], entity.color[2], 0.18],
+                    world,
+                );
+                self.add_world_line(
+                    x - direction_x * tracer,
+                    y - direction_y * tracer,
+                    x + direction_x * 12.0,
+                    y + direction_y * 12.0,
+                    width,
+                    entity.color,
+                    world,
+                );
+                self.add_world_circle(
+                    x + direction_x * 12.0,
+                    y + direction_y * 12.0,
+                    radius * 0.42,
+                    [1.0, 1.0, 1.0, 1.0],
+                    8,
+                    world,
+                );
+            }
+            _ => {
+                self.add_world_line(
+                    x - direction_x * tracer,
+                    y - direction_y * tracer,
+                    x + direction_x * 6.0,
+                    y + direction_y * 6.0,
+                    width * 2.8,
+                    [entity.color[0], entity.color[1], entity.color[2], 0.15],
+                    world,
+                );
+                self.add_world_line(
+                    x - direction_x * tracer,
+                    y - direction_y * tracer,
+                    x + direction_x * 6.0,
+                    y + direction_y * 6.0,
+                    width,
+                    entity.color,
+                    world,
+                );
+                self.add_world_circle(
+                    x + direction_x * 6.0,
+                    y + direction_y * 6.0,
+                    (radius * 0.28).max(1.1),
+                    [1.0, 1.0, 1.0, 1.0],
+                    8,
+                    world,
+                );
+            }
+        }
     }
 
     fn add_resource(
@@ -686,6 +1729,7 @@ impl NativeWorldRenderer {
         );
     }
 
+    #[allow(dead_code)]
     fn add_grid(&mut self, world: &NativeRenderFrame) {
         let half_width = world.viewport_width / world.zoom / 2.0;
         let half_height = world.viewport_height / world.zoom / 2.0;
@@ -795,6 +1839,138 @@ impl NativeWorldRenderer {
         }
     }
 
+    fn add_world_ellipse(
+        &mut self,
+        x: f32,
+        y: f32,
+        radius_x: f32,
+        radius_y: f32,
+        color: [f32; 4],
+        segments: usize,
+        world: &NativeRenderFrame,
+    ) {
+        let center = self.world_to_ndc(x, y, world);
+        let segments = segments.clamp(3, 36);
+        for index in 0..segments {
+            let start = std::f32::consts::TAU * index as f32 / segments as f32;
+            let end = std::f32::consts::TAU * (index + 1) as f32 / segments as f32;
+            let first = self.world_to_ndc(
+                x + start.cos() * radius_x,
+                y + start.sin() * radius_y,
+                world,
+            );
+            let second =
+                self.world_to_ndc(x + end.cos() * radius_x, y + end.sin() * radius_y, world);
+            self.vertices.extend_from_slice(&[
+                Vertex {
+                    position: center,
+                    color,
+                },
+                Vertex {
+                    position: first,
+                    color,
+                },
+                Vertex {
+                    position: second,
+                    color,
+                },
+            ]);
+        }
+    }
+
+    fn add_world_line(
+        &mut self,
+        start_x: f32,
+        start_y: f32,
+        end_x: f32,
+        end_y: f32,
+        width: f32,
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let dx = end_x - start_x;
+        let dy = end_y - start_y;
+        let length = (dx * dx + dy * dy).sqrt();
+        if length <= f32::EPSILON || !length.is_finite() {
+            return;
+        }
+        let normal_x = -dy / length * width * 0.5;
+        let normal_y = dx / length * width * 0.5;
+        self.add_world_quad(
+            [start_x + normal_x, start_y + normal_y],
+            [start_x - normal_x, start_y - normal_y],
+            [end_x - normal_x, end_y - normal_y],
+            [end_x + normal_x, end_y + normal_y],
+            color,
+            world,
+        );
+    }
+
+    fn add_world_triangle(
+        &mut self,
+        first: [f32; 2],
+        second: [f32; 2],
+        third: [f32; 2],
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        self.vertices.extend_from_slice(&[
+            Vertex {
+                position: self.world_to_ndc(first[0], first[1], world),
+                color,
+            },
+            Vertex {
+                position: self.world_to_ndc(second[0], second[1], world),
+                color,
+            },
+            Vertex {
+                position: self.world_to_ndc(third[0], third[1], world),
+                color,
+            },
+        ]);
+    }
+
+    fn add_world_quad(
+        &mut self,
+        first: [f32; 2],
+        second: [f32; 2],
+        third: [f32; 2],
+        fourth: [f32; 2],
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let first = self.world_to_ndc(first[0], first[1], world);
+        let second = self.world_to_ndc(second[0], second[1], world);
+        let third = self.world_to_ndc(third[0], third[1], world);
+        let fourth = self.world_to_ndc(fourth[0], fourth[1], world);
+        self.vertices.extend_from_slice(&[
+            Vertex {
+                position: first,
+                color,
+            },
+            Vertex {
+                position: second,
+                color,
+            },
+            Vertex {
+                position: third,
+                color,
+            },
+            Vertex {
+                position: first,
+                color,
+            },
+            Vertex {
+                position: third,
+                color,
+            },
+            Vertex {
+                position: fourth,
+                color,
+            },
+        ]);
+    }
+
     fn add_screen_quad(
         &mut self,
         origin: [f32; 2],
@@ -847,5 +2023,55 @@ impl NativeWorldRenderer {
             x / world.viewport_width * 2.0 - 1.0,
             1.0 - y / world.viewport_height * 2.0,
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_palette_matches_canvas_hex() {
+        assert_eq!(
+            hex("#162C1E"),
+            [22.0 / 255.0, 44.0 / 255.0, 30.0 / 255.0, 1.0]
+        );
+        assert_eq!(hex("not-a-colour"), [1.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn native_frame_preserves_chibi_recipe_and_projectile_shape() {
+        let frame: NativeRenderFrame = serde_json::from_str(
+            r##"{
+                "cameraX": 680, "cameraY": 650, "zoom": 1,
+                "viewportWidth": 1920, "viewportHeight": 1080,
+                "timeSeconds": 42.5, "theme": "forest_camp",
+                "entities": [{
+                    "id": "player-1", "kind": "player", "x": 680, "y": 650,
+                    "size": 38, "color": [0.1, 0.9, 1, 1],
+                    "projectileType": "magic_orb", "tracerLength": 18,
+                    "chibi": {"hairStyle": "miku_twintails", "hairColor": "#38BDF8", "coatColor": "#FFFFFF", "skirtColor": "#334155", "earType": "cat", "earColor": "#38BDF8"},
+                    "animation": {"state": "walk", "isSprinting": true, "jumpZ": 12}
+                }]
+            }"##,
+        )
+        .expect("native bridge frame must deserialize");
+        let mut state = NativeWorldState::default();
+        state.apply(frame);
+        let entity = &state.frame.expect("frame is retained").entities[0];
+        assert_eq!(
+            entity
+                .chibi
+                .as_ref()
+                .map(|recipe| recipe.hair_style.as_str()),
+            Some("miku_twintails")
+        );
+        assert_eq!(entity.projectile_type, "magic_orb");
+        assert!(
+            entity
+                .animation
+                .as_ref()
+                .is_some_and(|animation| animation.is_sprinting)
+        );
     }
 }

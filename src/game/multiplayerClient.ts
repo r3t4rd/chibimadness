@@ -13,9 +13,14 @@ export type NativeWorldRenderFrame = {
   zoom: number;
   viewportWidth: number;
   viewportHeight: number;
+  /** Source renderer time. Native rendering must use the same animation phase
+   * instead of inventing a separate visual timeline. */
+  timeSeconds: number;
   theme: string;
   entities: Array<{
     id: string;
+    kind: string;
+    faction: string;
     x: number;
     y: number;
     size: number;
@@ -23,7 +28,45 @@ export type NativeWorldRenderFrame = {
     velocityX: number;
     velocityY: number;
     hasVelocity: boolean;
+    hpRatio: number;
+    facingLeft: boolean;
     layer: number;
+    projectileType?: string;
+    projectileRange?: number;
+    tracerLength?: number;
+    tracerWidth?: number;
+    distanceTraveled?: number;
+    chibi?: {
+      hairStyle?: string;
+      frontHairStyle?: string;
+      backHairStyle?: string;
+      hairColor?: string;
+      skinTone?: string;
+      eyeColor?: string;
+      eyeType?: string;
+      earType?: string;
+      earColor?: string;
+      innerEarColor?: string;
+      haloType?: string;
+      haloColor?: string;
+      outfitType?: string;
+      coatColor?: string;
+      skirtColor?: string;
+      accentColor?: string;
+      ribbonColor?: string;
+      hatType?: string;
+      hatColor?: string;
+      wingType?: string;
+      wingColor?: string;
+    };
+    animation?: {
+      state?: string;
+      isSprinting?: boolean;
+      jumpZ?: number;
+      spawnBounce?: number;
+      attackTimer?: number;
+      dodgeTimer?: number;
+    };
   }>;
 };
 

@@ -90,6 +90,50 @@ function hexColor(color: string | undefined, fallback: [number, number, number, 
   return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255, 1];
 }
 
+/**
+ * Native rendering deliberately consumes the same visual recipe as the Canvas
+ * renderer. Do not reduce a player to a faction colour here: cosmetics are
+ * part of the game state and native parity depends on carrying them across the
+ * bridge intact.
+ */
+function nativeChibiRecipe(player: Player) {
+  const chibi = player.chibi;
+  return {
+    hairStyle: chibi.hairStyle,
+    frontHairStyle: chibi.frontHairStyle,
+    backHairStyle: chibi.backHairStyle,
+    hairColor: chibi.hairColor,
+    skinTone: chibi.skinTone,
+    eyeColor: chibi.eyeColor,
+    eyeType: chibi.eyeType,
+    earType: chibi.earType,
+    earColor: chibi.earColor,
+    innerEarColor: chibi.innerEarColor,
+    haloType: chibi.haloType,
+    haloColor: chibi.haloColor,
+    outfitType: chibi.outfitType,
+    coatColor: chibi.coatColor,
+    skirtColor: chibi.skirtColor,
+    accentColor: chibi.accentColor,
+    ribbonColor: chibi.ribbonColor,
+    hatType: chibi.hatType,
+    hatColor: chibi.hatColor,
+    wingType: chibi.wingType,
+    wingColor: chibi.wingColor,
+  };
+}
+
+function nativeAnimationRecipe(player: Player) {
+  return {
+    state: player.state,
+    isSprinting: player.isSprinting,
+    jumpZ: player.jumpZ,
+    spawnBounce: player.spawnBounce,
+    attackTimer: player.attackTimer,
+    dodgeTimer: player.dodgeTimer,
+  };
+}
+
 function nativeMonsterColor(faction: string | undefined): [number, number, number, number] {
   if (faction === 'police') return [0.12, 0.75, 1, 1];
   if (faction === 'punk_demon') return [1, 0.2, 0.32, 1];
@@ -217,6 +261,8 @@ export function App() {
             hpRatio: curEngine.player.stats.maxHp > 0 ? curEngine.player.stats.hp / curEngine.player.stats.maxHp : 1,
             facingLeft: curEngine.player.facing === 'left',
             layer: 20,
+            chibi: nativeChibiRecipe(curEngine.player),
+            animation: nativeAnimationRecipe(curEngine.player),
           },
           ...(Object.values(curEngine.remotePlayers) as Player[])
             .filter((player) => inNativeView(player.x, player.y, 48))
@@ -234,6 +280,8 @@ export function App() {
             hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 1,
             facingLeft: player.facing === 'left',
             layer: 18,
+            chibi: nativeChibiRecipe(player),
+            animation: nativeAnimationRecipe(player),
           })),
           ...curEngine.monsters
             .filter((monster) => monster.state !== 'dead' && monster.hp > 0 && inNativeView(monster.x, monster.y, 90))
@@ -266,6 +314,11 @@ export function App() {
             hpRatio: 1,
             facingLeft: projectile.vx < 0,
             layer: 30,
+            projectileType: projectile.type,
+            projectileRange: projectile.range,
+            tracerLength: projectile.tracerLength,
+            tracerWidth: projectile.tracerWidth,
+            distanceTraveled: projectile.distanceTraveled,
           })),
           ...curEngine.resourceNodes
             .filter((node) => node.hp > 0 && inNativeView(node.x, node.y, 80))
@@ -338,6 +391,7 @@ export function App() {
             zoom: camera.zoom,
             viewportWidth,
             viewportHeight,
+            timeSeconds: timeInSeconds,
             theme: curEngine.player.currentZone,
             entities,
           });
