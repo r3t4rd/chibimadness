@@ -63,11 +63,26 @@ struct GameReady {}
 #[derive(Serialize)]
 struct GameConfiguration {
     server_url: Option<String>,
+    content_version: String,
+    content_source: ContentSource,
 }
 
 struct ServerEndpoint {
     websocket_url: String,
     csp_origin: ControlledUrl,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ContentSource {
+    Embedded,
+    Patch,
+}
+
+struct LaunchAssets {
+    assets: AssetBundle,
+    version: String,
+    source: ContentSource,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -76,13 +91,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(server) => LocalCsp::strict().with_connect_origin(&server.csp_origin),
         None => LocalCsp::strict(),
     };
-    let page = local_page(csp, assets_for_launch()?)?;
+    let launch_assets = assets_for_launch()?;
+    let page = local_page(csp, launch_assets.assets)?;
 
     let session = PageSessionId::parse("b9c9f5bbfae14dbdb3f5e2356b74d0aa")?;
     let limits = BridgeLimits::default();
     let outbound = Rc::new(RefCell::new(None::<ApplicationWebViewHandle>));
     let outbound_for_endpoint = Rc::clone(&outbound);
     let server_url = server.map(|server| server.websocket_url);
+    let content_version = launch_assets.version;
+    let content_source = launch_assets.source;
     let mut bridge = BridgeRouter::new(session, limits);
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("game.ready")?,
@@ -96,6 +114,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 EndpointName::parse("game.configuration").expect("static endpoint is valid"),
                 GameConfiguration {
                     server_url: server_url.clone(),
+                    content_version: content_version.clone(),
+                    content_source,
                 },
                 limits,
             );
@@ -133,22 +153,26 @@ fn local_page(csp: LocalCsp, assets: AssetBundle) -> Result<LocalPage, Box<dyn E
     )?)
 }
 
-fn assets_for_launch() -> Result<AssetBundle, Box<dyn Error>> {
+fn assets_for_launch() -> Result<LaunchAssets, Box<dyn Error>> {
     let Ok(cache_root) = patch_cache_root() else {
-        return bundled_assets();
+        return embedded_launch_assets();
     };
     let cached = load_latest_cached_patch(&cache_root);
     match fetch_manifest() {
         Ok(manifest) => match install_or_load_patch(&cache_root, &manifest) {
             Ok(assets) => {
                 cleanup_patch_cache(&cache_root, &manifest.version);
-                Ok(assets)
+                Ok(LaunchAssets {
+                    assets,
+                    version: manifest.version,
+                    source: ContentSource::Patch,
+                })
             }
             Err(error) => {
                 eprintln!("ChibiMadness patch update ignored: {error}");
                 match cached {
                     Some(assets) => Ok(assets),
-                    None => bundled_assets(),
+                    None => embedded_launch_assets(),
                 }
             }
         },
@@ -156,10 +180,20 @@ fn assets_for_launch() -> Result<AssetBundle, Box<dyn Error>> {
             eprintln!("ChibiMadness patch check skipped: {error}");
             match cached {
                 Some(assets) => Ok(assets),
-                None => bundled_assets(),
+                None => embedded_launch_assets(),
             }
         }
     }
+}
+
+fn embedded_launch_assets() -> Result<LaunchAssets, Box<dyn Error>> {
+    Ok(LaunchAssets {
+        assets: bundled_assets()?,
+        version: option_env!("CHIBIMADNESS_BUILD_VERSION")
+            .unwrap_or("embedded")
+            .to_owned(),
+        source: ContentSource::Embedded,
+    })
 }
 
 fn patch_cache_root() -> Result<PathBuf, Box<dyn Error>> {
@@ -215,7 +249,7 @@ fn install_or_load_patch(
     patch_assets(&destination, manifest)
 }
 
-fn load_latest_cached_patch(root: &Path) -> Option<AssetBundle> {
+fn load_latest_cached_patch(root: &Path) -> Option<LaunchAssets> {
     let mut candidates = fs::read_dir(root)
         .ok()?
         .filter_map(Result::ok)
@@ -233,7 +267,13 @@ fn load_latest_cached_patch(root: &Path) -> Option<AssetBundle> {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<PatchManifest>(&bytes).ok())?;
         validate_manifest(&manifest).ok()?;
-        patch_assets(&entry.path(), &manifest).ok()
+        patch_assets(&entry.path(), &manifest)
+            .ok()
+            .map(|assets| LaunchAssets {
+                assets,
+                version: manifest.version,
+                source: ContentSource::Patch,
+            })
     })
 }
 

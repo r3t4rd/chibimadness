@@ -1,6 +1,10 @@
 import { Player, DropItem, Monster, Projectile } from '../types/game';
 
 export type NetEventListener = (type: string, data: any) => void;
+export type ContentBuildInfo = {
+  version: string | null;
+  source: 'embedded' | 'patch' | null;
+};
 
 declare global {
   interface Window {
@@ -10,6 +14,8 @@ declare global {
 
 let configuredServerUrl: string | null = null;
 const serverConfigurationListeners = new Set<() => void>();
+const contentBuildListeners = new Set<() => void>();
+let contentBuildInfo: ContentBuildInfo = { version: null, source: null };
 let configurationRetryTimer: number | null = null;
 let nextBridgeMessageId = 1;
 
@@ -35,21 +41,40 @@ function requestDesktopServerConfiguration() {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('yuyib:event', (event: Event) => {
-    const detail = (event as CustomEvent<{ event?: string; payload?: { server_url?: unknown } }>).detail;
+    const detail = (event as CustomEvent<{
+      event?: string;
+      payload?: { server_url?: unknown; content_version?: unknown; content_source?: unknown };
+    }>).detail;
     if (detail?.event === 'game.configuration') {
       const candidate = detail.payload?.server_url;
       configuredServerUrl = typeof candidate === 'string' && candidate.startsWith('wss://')
         ? candidate
         : null;
+      const version = detail.payload?.content_version;
+      const source = detail.payload?.content_source;
+      contentBuildInfo = {
+        version: typeof version === 'string' && version.length > 0 ? version : null,
+        source: source === 'embedded' || source === 'patch' ? source : null,
+      };
       if (configuredServerUrl && configurationRetryTimer !== null) {
         window.clearTimeout(configurationRetryTimer);
         configurationRetryTimer = null;
       }
       serverConfigurationListeners.forEach((listener) => listener());
+      contentBuildListeners.forEach((listener) => listener());
     }
   });
 
   requestDesktopServerConfiguration();
+}
+
+export function getContentBuildInfo(): ContentBuildInfo {
+  return contentBuildInfo;
+}
+
+export function subscribeContentBuildInfo(listener: () => void) {
+  contentBuildListeners.add(listener);
+  return () => contentBuildListeners.delete(listener);
 }
 
 class MultiplayerClient {

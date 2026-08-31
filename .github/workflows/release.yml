@@ -16,6 +16,7 @@ jobs:
     runs-on: windows-latest
     env:
       CHIBIMADNESS_SERVER_URL: wss://testgame.zei.su/ws
+      CHIBIMADNESS_BUILD_VERSION: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -21,7 +21,7 @@ import { ChatAndEmotes } from './components/ChatAndEmotes';
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
 import { CLASS_DEFAULTS } from './game/constants';
-import { net } from './game/multiplayerClient';
+import { getContentBuildInfo, net, subscribeContentBuildInfo } from './game/multiplayerClient';
 
 const FALLBACK_PLAYER: Player = {
   id: 'default',
@@ -78,6 +78,7 @@ export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
+  const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -97,6 +98,10 @@ export function App() {
     });
     return unsub;
   }, []);
+
+  useEffect(() => subscribeContentBuildInfo(() => {
+    setContentBuild(getContentBuildInfo());
+  }), []);
 
   // Main Canvas Render Loop
   useEffect(() => {
@@ -385,6 +390,22 @@ export function App() {
                 onInteract={handleInteract}
                 hasInteractable={!!engine.nearbyInteractable}
               />
+
+              {contentBuild.version && contentBuild.source && (
+                <div
+                  title={contentBuild.source === 'patch'
+                    ? 'Патч скачан и проверен по manifest и SHA-256.'
+                    : 'Запущена встроенная версия: обновление пока не было загружено.'}
+                  className="fixed bottom-3 right-4 z-40 hidden sm:flex items-center gap-2 rounded-full border border-white/15 bg-black/55 px-2.5 py-1 font-mono text-[10px] text-slate-200 shadow-lg backdrop-blur-md pointer-events-none select-none"
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${contentBuild.source === 'patch' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]' : 'bg-amber-300'}`} />
+                  <span className={contentBuild.source === 'patch' ? 'text-emerald-200' : 'text-amber-200'}>
+                    {contentBuild.source === 'patch' ? 'PATCH VERIFIED' : 'EMBEDDED'}
+                  </span>
+                  <span className="text-white/45">·</span>
+                  <span>{contentBuild.version}</span>
+                </div>
+              )}
             </>
           ) : null}
 
