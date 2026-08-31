@@ -671,6 +671,15 @@ impl NativeWorldRenderer {
             self.add_world_rect(x as f32, 3_650.0, 24.0, 62.0, [1.0, 1.0, 1.0, 0.28], world);
         }
 
+        // Exact exterior lots from `buildings.ts`. The original renderer draws
+        // 28 visual storeys above each roof; preserving them is what gives the
+        // city its familiar skyline instead of anonymous procedural blocks.
+        self.add_source_tower(400.0, 3_180.0, 420.0, 280.0, "police", world);
+        self.add_source_tower(1_040.0, 3_180.0, 400.0, 280.0, "noodle", world);
+        self.add_source_tower(1_640.0, 3_140.0, 440.0, 340.0, "datacenter", world);
+        self.add_source_tower(3_140.0, 3_180.0, 460.0, 300.0, "punk", world);
+        self.add_source_tower(3_840.0, 3_180.0, 440.0, 300.0, "punk", world);
+
         // Camp landmarks and forest decoration use the source coordinates.
         self.add_source_tent(
             580.0,
@@ -782,6 +791,128 @@ impl NativeWorldRenderer {
             268.0,
             [0.91, 0.47, 0.98, 0.16],
             30,
+            world,
+        );
+    }
+
+    fn add_source_tower(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        facade: &str,
+        world: &NativeRenderFrame,
+    ) {
+        let (wall, trim, roof, window, deep) = match facade {
+            "police" => (
+                hex("#1E3A5F"),
+                hex("#38BDF8"),
+                hex("#334155"),
+                [0.22, 0.74, 0.97, 0.55],
+                hex("#020617"),
+            ),
+            "noodle" => (
+                hex("#44403C"),
+                hex("#F97316"),
+                hex("#292524"),
+                [0.98, 0.75, 0.22, 0.50],
+                hex("#0C0A09"),
+            ),
+            "punk" => (
+                hex("#27272A"),
+                hex("#EF4444"),
+                hex("#18181B"),
+                [0.96, 0.25, 0.37, 0.50],
+                hex("#000000"),
+            ),
+            _ => (
+                hex("#164E63"),
+                hex("#22D3EE"),
+                hex("#0F172A"),
+                [0.13, 0.83, 0.93, 0.55],
+                hex("#000814"),
+            ),
+        };
+        let face_h = 96.0;
+        self.add_world_rect(
+            x + width * 0.5 + 18.0,
+            y + height + 28.0,
+            width + 36.0,
+            face_h * 0.32,
+            [0.0, 0.0, 0.0, 0.5],
+            world,
+        );
+        self.add_world_rect(
+            x + width * 0.5,
+            y + height + face_h * 0.5,
+            width,
+            face_h,
+            wall,
+            world,
+        );
+        self.add_world_rect(
+            x + width + 18.0,
+            y + height + face_h * 0.5,
+            36.0,
+            face_h,
+            deep,
+            world,
+        );
+        for row in 0..3 {
+            for column in 0..((width - 36.0) / 18.0) as i32 {
+                let wx = x + 24.0 + column as f32 * 18.0;
+                let wy = y + height + 18.0 + row as f32 * 22.0;
+                let lit = ((column + row * 7) % 3) != 0;
+                self.add_world_rect(
+                    wx,
+                    wy,
+                    11.0,
+                    14.0,
+                    if lit {
+                        window
+                    } else {
+                        [0.024, 0.031, 0.063, 0.92]
+                    },
+                    world,
+                );
+            }
+        }
+        for story in (1..=28).rev() {
+            let slab_y = y - story as f32 * 16.0;
+            let inset = (story as f32 * 1.1).min(28.0);
+            let slab_w = (width - inset * 2.0).max(24.0);
+            self.add_world_rect(
+                x + width * 0.5,
+                slab_y + 10.0,
+                slab_w,
+                20.0,
+                if story % 2 == 0 { wall } else { roof },
+                world,
+            );
+            for wx in ((x + inset + 14.0) as i32..(x + width - inset - 14.0) as i32).step_by(16) {
+                self.add_world_rect(wx as f32, slab_y + 10.0, 8.0, 12.0, window, world);
+            }
+        }
+        self.add_world_rect(
+            x + width * 0.5,
+            y + height * 0.5,
+            width,
+            height,
+            roof,
+            world,
+        );
+        self.add_world_line(x, y, x + width, y, 3.0, trim, world);
+        self.add_world_line(x, y, x, y + height, 3.0, trim, world);
+        self.add_world_line(x + width, y, x + width, y + height, 3.0, trim, world);
+        self.add_world_rect(x + width * 0.5, y + height - 3.0, 76.0, 44.0, deep, world);
+        self.add_world_line(
+            x + width * 0.5 - 38.0,
+            y + height - 25.0,
+            x + width * 0.5 + 38.0,
+            y + height - 25.0,
+            3.0,
+            trim,
             world,
         );
     }
