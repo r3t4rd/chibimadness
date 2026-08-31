@@ -34,7 +34,11 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) =>
         </div>
         <div className="mt-1 pt-1 border-t border-white/10 space-y-0.5">
           <div>draw {stats.drawMs.toFixed(1)} ms</div>
+          <div>update {stats.updateMs.toFixed(1)} ms</div>
+          <div>parse/apply {stats.networkParseMs.toFixed(1)}/{stats.snapshotApplyMs.toFixed(1)} ms</div>
+          {stats.longTaskCount > 0 && <div className="text-rose-300">long task {stats.lastLongTaskMs.toFixed(0)} ms ×{stats.longTaskCount}</div>}
           <div>zoom {stats.zoom.toFixed(2)}x</div>
+          <div>quality {stats.quality}</div>
           <div>
             {stats.canvasW}×{stats.canvasH}
           </div>
