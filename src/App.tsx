@@ -122,7 +122,7 @@ export function App() {
     let lastRenderedAt: number | null = null;
     let nextRenderAt = 0;
     let quality: RenderQuality = 'high';
-    let fastFrames = 0;
+    let stableFrames = 0;
     const canvas = canvasRef.current;
     if (!canvas || !createdPlayer) return;
 
@@ -190,21 +190,34 @@ export function App() {
       );
       const drawMs = performance.now() - drawStart;
       perfMonitor.recordDraw(drawMs);
-      if (drawMs > 18) {
+      // Canvas draw time only covers JavaScript submitting work. The remaining
+      // frame interval includes WebView/GPU/compositor scheduling, which is
+      // exactly where the desktop client can miss frames under entity load.
+      const frameGapMs = Math.max(0, frameIntervalMs - drawMs);
+      perfMonitor.recordFrameGap(frameGapMs);
+      const frameMissesLowBudget = frameIntervalMs > 25;
+      const frameMissesMediumBudget = frameIntervalMs > 16.7;
+      if (drawMs > 18 || frameMissesLowBudget) {
         quality = 'low';
-        fastFrames = 0;
-      } else if (drawMs > 10 && quality === 'high') {
+        stableFrames = 0;
+      } else if ((drawMs > 10 || frameMissesMediumBudget) && quality === 'high') {
         quality = 'medium';
-        fastFrames = 0;
-      } else if (drawMs < 5) {
-        fastFrames += 1;
-        if (fastFrames >= 180) {
-          quality = quality === 'low' ? 'medium' : 'high';
-          fastFrames = 0;
-        }
+        stableFrames = 0;
       } else {
-        fastFrames = 0;
+        const canRecover = quality === 'low'
+          ? drawMs < 7 && frameIntervalMs < 20
+          : drawMs < 5 && frameIntervalMs < 12;
+        if (!canRecover) {
+          stableFrames = 0;
+        } else {
+          stableFrames += 1;
+          if (stableFrames >= 180) {
+            quality = quality === 'low' ? 'medium' : 'high';
+            stableFrames = 0;
+          }
+        }
       }
+      perfMonitor.setExtras({ quality });
       perfMonitor.recordFrame(frameIntervalMs);
       animationId = requestAnimationFrame(render);
     };

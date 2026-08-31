@@ -2,6 +2,7 @@ export type PerfSnapshot = {
   fps: number;
   frameMs: number;
   avgFrameMs: number;
+  frameGapMs: number;
   drawMs: number;
   updateMs: number;
   networkParseMs: number;
@@ -23,6 +24,7 @@ const ROLLING = 60;
 class PerformanceMonitor {
   private frameTimes: number[] = [];
   private frameMs = 0;
+  private frameGapMs = 0;
   private drawMs = 0;
   private updateMs = 0;
   private networkParseMs = 0;
@@ -40,6 +42,10 @@ class PerformanceMonitor {
 
   recordDraw(ms: number) {
     this.drawMs = ms;
+  }
+
+  recordFrameGap(ms: number) {
+    this.frameGapMs = ms;
   }
 
   recordUpdate(ms: number) {
@@ -87,6 +93,7 @@ class PerformanceMonitor {
       fps: Math.round(1000 / Math.max(1, avg)),
       frameMs: this.frameMs,
       avgFrameMs: avg,
+      frameGapMs: this.frameGapMs,
       drawMs: this.drawMs,
       updateMs: this.updateMs,
       networkParseMs: this.networkParseMs,

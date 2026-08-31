@@ -139,7 +139,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             decorations: true,
             mode: WindowMode::Windowed,
         })
-        .render_loop(RenderLoop::OnDemand)
+        // The embedded page is a continuously animated game. Keep the native
+        // host responsive between WebView2 compositor frames for the A/B path.
+        .render_loop(RenderLoop::Continuous)
         .webview(webview)
         .run()?;
     Ok(())
