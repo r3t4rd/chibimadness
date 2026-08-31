@@ -22,6 +22,7 @@ export type EvolutionId =
   | 'gem_bomb'
   | 'orbit_relic'
   | 'ricochet_soul'
+  | 'bullet_ricochet'
   | 'harvest_moon'
   | 'hex_storm';
 
@@ -101,9 +102,9 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     icon: '🧄',
     rarity: 'common',
     maxRank: 5,
-    tagline: 'Аура, которая грызёт толпу',
+    tagline: 'Попадание — ударная волна',
     descFor: (r) =>
-      `Постоянный урон вокруг тебя. Радиус ${62 + r * 20}px. Чем ближе — тем больнее. Классика выживалки.`,
+      `${14 + r * 9}% шанс при попадании ударить мини-взрывом вокруг цели. Радиус ${52 + r * 14}px.`,
   },
   {
     id: 'blood_magnet',
@@ -133,9 +134,8 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     icon: '✨',
     rarity: 'rare',
     maxRank: 5,
-    tagline: 'Беги — и земля горит',
-    descFor: (r) =>
-      `За тобой остаётся раскалённый след. Враги, наступившие на него, жарятся. Скорость +${(r * 3).toFixed(0)}%.`,
+    tagline: 'Бег быстрее в Nullspace',
+    descFor: (r) => `Скорость бега +${r * 4}% в Nullspace. Без жгучего следа под ногами.`,
   },
   {
     id: 'thunder_crown',
@@ -144,9 +144,9 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     icon: '🌩️',
     rarity: 'epic',
     maxRank: 5,
-    tagline: 'Небо бьёт за тебя',
+    tagline: 'Попадание зовёт молнию с неба',
     descFor: (r) =>
-      `Каждые ${(Math.max(1.1, 3.4 - r * 0.4)).toFixed(1)}с молния падает в случайного врага рядом. Боссы тоже получают по макушке.`,
+      `${10 + r * 8}% шанс при попадании вызвать удар молнии с неба прямо в цель. Боссам тоже больно.`,
   },
   {
     id: 'vampire_kiss',
@@ -205,9 +205,9 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     icon: '🌀',
     rarity: 'rare',
     maxRank: 5,
-    tagline: 'Толпа вязнет в тебе',
+    tagline: 'Попадание вязнет во тьме',
     descFor: (r) =>
-      `Враги в ${110 + r * 28}px замедляются до 40% скорости. Ты — чёрная дыра для ног.`,
+      `${12 + r * 7}% шанс при попадании замедлить цель на ${0.7 + r * 0.35}с. Без ауры вокруг тебя.`,
   },
   {
     id: 'death_lottery',
@@ -260,9 +260,9 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     icon: '🔮',
     rarity: 'rare',
     maxRank: 5,
-    tagline: 'Крутящиеся убийцы вокруг тебя',
+    tagline: 'Попадание выпускает искру-снаряд',
     descFor: (r) =>
-      `${1 + r} снаряда летают вокруг и режут всё, что заденут. Вид зависит от класса.`,
+      `${11 + r * 6}% шанс при попадании выстрелить искрой в ближайшего врага. Без орбит вокруг тела.`,
   },
   {
     id: 'ricochet_soul',
@@ -273,7 +273,17 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     maxRank: 5,
     classLock: 'gunslinger',
     tagline: 'Пули ищут следующую шею',
-    descFor: (r) => `Снаряды рикошетят ещё ${r} раз(а) в ближайшего врага. Одна пуля — целый хор.`,
+    descFor: (r) => `Пули рикошетят ещё ${r} раз(а) в ближайшего врага после попадания.`,
+  },
+  {
+    id: 'bullet_ricochet',
+    name: 'Рикошетный сердечник',
+    nameEn: 'RICOCHET CORE',
+    icon: '↩️',
+    rarity: 'common',
+    maxRank: 5,
+    tagline: 'Любая атака отскакивает',
+    descFor: (r) => `+${r} рикошет(а) для пуль и снарядов. Работает для всех классов в Nullspace.`,
   },
   {
     id: 'harvest_moon',
@@ -294,9 +304,9 @@ export const EVOLUTION_CATALOG: EvolutionDef[] = [
     rarity: 'epic',
     maxRank: 5,
     classLock: 'cybermage',
-    tagline: 'Небо само кидает метеоры',
+    tagline: 'Убийство вызывает метеор',
     descFor: (r) =>
-      `Каждые ${(Math.max(1.4, 3.6 - r * 0.4)).toFixed(1)}с метеор падает в случайного врага. Магия без кнопки.`,
+      `${16 + r * 8}% шанс при убийстве вызвать метеор на труп. Не периодический — только с килла.`,
   },
 ];
 
@@ -316,12 +326,10 @@ export interface EvolutionMods {
   magnetBonus: number;
   fireRateMult: number;
   moveMult: number;
-  auraRadius: number;
-  auraDps: number;
-  orbitCount: number;
-  orbitRadius: number;
-  orbitDamage: number;
-  orbitSize: number;
+  kissHeal: number;
+  greedGemMult: number;
+  greedExtraChance: number;
+  executeChance: number;
   soulBurstChance: number;
   soulBurstRadius: number;
   soulBurstDamage: number;
@@ -331,40 +339,83 @@ export interface EvolutionMods {
   frostChance: number;
   frostRadius: number;
   frostDuration: number;
-  trailDps: number;
-  trailRadius: number;
-  thunderEvery: number;
-  thunderDamage: number;
-  kissHeal: number;
-  greedGemMult: number;
-  greedExtraChance: number;
-  voidSlowRadius: number;
-  voidSlowDuration: number;
-  executeChance: number;
   blackHoleEvery: number;
-  phoenixHpPct: number;
-  phoenixHealPct: number;
-  phoenixCd: number;
   gemBombChance: number;
   gemBombRadius: number;
   gemBombDamage: number;
-  hexEvery: number;
-  hexDamage: number;
   harvestHeal: number;
   harvestSlashChance: number;
+  hexKillChance: number;
+  hexKillDamage: number;
   ricochetBounces: number;
+  hitSkyChance: number;
+  hitSkyDamage: number;
+  hitShockChance: number;
+  hitShockRadius: number;
+  hitShockDamage: number;
+  hitSlowChance: number;
+  hitSlowDuration: number;
+  hitSparkChance: number;
+  hitSparkDamage: number;
+  phoenixHpPct: number;
+  phoenixHealPct: number;
+  phoenixCd: number;
 }
 
-export function getEvolutionMods(player: Player): EvolutionMods {
+export const EMPTY_EVO_MODS: EvolutionMods = {
+  magnetBonus: 0,
+  fireRateMult: 1,
+  moveMult: 1,
+  kissHeal: 0,
+  greedGemMult: 1,
+  greedExtraChance: 0,
+  executeChance: 0,
+  soulBurstChance: 0,
+  soulBurstRadius: 0,
+  soulBurstDamage: 0,
+  chainChance: 0,
+  chainBounces: 0,
+  chainDamage: 0,
+  frostChance: 0,
+  frostRadius: 0,
+  frostDuration: 0,
+  blackHoleEvery: 0,
+  gemBombChance: 0,
+  gemBombRadius: 0,
+  gemBombDamage: 0,
+  harvestHeal: 0,
+  harvestSlashChance: 0,
+  hexKillChance: 0,
+  hexKillDamage: 0,
+  ricochetBounces: 0,
+  hitSkyChance: 0,
+  hitSkyDamage: 0,
+  hitShockChance: 0,
+  hitShockRadius: 0,
+  hitShockDamage: 0,
+  hitSlowChance: 0,
+  hitSlowDuration: 0,
+  hitSparkChance: 0,
+  hitSparkDamage: 0,
+  phoenixHpPct: 0,
+  phoenixHealPct: 0,
+  phoenixCd: 0,
+};
+
+/** Evolution combat bonuses — only active inside Nullspace horde. */
+export function getEvolutionMods(player: Player, inHorde = false): EvolutionMods {
+  if (!inHorde) return { ...EMPTY_EVO_MODS };
+
   const r = (id: EvolutionId) => evoRank(player, id);
   const atk = player.stats?.atk ?? 20;
-  const garlic = r('garlic_ward');
-  const orbit = r('orbit_relic');
   const burst = r('soul_burst');
   const chain = r('chain_bolt');
   const frost = r('frost_nova');
   const trail = r('stardust_trail');
   const thunder = r('thunder_crown');
+  const garlic = r('garlic_ward');
+  const voidSlow = r('void_slow');
+  const orbit = r('orbit_relic');
   const oc = r('overclock');
   const phoenix = r('phoenix_core');
   const hole = r('black_hole');
@@ -372,17 +423,16 @@ export function getEvolutionMods(player: Player): EvolutionMods {
   const gem = r('gem_bomb');
   const lottery = r('death_lottery');
   const harvest = r('harvest_moon');
+  const ricochet = r('ricochet_soul') + r('bullet_ricochet');
 
   return {
     magnetBonus: r('blood_magnet') * 95,
     fireRateMult: 1 / (1 + oc * 0.12),
-    moveMult: 1 + oc * 0.04 + trail * 0.03,
-    auraRadius: garlic > 0 ? 58 + garlic * 20 : 0,
-    auraDps: garlic > 0 ? 9 + garlic * 11 + atk * 0.12 : 0,
-    orbitCount: orbit > 0 ? 1 + orbit : 0,
-    orbitRadius: 52 + orbit * 10,
-    orbitDamage: orbit > 0 ? 6 + orbit * 7 + atk * 0.18 : 0,
-    orbitSize: 7 + orbit * 1.4,
+    moveMult: 1 + oc * 0.04 + trail * 0.04,
+    kissHeal: r('vampire_kiss') > 0 ? 4 + r('vampire_kiss') * 5 : 0,
+    greedGemMult: 1 + r('greed_engine') * 0.22,
+    greedExtraChance: r('greed_engine') * 0.12,
+    executeChance: lottery > 0 ? (0.03 + lottery * 0.022) * (player.characterClass === 'swordmaster' ? 1.15 : 1) : 0,
     soulBurstChance: burst > 0 ? 0.12 + burst * 0.08 : 0,
     soulBurstRadius: 68 + burst * 18,
     soulBurstDamage: burst > 0 ? 16 + burst * 14 + atk * 0.55 : 0,
@@ -392,28 +442,27 @@ export function getEvolutionMods(player: Player): EvolutionMods {
     frostChance: frost > 0 ? 0.16 + frost * 0.08 : 0,
     frostRadius: 88 + frost * 22,
     frostDuration: 1.05 + frost * 0.35,
-    trailDps: trail > 0 ? 8 + trail * 9 + atk * 0.1 : 0,
-    trailRadius: trail > 0 ? 22 + trail * 4 : 0,
-    thunderEvery: thunder > 0 ? Math.max(1.05, 3.35 - thunder * 0.4) : 0,
-    thunderDamage: thunder > 0 ? 22 + thunder * 16 + atk * 0.7 : 0,
-    kissHeal: r('vampire_kiss') > 0 ? 4 + r('vampire_kiss') * 5 : 0,
-    greedGemMult: 1 + r('greed_engine') * 0.22,
-    greedExtraChance: r('greed_engine') * 0.12,
-    voidSlowRadius: r('void_slow') > 0 ? 108 + r('void_slow') * 28 : 0,
-    voidSlowDuration: r('void_slow') > 0 ? 0.45 : 0,
-    executeChance: lottery > 0 ? (0.03 + lottery * 0.022) * (player.characterClass === 'swordmaster' ? 1.15 : 1) : 0,
     blackHoleEvery: hole > 0 ? Math.max(6, 14 - hole * 2) : 0,
-    phoenixHpPct: phoenix > 0 ? (32 - phoenix * 3) / 100 : 0,
-    phoenixHealPct: phoenix > 0 ? 0.12 + phoenix * 0.05 : 0,
-    phoenixCd: phoenix > 0 ? Math.max(8, 18 - phoenix * 2) : 0,
     gemBombChance: gem > 0 ? 0.14 + gem * 0.08 : 0,
     gemBombRadius: 86 + gem * 16,
     gemBombDamage: gem > 0 ? 14 + gem * 12 + atk * 0.45 : 0,
-    hexEvery: hex > 0 ? Math.max(1.35, 3.55 - hex * 0.4) : 0,
-    hexDamage: hex > 0 ? 20 + hex * 14 + atk * 0.65 : 0,
     harvestHeal: harvest > 0 ? 8 + harvest * 6 : 0,
     harvestSlashChance: harvest > 0 ? 0.1 + harvest * 0.06 : 0,
-    ricochetBounces: r('ricochet_soul'),
+    hexKillChance: hex > 0 ? 0.16 + hex * 0.08 : 0,
+    hexKillDamage: hex > 0 ? 20 + hex * 14 + atk * 0.65 : 0,
+    ricochetBounces: ricochet,
+    hitSkyChance: thunder > 0 ? 0.1 + thunder * 0.08 : 0,
+    hitSkyDamage: thunder > 0 ? 18 + thunder * 14 + atk * 0.75 : 0,
+    hitShockChance: garlic > 0 ? 0.14 + garlic * 0.09 : 0,
+    hitShockRadius: 52 + garlic * 14,
+    hitShockDamage: garlic > 0 ? 10 + garlic * 9 + atk * 0.35 : 0,
+    hitSlowChance: voidSlow > 0 ? 0.12 + voidSlow * 0.07 : 0,
+    hitSlowDuration: 0.7 + voidSlow * 0.35,
+    hitSparkChance: orbit > 0 ? 0.11 + orbit * 0.06 : 0,
+    hitSparkDamage: orbit > 0 ? 8 + orbit * 7 + atk * 0.3 : 0,
+    phoenixHpPct: phoenix > 0 ? (32 - phoenix * 3) / 100 : 0,
+    phoenixHealPct: phoenix > 0 ? 0.12 + phoenix * 0.05 : 0,
+    phoenixCd: phoenix > 0 ? Math.max(8, 18 - phoenix * 2) : 0,
   };
 }
 
@@ -497,26 +546,6 @@ export function orbitColor(cls: CharacterClass): string {
   return '#E879F9';
 }
 
-export function getOrbitSlots(
-  player: Player,
-  time: number
-): { x: number; y: number; color: string }[] {
-  const mods = getEvolutionMods(player);
-  if (mods.orbitCount <= 0) return [];
-  const color = orbitColor(player.characterClass);
-  const out: { x: number; y: number; color: string }[] = [];
-  const spin = time * (1.8 + mods.orbitCount * 0.12);
-  for (let i = 0; i < mods.orbitCount; i++) {
-    const a = spin + (i / mods.orbitCount) * Math.PI * 2;
-    out.push({
-      x: player.x + Math.cos(a) * mods.orbitRadius,
-      y: player.y + Math.sin(a) * mods.orbitRadius * 0.72,
-      color,
-    });
-  }
-  return out;
-}
-
 export function mobSpeedMul(m: Monster): number {
   if ((m.frozenTimer || 0) > 0) return 0;
   if ((m.slowTimer || 0) > 0) return 0.4;
@@ -526,52 +555,11 @@ export function mobSpeedMul(m: Monster): number {
 export function drawEvolutionFx(
   ctx: CanvasRenderingContext2D,
   player: Player,
-  time: number
+  time: number,
+  inHorde = false
 ) {
-  const mods = getEvolutionMods(player);
-  if (mods.auraRadius > 0) {
-    const pulse = 0.55 + Math.sin(time * 4.2) * 0.2;
-    ctx.save();
-    ctx.globalAlpha = 0.18 + pulse * 0.12;
-    ctx.strokeStyle = '#A3E635';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.ellipse(player.x, player.y + 8, mods.auraRadius, mods.auraRadius * 0.55, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.globalAlpha = 0.07 + pulse * 0.05;
-    ctx.fillStyle = '#84CC16';
-    ctx.fill();
-    ctx.restore();
-  }
-
-  if (mods.voidSlowRadius > 0) {
-    ctx.save();
-    ctx.globalAlpha = 0.1 + Math.sin(time * 2.4) * 0.04;
-    ctx.strokeStyle = '#A78BFA';
-    ctx.setLineDash([6, 8]);
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(player.x, player.y + 8, mods.voidSlowRadius, mods.voidSlowRadius * 0.52, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  const slots = getOrbitSlots(player, time);
-  for (const s of slots) {
-    ctx.save();
-    ctx.globalAlpha = 0.95;
-    const g = ctx.createRadialGradient(s.x, s.y, 1, s.x, s.y, mods.orbitSize + 6);
-    g.addColorStop(0, '#FFFFFF');
-    g.addColorStop(0.35, s.color);
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, mods.orbitSize + 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = s.color;
-    ctx.beginPath();
-    ctx.arc(s.x, s.y, mods.orbitSize * 0.55, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
+  if (!inHorde) return;
+  void ctx;
+  void player;
+  void time;
 }

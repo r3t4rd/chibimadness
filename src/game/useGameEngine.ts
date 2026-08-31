@@ -91,6 +91,7 @@ import {
   pickAmbientHazard,
   pickHordeArchetype,
   publishHordeFx,
+  publishHordeRift,
   pushOutOfHordeFeatures,
   rollHordeSpawnPoint,
   spawnHordeIntro,
@@ -103,12 +104,16 @@ import {
   applyEvolution,
   EVOLUTION_BY_ID,
   getEvolutionMods,
-  getOrbitSlots,
   mobSpeedMul,
   rollLevelUpChoices,
   type EvolutionDef,
   type EvolutionId,
 } from './evolutions';
+import {
+  clampToRiftArena,
+  initBossRift,
+  riftDefFor,
+} from './bossRifts';
 import { upsertOperator } from './characterSave';
 
 // WEAPONS MAGAZINE & FIRE RATE CONFIGURATIONS
@@ -657,6 +662,9 @@ export function useGameEngine(initialPlayer: Player) {
   const orbitHitRef = useRef<Record<string, number>>({});
   const garlicHitRef = useRef<Record<string, number>>({});
   const trailHitRef = useRef<Record<string, number>>({});
+  const riftSpawnedRef = useRef(false);
+
+  const hordeEvoActive = useCallback(() => hordeRunRef.current.active, []);
 
   // Active World Boss Target
   const [currentBoss, setCurrentBoss] = useState<Monster | null>(null);
@@ -1077,7 +1085,8 @@ export function useGameEngine(initialPlayer: Player) {
     const isPlayerKill = killedByPlayer || !!m.damagedByPlayer;
     if (isPlayerKill) {
       const killer = playerRef.current;
-      const mods = getEvolutionMods(killer);
+      const inHorde = hordeRunRef.current.active;
+      const mods = getEvolutionMods(killer, inHorde);
       if (m.zone === HORDE_ZONE_ID) {
         const gemVal = Math.max(6, Math.round(m.expReward * 0.85 * mods.greedGemMult));
         spawnXpGem(m.x, m.y, gemVal);
@@ -1206,6 +1215,38 @@ export function useGameEngine(initialPlayer: Player) {
             });
           }
         }
+        if (mods.hexKillChance > 0 && Math.random() < mods.hexKillChance) {
+          spawnParticles(m.x, m.y - 36, '#FB923C', 22, 'spark');
+          addGroundDecal(m.x, m.y, '#7C2D12', 30, 'scorch', 2.4, 0);
+          monstersRef.current.forEach((other) => {
+            if (other.id === m.id || other.hp <= 0 || other.state === 'dead') return;
+            if (Math.hypot(other.x - m.x, other.y - m.y) <= 90) {
+              other.hp = Math.max(0, other.hp - Math.round(mods.hexKillDamage * 0.55));
+              other.hitFlash = 0.25;
+              other.damagedByPlayer = true;
+              if (other.hp <= 0) handleMonsterDefeated(other, true);
+            }
+          });
+          addDamagePopup(m.x, m.y - 20, 'METEOR', '#FB923C', true);
+        }
+
+        const rift = hordeRunRef.current.bossRift;
+        if (rift.active && rift.phase === 'objective') {
+          if (rift.kind === 'void_hunt' && m.hordeKind === 'blindcaster') {
+            rift.objectiveCur = rift.objectiveMax;
+          } else if (rift.kind === 'trial_purge' || rift.kind === 'meteor_cage' || rift.kind === 'storm_gauntlet' || rift.kind === 'split_core') {
+            rift.objectiveCur = Math.min(rift.objectiveMax, rift.objectiveCur + 1);
+          }
+        }
+        if (rift.active && rift.phase === 'boss' && rift.bossId === m.id) {
+          rift.phase = 'warp_out';
+          rift.timer = 0;
+          hordeRunRef.current.riftWarp = 0;
+          showToast('RIFT CLEARED', `${rift.bossName} повержен — возврат`, '✨');
+          spawnXpGem(m.x, m.y, Math.round(80 + hordeRunRef.current.elapsed * 0.5));
+          spawnXpGem(m.x + 12, m.y - 8, Math.round(40 + hordeRunRef.current.elapsed * 0.3));
+        }
+
         evoBurstDepthRef.current -= 1;
       }
     }
@@ -1664,7 +1705,7 @@ export function useGameEngine(initialPlayer: Player) {
     const aimDirY = Math.sin(aimAngle);
     const newFacing: 'left' | 'right' = aimDirX >= 0 ? 'right' : 'left';
 
-    const evoFire = getEvolutionMods(curPlayer).fireRateMult;
+    const evoFire = getEvolutionMods(curPlayer, hordeRunRef.current.active).fireRateMult;
     playerRef.current = {
       ...playerRef.current,
       facing: newFacing,
@@ -2958,7 +2999,7 @@ export function useGameEngine(initialPlayer: Player) {
         });
       }
 
-      let baseSpeed = curPlayer.stats.speed * 48 * speedBuffMult * getEvolutionMods(curPlayer).moveMult;
+      let baseSpeed = curPlayer.stats.speed * 48 * speedBuffMult * getEvolutionMods(curPlayer, hordeRunRef.current.active).moveMult;
       if (drivingCar) baseSpeed *= 4.4;
       else if (skating) {
         const board = equippedSkate(curPlayer);
@@ -3122,6 +3163,11 @@ export function useGameEngine(initialPlayer: Player) {
           nextX = clamped.x;
           nextY = clamped.y;
         }
+      } else if (hordeRunRef.current.bossRift.active && hordeRunRef.current.bossRift.phase !== 'none' && hordeRunRef.current.bossRift.phase !== 'warp_out') {
+        const r = hordeRunRef.current.bossRift;
+        const clamped = clampToRiftArena(nextX, nextY, r.anchorX, r.anchorY, r.arenaR, 42);
+        nextX = clamped.x;
+        nextY = clamped.y;
       } else if (hordeRunRef.current.active || isInHordeArena(nextX, nextY)) {
         const clamped = clampToHordeArena(nextX, nextY, 48);
         nextX = clamped.x;
@@ -3426,27 +3472,143 @@ export function useGameEngine(initialPlayer: Player) {
           horde.nextMobName = 'ALL UNLOCKED';
         }
 
-        if (horde.nextBossIn <= 0) {
+        if (horde.nextBossIn <= 0 && !horde.bossRift.active) {
           horde.nextBossIn = HORDE_BOSS_INTERVAL;
-          const livingBosses = monstersRef.current.filter((m) => m.zone === HORDE_ZONE_ID && m.isBoss && m.hp > 0 && m.state !== 'dead').length;
-          if (livingBosses < 2) {
-            const bossDef = HORDE_BOSSES[horde.bossIndex % HORDE_BOSSES.length];
-            horde.bossIndex += 1;
-            const boss = createHordeMob(nextX, nextY, horde.elapsed, nextPlayer.id, bossDef.kind, rollHordeSpawnPoint(nextX, nextY, 380, 560));
-            monstersRef.current = [...monstersRef.current, boss];
-            setMonsters([...monstersRef.current]);
-            setCurrentBoss(boss);
-            showToast(`BOSS · ${bossDef.name}`, bossDef.toast, '👑');
-            sound.playBossRoar();
-            triggerShake(10, 0.35);
+          const bossDef = HORDE_BOSSES[horde.bossIndex % HORDE_BOSSES.length];
+          horde.bossIndex += 1;
+          horde.bossRift = initBossRift(nextX, nextY, Math.floor(horde.elapsed * 3 + horde.bossIndex), {
+            kind: bossDef.kind,
+            name: bossDef.name,
+            toast: bossDef.toast,
+          });
+          riftSpawnedRef.current = false;
+          showToast(`RIFT · ${horde.bossRift.label}`, horde.bossRift.hint, '🌀');
+          sound.playBossRoar();
+          triggerShake(8, 0.25);
+        }
+
+        const rift = horde.bossRift;
+        if (rift.active) {
+          rift.timer += dt;
+          const rDef = riftDefFor(rift.kind);
+
+          if (rift.phase === 'warp_in') {
+            horde.riftWarp = Math.sin(Math.min(1, rift.timer / rDef.warpIn) * Math.PI);
+            if (rift.timer >= rDef.warpIn) {
+              rift.phase = 'objective';
+              rift.timer = 0;
+              horde.riftWarp = 0;
+              nextX = rift.anchorX;
+              nextY = rift.anchorY;
+              setPlayer((prev) => ({ ...prev, x: rift.anchorX, y: rift.anchorY, vx: 0, vy: 0 }));
+              playerRef.current = { ...playerRef.current, x: rift.anchorX, y: rift.anchorY, vx: 0, vy: 0 };
+              spawnParticles(rift.anchorX, rift.anchorY, rift.tint, 40, 'spark');
+              addDamagePopup(rift.anchorX, rift.anchorY - 36, rift.label, rift.tint, true, false, 'manga', 1.35);
+            }
+          } else if (rift.phase === 'objective') {
+            if (!riftSpawnedRef.current) {
+              riftSpawnedRef.current = true;
+              const randInArena = () => {
+                const ang = Math.random() * Math.PI * 2;
+                const rad = Math.random() * (rift.arenaR - 90);
+                return { x: rift.anchorX + Math.cos(ang) * rad, y: rift.anchorY + Math.sin(ang) * rad };
+              };
+              const wave: Monster[] = [];
+              if (rift.kind === 'trial_purge') {
+                for (let i = 0; i < rift.objectiveMax; i++) {
+                  wave.push(createHordeMob(rift.anchorX, rift.anchorY, horde.elapsed, nextPlayer.id, 'shade', randInArena()));
+                }
+              } else if (rift.kind === 'split_core') {
+                for (let i = 0; i < 3; i++) {
+                  const core = createHordeMob(rift.anchorX, rift.anchorY, horde.elapsed, nextPlayer.id, 'splitter', randInArena());
+                  core.name = 'CORE PHANTOM';
+                  core.maxHp = Math.round(core.maxHp * 2.8);
+                  core.hp = core.maxHp;
+                  wave.push(core);
+                }
+              } else if (rift.kind === 'meteor_cage' || rift.kind === 'storm_gauntlet') {
+                const n = rift.kind === 'storm_gauntlet' ? 14 : 10;
+                for (let i = 0; i < n; i++) {
+                  wave.push(createHordeMob(rift.anchorX, rift.anchorY, horde.elapsed, nextPlayer.id, 'mite', randInArena()));
+                }
+                if (rift.kind === 'storm_gauntlet') {
+                  hordeHazardsRef.current.push(makeRingHazard(rift.anchorX, rift.anchorY, 180, 22, 0.85));
+                }
+              } else if (rift.kind === 'void_hunt') {
+                wave.push(createHordeMob(rift.anchorX, rift.anchorY, horde.elapsed, nextPlayer.id, 'blindcaster', randInArena()));
+                for (let i = 0; i < 6; i++) {
+                  const echo = createHordeMob(rift.anchorX, rift.anchorY, horde.elapsed, nextPlayer.id, 'shade', randInArena());
+                  echo.name = 'Void Echo';
+                  wave.push(echo);
+                }
+              } else if (rift.kind === 'beam_maze') {
+                hordeHazardsRef.current.push(makeCrossHazard(rift.anchorX, rift.anchorY, 24, 1.2));
+                hordeHazardsRef.current.push(makeBeamHazard(rift.anchorX, rift.anchorY, 0, 420, 20, 1.1));
+                hordeHazardsRef.current.push(makeBeamHazard(rift.anchorX, rift.anchorY, Math.PI / 2, 420, 20, 1.1));
+              }
+              if (rift.kind === 'meteor_cage') {
+                hordeHazardsRef.current.push(makeMeteorHazard(rift.anchorX, rift.anchorY - 120, 28, 1.3));
+              }
+              if (wave.length > 0) {
+                monstersRef.current = [...monstersRef.current, ...wave];
+                setMonsters([...monstersRef.current]);
+              }
+            }
+
+            if (rift.kind === 'beam_maze') {
+              rift.objectiveCur = Math.min(rift.objectiveMax, rift.objectiveCur + dt);
+              if (Math.random() < dt * 0.35) {
+                hordeHazardsRef.current.push(makeBeamHazard(rift.anchorX, rift.anchorY, Math.random() * Math.PI, 380, 18, 0.95));
+              }
+            } else if (rift.kind === 'meteor_cage' && Math.random() < dt * 0.22) {
+              hordeHazardsRef.current.push(makeMeteorHazard(
+                rift.anchorX + (Math.random() - 0.5) * 200,
+                rift.anchorY + (Math.random() - 0.5) * 200,
+                24,
+                1
+              ));
+            }
+
+            const done = rift.objectiveCur >= rift.objectiveMax;
+            const timedOut = rift.timer >= rDef.objectiveTime;
+            if (done || timedOut) {
+              rift.phase = 'boss';
+              rift.timer = 0;
+              const boss = createHordeMob(rift.anchorX, rift.anchorY, horde.elapsed, nextPlayer.id, rift.bossKind, {
+                x: rift.anchorX,
+                y: rift.anchorY - 40,
+              });
+              rift.bossId = boss.id;
+              monstersRef.current = [...monstersRef.current, boss];
+              setMonsters([...monstersRef.current]);
+              setCurrentBoss(boss);
+              showToast(`BOSS · ${rift.bossName}`, rift.bossToast, '👑');
+              triggerShake(12, 0.4);
+              spawnParticles(rift.anchorX, rift.anchorY, rift.tint, 50, 'spark');
+            }
+          } else if (rift.phase === 'warp_out') {
+            horde.riftWarp = Math.sin(Math.min(1, rift.timer / 1.1) * Math.PI);
+            if (rift.timer >= 1.15) {
+              horde.bossRift = { ...rift, active: false, phase: 'none', timer: 0, bossId: null };
+              horde.riftWarp = 0;
+              riftSpawnedRef.current = false;
+              setPlayer((prev) => ({ ...prev, x: rift.returnX, y: rift.returnY, vx: 0, vy: 0 }));
+              playerRef.current = { ...playerRef.current, x: rift.returnX, y: rift.returnY, vx: 0, vy: 0 };
+              spawnParticles(rift.returnX, rift.returnY, '#22D3EE', 30, 'spark');
+            }
           }
         }
+        publishHordeRift(horde.bossRift, horde.riftWarp);
+
+        const riftBlocksSpawn = horde.bossRift.active && horde.bossRift.phase !== 'none';
 
         horde.spawnAcc += dt * hordeSpawnRate(horde.elapsed);
         const spawned: Monster[] = [];
-        while (horde.spawnAcc >= 1 && livingHorde + spawned.length < cap) {
-          horde.spawnAcc -= 1;
-          spawned.push(createHordeMob(nextX, nextY, horde.elapsed, nextPlayer.id, pickHordeArchetype(horde.unlockedCount)));
+        if (!riftBlocksSpawn) {
+          while (horde.spawnAcc >= 1 && livingHorde + spawned.length < cap) {
+            horde.spawnAcc -= 1;
+            spawned.push(createHordeMob(nextX, nextY, horde.elapsed, nextPlayer.id, pickHordeArchetype(horde.unlockedCount)));
+          }
         }
         if (spawned.length > 0) {
           monstersRef.current = [...monstersRef.current, ...spawned];
@@ -3455,7 +3617,7 @@ export function useGameEngine(initialPlayer: Player) {
 
         horde.hazardAcc += dt;
         const hazardEvery = Math.max(3.6, 10.5 - horde.elapsed * 0.035);
-        if (horde.hazardAcc >= hazardEvery) {
+        if (!riftBlocksSpawn && horde.hazardAcc >= hazardEvery) {
           horde.hazardAcc = 0;
           hordeHazardsRef.current.push(pickAmbientHazard(nextX, nextY, horde.elapsed, 1));
         }
@@ -3522,7 +3684,7 @@ export function useGameEngine(initialPlayer: Player) {
         hordeUiTimerRef.current += dt;
         if (hordeUiTimerRef.current >= 0.2) {
           hordeUiTimerRef.current = 0;
-          setHordeRun({ ...horde, blindness: { ...horde.blindness } });
+          setHordeRun({ ...horde, blindness: { ...horde.blindness }, bossRift: { ...horde.bossRift } });
           const liveBoss = monstersRef.current.find((m) => m.zone === HORDE_ZONE_ID && m.isBoss && m.hp > 0 && m.state !== 'dead') || null;
           setCurrentBoss(liveBoss);
         }
@@ -3636,11 +3798,11 @@ export function useGameEngine(initialPlayer: Player) {
         const dy = nextY - drop.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
         if (drop.isXpGem) {
-          const mag = HORDE_GEM_MAGNET + Math.min(160, (hordeRunRef.current.elapsed || 0) * 2.2) + getEvolutionMods(nextPlayer).magnetBonus;
+          const mag = HORDE_GEM_MAGNET + Math.min(160, (hordeRunRef.current.elapsed || 0) * 2.2) + getEvolutionMods(nextPlayer, true).magnetBonus;
           if (dist < 32) {
             awardExpAndGold(drop.quantity, 0);
             if (hordeRunRef.current.active) hordeRunRef.current.gemsCollected += 1;
-            const gb = getEvolutionMods(nextPlayer);
+            const gb = getEvolutionMods(nextPlayer, true);
             if (gb.gemBombChance > 0 && Math.random() < gb.gemBombChance) {
               spawnParticles(nextX, nextY, '#F472B6', 22, 'spark');
               triggerShake(5, 0.1);
@@ -3778,7 +3940,7 @@ export function useGameEngine(initialPlayer: Player) {
               m.hp = Math.max(0, m.hp - dmg);
               m.hitFlash = 0.2;
               if (p.ownerId === nextPlayer.id && !m.isBoss && m.hp > 0) {
-                const exec = getEvolutionMods(nextPlayer).executeChance;
+                const exec = getEvolutionMods(nextPlayer, hordeRunRef.current.active).executeChance;
                 if (exec > 0 && Math.random() < exec) {
                   m.hp = 0;
                   addDamagePopup(m.x, m.y - 22, 'EXECUTE', '#F43F5E', true, false, 'manga', 1.35);
@@ -3829,11 +3991,73 @@ export function useGameEngine(initialPlayer: Player) {
 
               spawnParticles(m.x, m.y, p.color || '#38BDF8', 8, 'spark');
 
+              if (p.ownerId === nextPlayer.id && hordeRunRef.current.active && m.hp > 0) {
+                const evo = getEvolutionMods(nextPlayer, true);
+                if (evo.hitSkyChance > 0 && Math.random() < evo.hitSkyChance) {
+                  for (let i = 0; i < 8; i++) {
+                    spawnParticles(m.x + (Math.random() - 0.5) * 20, m.y - 50 - i * 12, '#FDE047', 3, 'spark');
+                  }
+                  m.hp = Math.max(0, m.hp - Math.round(evo.hitSkyDamage));
+                  m.hitFlash = 0.35;
+                  addDamagePopup(m.x, m.y - 28, 'SKY STRIKE', '#FACC15', true, false, 'manga', 1.3);
+                  triggerShake(5, 0.1);
+                  sound.playHit(true);
+                }
+                if (evo.hitShockChance > 0 && Math.random() < evo.hitShockChance) {
+                  spawnParticles(m.x, m.y, '#A3E635', 16, 'spark');
+                  monstersRef.current.forEach((near) => {
+                    if (near.id === m.id || near.hp <= 0 || near.state === 'dead') return;
+                    if (Math.hypot(near.x - m.x, near.y - m.y) <= evo.hitShockRadius) {
+                      near.hp = Math.max(0, near.hp - Math.round(evo.hitShockDamage));
+                      near.hitFlash = 0.2;
+                      near.damagedByPlayer = true;
+                      if (near.hp <= 0) handleMonsterDefeated(near, true);
+                    }
+                  });
+                  addDamagePopup(m.x, m.y - 14, 'SHOCK', '#84CC16', true);
+                }
+                if (evo.hitSlowChance > 0 && Math.random() < evo.hitSlowChance) {
+                  m.slowTimer = Math.max(m.slowTimer || 0, evo.hitSlowDuration);
+                  spawnParticles(m.x, m.y, '#A78BFA', 6, 'spark');
+                }
+                if (evo.hitSparkChance > 0 && Math.random() < evo.hitSparkChance) {
+                  let best: Monster | null = null;
+                  let bestD = 280;
+                  livingMonsters.forEach((near) => {
+                    if (near.id === m.id || near.hp <= 0 || near.state === 'dead') return;
+                    const d = Math.hypot(near.x - m.x, near.y - m.y);
+                    if (d < bestD) {
+                      bestD = d;
+                      best = near;
+                    }
+                  });
+                  if (best) {
+                    const ang = Math.atan2(best.y - m.y, best.x - m.x);
+                    const spark: Projectile = {
+                      id: `spark_${Date.now()}_${Math.random()}`,
+                      ownerId: nextPlayer.id,
+                      type: 'magic_orb',
+                      x: m.x,
+                      y: m.y,
+                      vx: Math.cos(ang) * 22,
+                      vy: Math.sin(ang) * 22,
+                      damage: Math.round(evo.hitSparkDamage),
+                      range: 420,
+                      distanceTraveled: 0,
+                      color: '#E879F9',
+                      size: 5,
+                      piercing: false,
+                    };
+                    projectilesRef.current = [...projectilesRef.current, spark];
+                  }
+                }
+              }
+
               if (m.hp <= 0) handleMonsterDefeated(m, p.ownerId === nextPlayer.id);
               if (!p.piercing) consumed = true;
-              if (consumed && p.ownerId === nextPlayer.id) {
+              if (consumed && p.ownerId === nextPlayer.id && hordeRunRef.current.active) {
                 const leftover = p.ricochetsRemaining ?? 0;
-                const bonus = p.isRicochet ? 0 : getEvolutionMods(nextPlayer).ricochetBounces;
+                const bonus = p.isRicochet ? 0 : getEvolutionMods(nextPlayer, true).ricochetBounces;
                 const bounces = leftover > 0 ? leftover : bonus;
                 if (bounces > 0) {
                   p.hitIds = [...(p.hitIds || []), m.id];
@@ -4805,9 +5029,9 @@ export function useGameEngine(initialPlayer: Player) {
         setProjectiles([...projectilesRef.current]);
       }
 
-      // Evolution combat (aura, orbit, trail, thunder, hex, phoenix, void slow)
-      {
-        const evo = getEvolutionMods(nextPlayer);
+      // Evolution combat — phoenix only in Nullspace (on-hit/kill procs handled elsewhere)
+      if (hordeRunRef.current.active) {
+        const evo = getEvolutionMods(nextPlayer, true);
         const tickHurt = (om: Monster, dmg: number, color: string, label?: string) => {
           if (om.hp <= 0 || om.state === 'dead') return;
           om.hp = Math.max(0, om.hp - Math.round(dmg));
@@ -4816,102 +5040,6 @@ export function useGameEngine(initialPlayer: Player) {
           if (label) addDamagePopup(om.x, om.y, label, color);
           if (om.hp <= 0) handleMonsterDefeated(om, true);
         };
-
-        for (const k of Object.keys(orbitHitRef.current)) orbitHitRef.current[k] = (orbitHitRef.current[k] || 0) - dt;
-        for (const k of Object.keys(garlicHitRef.current)) garlicHitRef.current[k] = (garlicHitRef.current[k] || 0) - dt;
-        for (const k of Object.keys(trailHitRef.current)) trailHitRef.current[k] = (trailHitRef.current[k] || 0) - dt;
-
-        if (evo.auraRadius > 0) {
-          monstersRef.current.forEach((om) => {
-            if (om.hp <= 0 || om.state === 'dead') return;
-            if (Math.hypot(om.x - nextX, om.y - nextY) <= evo.auraRadius) {
-              if ((garlicHitRef.current[om.id] || 0) > 0) return;
-              garlicHitRef.current[om.id] = 0.28;
-              tickHurt(om, evo.auraDps * 0.28, '#A3E635');
-            }
-          });
-        }
-
-        if (evo.voidSlowRadius > 0) {
-          monstersRef.current.forEach((om) => {
-            if (om.hp <= 0 || om.state === 'dead') return;
-            if (Math.hypot(om.x - nextX, om.y - nextY) <= evo.voidSlowRadius) {
-              om.slowTimer = Math.max(om.slowTimer || 0, evo.voidSlowDuration);
-            }
-          });
-        }
-
-        if (evo.orbitCount > 0) {
-          const slots = getOrbitSlots({ ...nextPlayer, x: nextX, y: nextY }, performance.now() / 1000);
-          slots.forEach((slot) => {
-            monstersRef.current.forEach((om) => {
-              if (om.hp <= 0 || om.state === 'dead') return;
-              if (Math.hypot(om.x - slot.x, om.y - slot.y) <= 22 + evo.orbitSize) {
-                const key = `${om.id}_${Math.round(slot.x)}`;
-                if ((orbitHitRef.current[key] || 0) > 0) return;
-                orbitHitRef.current[key] = 0.22;
-                tickHurt(om, evo.orbitDamage, slot.color);
-                spawnParticles(slot.x, slot.y, slot.color, 3, 'spark');
-              }
-            });
-          });
-        }
-
-        if (evo.trailDps > 0) {
-          trailAccRef.current += dt;
-          if (trailAccRef.current > 0.07) {
-            trailAccRef.current = 0;
-            trailRef.current.push({ x: nextX, y: nextY + 8, life: 1.15 });
-            if (trailRef.current.length > 48) trailRef.current.shift();
-          }
-          trailRef.current = trailRef.current
-            .map((t) => ({ ...t, life: t.life - dt }))
-            .filter((t) => t.life > 0);
-          trailRef.current.forEach((t) => {
-            if (Math.random() < 0.35) spawnParticles(t.x, t.y, '#FDE047', 1, 'spark');
-            monstersRef.current.forEach((om) => {
-              if (om.hp <= 0 || om.state === 'dead') return;
-              if (Math.hypot(om.x - t.x, om.y - t.y) <= evo.trailRadius) {
-                if ((trailHitRef.current[om.id] || 0) > 0) return;
-                trailHitRef.current[om.id] = 0.2;
-                tickHurt(om, evo.trailDps * 0.2, '#F59E0B');
-              }
-            });
-          });
-        }
-
-        if (evo.thunderEvery > 0) {
-          thunderAccRef.current += dt;
-          if (thunderAccRef.current >= evo.thunderEvery) {
-            thunderAccRef.current = 0;
-            const living = monstersRef.current.filter((om) => om.hp > 0 && om.state !== 'dead' && Math.hypot(om.x - nextX, om.y - nextY) < 520);
-            if (living.length) {
-              const t = living[Math.floor(Math.random() * living.length)];
-              spawnParticles(t.x, t.y - 40, '#FDE047', 16, 'spark');
-              spawnParticles(t.x, t.y, '#FACC15', 10, 'spark');
-              tickHurt(t, evo.thunderDamage, '#FDE047', 'THUNDER');
-              triggerShake(4, 0.08);
-            }
-          }
-        }
-
-        if (evo.hexEvery > 0) {
-          hexAccRef.current += dt;
-          if (hexAccRef.current >= evo.hexEvery) {
-            hexAccRef.current = 0;
-            const living = monstersRef.current.filter((om) => om.hp > 0 && om.state !== 'dead' && Math.hypot(om.x - nextX, om.y - nextY) < 480);
-            if (living.length) {
-              const t = living[Math.floor(Math.random() * living.length)];
-              spawnParticles(t.x, t.y, '#FB923C', 20, 'spark');
-              addGroundDecal(t.x, t.y, '#7C2D12', 28, 'scorch', 2.2, 0);
-              tickHurt(t, evo.hexDamage, '#FB923C', 'METEOR');
-              monstersRef.current.forEach((om) => {
-                if (om.id === t.id || om.hp <= 0) return;
-                if (Math.hypot(om.x - t.x, om.y - t.y) < 70) tickHurt(om, evo.hexDamage * 0.45, '#FB923C');
-              });
-            }
-          }
-        }
 
         phoenixCdRef.current = Math.max(0, phoenixCdRef.current - dt);
         if (

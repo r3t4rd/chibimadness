@@ -1,7 +1,7 @@
 import { Monster, DropItem, ResourceNode, NPC, Projectile, DamagePopup, VisualParticle, Player, GroundDecal, InteractiveObject, IntroCinematicState, WorldPOI, Platform, CarEntity, SummonedAlly } from '../types/game';
 import { drawChibiCharacter, drawHumanoidEnemy, drawPoliceCruiser, drawCyberMuscleCar } from './chibiRenderer';
 import { WORLD_WIDTH, WORLD_HEIGHT, ZONES, NPCS_DATABASE, OBSTACLES, INITIAL_INTERACTIVE_OBJECTS, PLATFORMS, WORLD_POIS } from './constants';
-import { HORDE_ARENA, HORDE_FEATURES, getHordeBlindness, getHordeHazards, isInHordeArena, type HordeHazard } from './hordeMode';
+import { HORDE_ARENA, HORDE_FEATURES, getHordeBlindness, getHordeHazards, getHordeRiftFx, isInHordeArena, type HordeHazard } from './hordeMode';
 import { drawEvolutionFx } from './evolutions';
 import { clipToViewBounds, getViewBounds, isInViewBounds } from './viewCull';
 import { drawWorldBuildings, drawInteriorPrompt, drawBuildingOccluders, drawInteriorActors } from './buildingRenderer';
@@ -330,7 +330,7 @@ export function renderWorld(
 
   for (const p of allPlayers) {
     if (p.id === localPlayer.id || inView(p.x, p.y)) {
-      if (p.id === localPlayer.id) drawEvolutionFx(ctx, p, time);
+      if (p.id === localPlayer.id) drawEvolutionFx(ctx, p, time, inHorde);
       drawChibiCharacter(ctx, p, time);
     }
   }
@@ -1338,6 +1338,33 @@ function drawHordeArena(
     const bx = vis.minX + ((i * 373 + Math.floor(time * 2) * 17) % Math.max(40, vis.maxX - vis.minX));
     const by = vis.minY + ((i * 197) % Math.max(40, vis.maxY - vis.minY));
     ctx.fillRect(bx, by, 48 + (i % 3) * 20, 8);
+  }
+
+  const rift = getHordeRiftFx();
+  if (rift.active && rift.cx > vis.minX - rift.r && rift.cx < vis.maxX + rift.r && rift.cy > vis.minY - rift.r && rift.cy < vis.maxY + rift.r) {
+    const pulse = 0.35 + Math.sin(time * 2.4) * 0.12;
+    const g = ctx.createRadialGradient(rift.cx, rift.cy, rift.r * 0.2, rift.cx, rift.cy, rift.r);
+    g.addColorStop(0, `${rift.tint}33`);
+    g.addColorStop(0.55, `${rift.tint}18`);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(rift.cx, rift.cy, rift.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = rift.tint;
+    ctx.globalAlpha = 0.45 + pulse;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 8]);
+    ctx.beginPath();
+    ctx.arc(rift.cx, rift.cy, rift.r - 6, time * 0.2, time * 0.2 + Math.PI * 1.85);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = `rgba(255,255,255,${0.12 + rift.warp * 0.25})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(rift.cx, rift.cy, rift.r * 0.55, 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   ctx.restore();

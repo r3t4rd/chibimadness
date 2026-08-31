@@ -306,6 +306,15 @@ export function App() {
               style={{ opacity: engine.worldFade }}
             />
           )}
+          {(engine.hordeRun?.riftWarp ?? 0) > 0.02 && (
+            <div
+              className="fixed inset-0 z-[88] pointer-events-none"
+              style={{
+                opacity: engine.hordeRun!.riftWarp * 0.85,
+                background: `radial-gradient(circle at 50% 45%, ${engine.hordeRun?.bossRift?.tint ?? '#22D3EE'}55, #000000ee 70%)`,
+              }}
+            />
+          )}
 
           {/* Hide HUD and UI overlays during Cinematic Sequence */}
           {engine.introCinematic.phase === 'none' || engine.introCinematic.phase === 'complete' ? (

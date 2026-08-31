@@ -1,4 +1,5 @@
 import { Monster } from '../types/game';
+import { BossRiftBossKind, BossRiftState, createEmptyBossRift } from './bossRifts';
 
 /** Pocket dimension west of the overworld so it never collides with interiors (x ≥ 6800). */
 export const HORDE_ARENA = {
@@ -12,7 +13,7 @@ export const HORDE_ARENA = {
 
 export const HORDE_ZONE_ID = 'horde_crucible';
 export const HORDE_UNLOCK_INTERVAL = 20;
-export const HORDE_BOSS_INTERVAL = 60;
+export const HORDE_BOSS_INTERVAL = 28;
 export const HORDE_EXTRACT_AFTER = 24;
 export const HORDE_FADE_SECONDS = 0.48;
 export const HORDE_LIVING_CAP = 58;
@@ -95,6 +96,8 @@ export interface HordeRunState {
   nextMobName: string;
   hazardAcc: number;
   blindness: HordeBlindness;
+  bossRift: BossRiftState;
+  riftWarp: number;
 }
 
 export const HORDE_ROSTER: { kind: Exclude<HordeArchetype, `boss_${string}`>; name: string; toast: string; icon: string }[] = [
@@ -112,7 +115,7 @@ export const HORDE_ROSTER: { kind: Exclude<HordeArchetype, `boss_${string}`>; na
   { kind: 'blindcaster', name: 'Void Priest', toast: 'It steals your eyes. Hunt the scream.', icon: '◉' },
 ];
 
-export const HORDE_BOSSES: { kind: HordeArchetype; name: string; toast: string }[] = [
+export const HORDE_BOSSES: { kind: BossRiftBossKind; name: string; toast: string }[] = [
   { kind: 'boss_titan', name: 'CORE TITAN', toast: 'The rack itself stands up' },
   { kind: 'boss_beam', name: 'BEAMWEAVER', toast: 'Cross-lasers — walk the gaps' },
   { kind: 'boss_skyfall', name: 'SKYFALL ARCHON', toast: 'The ceiling is dropping' },
@@ -138,6 +141,8 @@ export function createEmptyHordeRun(): HordeRunState {
     nextMobName: HORDE_ROSTER[1].name,
     hazardAcc: 0,
     blindness: { active: false, remaining: 0, casterId: null },
+    bossRift: createEmptyBossRift(),
+    riftWarp: 0,
   };
 }
 
@@ -770,10 +775,26 @@ export function formatHordeTime(seconds: number): string {
 
 let liveHazards: HordeHazard[] = [];
 let liveBlindness: HordeBlindness = { active: false, remaining: 0, casterId: null };
+let liveRiftFx = { active: false, warp: 0, tint: '#22D3EE', cx: 0, cy: 0, r: 400 };
 
 export function publishHordeFx(hazards: HordeHazard[], blindness: HordeBlindness) {
   liveHazards = hazards;
   liveBlindness = blindness;
+}
+
+export function publishHordeRift(rift: BossRiftState, warp: number) {
+  liveRiftFx = {
+    active: rift.active && rift.phase !== 'none',
+    warp,
+    tint: rift.tint,
+    cx: rift.anchorX,
+    cy: rift.anchorY,
+    r: rift.arenaR,
+  };
+}
+
+export function getHordeRiftFx() {
+  return liveRiftFx;
 }
 
 export function getHordeHazards(): HordeHazard[] {
@@ -787,4 +808,5 @@ export function getHordeBlindness(): HordeBlindness {
 export function clearHordeFx() {
   liveHazards = [];
   liveBlindness = { active: false, remaining: 0, casterId: null };
+  liveRiftFx = { active: false, warp: 0, tint: '#22D3EE', cx: 0, cy: 0, r: 400 };
 }

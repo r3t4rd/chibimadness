@@ -246,6 +246,25 @@ export const HUD: React.FC<HUDProps> = ({
               VISION NULL — kill the caster
             </div>
           )}
+          {hordeRun.bossRift?.active && hordeRun.bossRift.phase !== 'none' && (
+            <div className="text-[10px] font-mono font-bold text-white/90 bg-black/70 px-3 py-1.5 rounded-lg border border-white/20 max-w-md text-center">
+              <span style={{ color: hordeRun.bossRift.tint }}>{hordeRun.bossRift.label}</span>
+              <span className="text-white/40 mx-2">|</span>
+              {hordeRun.bossRift.phase === 'warp_in' && 'Перенос в измерение…'}
+              {hordeRun.bossRift.phase === 'objective' && (
+                <>
+                  {hordeRun.bossRift.hint}
+                  <span className="text-white/40 mx-2">|</span>
+                  {Math.floor(hordeRun.bossRift.objectiveCur)}/{hordeRun.bossRift.objectiveMax}
+                </>
+              )}
+              {hordeRun.bossRift.phase === 'boss' && `BOSS: ${hordeRun.bossRift.bossName}`}
+              {hordeRun.bossRift.phase === 'warp_out' && 'Возврат…'}
+            </div>
+          )}
+          <div className="text-[9px] font-mono text-cyan-300/50 pointer-events-none">
+            Эволюции действуют только в Nullspace
+          </div>
           {hordeRun.canExtract ? (
             <button
               type="button"
