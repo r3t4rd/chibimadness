@@ -8,3 +8,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Per-machine Codex state and optional private project instructions.
+.codex/
+AGENTS.local.md
