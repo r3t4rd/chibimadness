@@ -24,8 +24,8 @@ use yuyib::{
     app::{Application, ApplicationWebView, ApplicationWebViewHandle, RenderLoop},
     platform::{WindowConfig, WindowMode},
     webview::{
-        AssetBundle, AssetLimits, AssetPath, BridgeLimits, BridgeRouter, ControlledUrl,
-        EndpointName, LocalCsp, LocalPage, MimePolicy, PageEvent, PageSessionId, TypedEndpoint,
+        AssetBundle, AssetLimits, AssetPath, BridgeLimits, BridgeRouter, EndpointName, LocalCsp,
+        LocalPage, MimePolicy, PageEvent, PageSessionId, TypedEndpoint, WebSocketOrigin,
         WebViewBuilder,
     },
 };
@@ -69,7 +69,7 @@ struct GameConfiguration {
 
 struct ServerEndpoint {
     websocket_url: String,
-    csp_origin: ControlledUrl,
+    csp_origin: WebSocketOrigin,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -88,7 +88,7 @@ struct LaunchAssets {
 fn main() -> Result<(), Box<dyn Error>> {
     let server = configured_server()?;
     let csp = match &server {
-        Some(server) => LocalCsp::strict().with_connect_origin(&server.csp_origin),
+        Some(server) => LocalCsp::strict().with_websocket_origin(&server.csp_origin),
         None => LocalCsp::strict(),
     };
     let launch_assets = assets_for_launch()?;
@@ -424,18 +424,16 @@ fn configured_server() -> Result<Option<ServerEndpoint>, Box<dyn Error>> {
 }
 
 fn parse_server_endpoint(value: String) -> Result<ServerEndpoint, Box<dyn Error>> {
-    let mut url = Url::parse(&value)?;
+    let url = Url::parse(&value)?;
     if url.scheme() != "wss" {
         return Err("server URL must use wss://".into());
     }
     if url.host_str().is_none() || !url.username().is_empty() || url.password().is_some() {
         return Err("server URL must include a host and must not contain credentials".into());
     }
-    url.set_scheme("https")
-        .expect("wss scheme can be converted to https");
     Ok(ServerEndpoint {
         websocket_url: value,
-        csp_origin: ControlledUrl::parse(url.as_str())?,
+        csp_origin: WebSocketOrigin::parse(url.as_str())?,
     })
 }
 

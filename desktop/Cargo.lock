@@ -3692,7 +3692,7 @@ dependencies = [
 [[package]]
 name = "yuyib"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=edbf5f27bf40f94688373ef06412ce7067bfd7e9#edbf5f27bf40f94688373ef06412ce7067bfd7e9"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
 dependencies = [
  "yuyib-app",
  "yuyib-core",
@@ -3704,7 +3704,7 @@ dependencies = [
 [[package]]
 name = "yuyib-app"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=edbf5f27bf40f94688373ef06412ce7067bfd7e9#edbf5f27bf40f94688373ef06412ce7067bfd7e9"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
 dependencies = [
  "yuyib-core",
  "yuyib-platform",
@@ -3715,12 +3715,12 @@ dependencies = [
 [[package]]
 name = "yuyib-core"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=edbf5f27bf40f94688373ef06412ce7067bfd7e9#edbf5f27bf40f94688373ef06412ce7067bfd7e9"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
 
 [[package]]
 name = "yuyib-platform"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=edbf5f27bf40f94688373ef06412ce7067bfd7e9#edbf5f27bf40f94688373ef06412ce7067bfd7e9"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
 dependencies = [
  "windows-sys 0.59.0",
  "winit",
@@ -3729,7 +3729,7 @@ dependencies = [
 [[package]]
 name = "yuyib-render"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=edbf5f27bf40f94688373ef06412ce7067bfd7e9#edbf5f27bf40f94688373ef06412ce7067bfd7e9"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
 dependencies = [
  "pollster",
  "wgpu",
@@ -3739,7 +3739,7 @@ dependencies = [
 [[package]]
 name = "yuyib-webview"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=edbf5f27bf40f94688373ef06412ce7067bfd7e9#edbf5f27bf40f94688373ef06412ce7067bfd7e9"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
 dependencies = [
  "serde",
  "serde_json",
