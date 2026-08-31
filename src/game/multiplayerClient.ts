@@ -38,6 +38,8 @@ const serverConfigurationListeners = new Set<() => void>();
 const contentBuildListeners = new Set<() => void>();
 let contentBuildInfo: ContentBuildInfo = { version: null, source: null };
 let nativeWorldRendererEnabled = false;
+let nativeWorldRendererReady = false;
+const nativeWorldRendererListeners = new Set<() => void>();
 let configurationRetryTimer: number | null = null;
 let nextBridgeMessageId = 1;
 
@@ -85,13 +87,21 @@ if (typeof window !== 'undefined') {
         version: typeof version === 'string' && version.length > 0 ? version : null,
         source: source === 'embedded' || source === 'patch' ? source : null,
       };
-      nativeWorldRendererEnabled = detail.payload?.native_renderer === true;
+      const nativeRendererRequested = detail.payload?.native_renderer === true;
+      if (nativeRendererRequested !== nativeWorldRendererEnabled) {
+        nativeWorldRendererReady = false;
+      }
+      nativeWorldRendererEnabled = nativeRendererRequested;
       if (configuredServerUrl && configurationRetryTimer !== null) {
         window.clearTimeout(configurationRetryTimer);
         configurationRetryTimer = null;
       }
       serverConfigurationListeners.forEach((listener) => listener());
       contentBuildListeners.forEach((listener) => listener());
+      nativeWorldRendererListeners.forEach((listener) => listener());
+    } else if (detail?.event === 'world.renderer_ready' && nativeWorldRendererEnabled) {
+      nativeWorldRendererReady = true;
+      nativeWorldRendererListeners.forEach((listener) => listener());
     } else if (detail?.event === 'world.renderer_metrics') {
       perfMonitor.recordNativePresentation(detail.payload?.fps, detail.payload?.frameMs);
     }
@@ -111,6 +121,15 @@ export function subscribeContentBuildInfo(listener: () => void) {
 
 export function isNativeWorldRendererEnabled() {
   return nativeWorldRendererEnabled;
+}
+
+export function isNativeWorldRendererReady() {
+  return nativeWorldRendererReady;
+}
+
+export function subscribeNativeWorldRenderer(listener: () => void) {
+  nativeWorldRendererListeners.add(listener);
+  return () => nativeWorldRendererListeners.delete(listener);
 }
 
 export function sendNativeWorldRenderFrame(frame: NativeWorldRenderFrame) {

@@ -25,9 +25,11 @@ import { CLASS_DEFAULTS } from './game/constants';
 import {
   getContentBuildInfo,
   isNativeWorldRendererEnabled,
+  isNativeWorldRendererReady,
   net,
   sendNativeWorldRenderFrame,
   subscribeContentBuildInfo,
+  subscribeNativeWorldRenderer,
 } from './game/multiplayerClient';
 
 const FALLBACK_PLAYER: Player = {
@@ -114,7 +116,9 @@ export function App() {
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
-  const [nativeWorldRenderer, setNativeWorldRenderer] = useState(isNativeWorldRendererEnabled);
+  const [nativeWorldRendererRequested, setNativeWorldRendererRequested] = useState(isNativeWorldRendererEnabled);
+  const [nativeWorldRendererReady, setNativeWorldRendererReady] = useState(isNativeWorldRendererReady);
+  const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -135,10 +139,20 @@ export function App() {
     return unsub;
   }, []);
 
-  useEffect(() => subscribeContentBuildInfo(() => {
-    setContentBuild(getContentBuildInfo());
-    setNativeWorldRenderer(isNativeWorldRendererEnabled());
-  }), []);
+  useEffect(() => {
+    const syncRendererState = () => {
+      setContentBuild(getContentBuildInfo());
+      setNativeWorldRendererRequested(isNativeWorldRendererEnabled());
+      setNativeWorldRendererReady(isNativeWorldRendererReady());
+    };
+    syncRendererState();
+    const unsubscribeContent = subscribeContentBuildInfo(syncRendererState);
+    const unsubscribeRenderer = subscribeNativeWorldRenderer(syncRendererState);
+    return () => {
+      unsubscribeContent();
+      unsubscribeRenderer();
+    };
+  }, []);
 
   // Main Canvas Render Loop
   useEffect(() => {
@@ -169,7 +183,7 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      if (nativeWorldRenderer) {
+      if (nativeWorldRendererRequested) {
         const camera = updateNativeCamera(curEngine.player, time);
         const entities = [
           {
@@ -314,10 +328,12 @@ export function App() {
           canvasW: viewportWidth,
           canvasH: viewportHeight,
         });
-        perfMonitor.recordDraw(0);
-        perfMonitor.recordFrame(frameIntervalMs);
-        animationId = requestAnimationFrame(render);
-        return;
+        if (nativeWorldRenderer) {
+          perfMonitor.recordDraw(0);
+          perfMonitor.recordFrame(frameIntervalMs);
+          animationId = requestAnimationFrame(render);
+          return;
+        }
       }
 
       perfMonitor.setExtras({
@@ -362,7 +378,7 @@ export function App() {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [createdPlayer, nativeWorldRenderer]);
+  }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
 
   // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
   useEffect(() => {

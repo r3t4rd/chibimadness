@@ -65,6 +65,11 @@ struct PatchFile {
 #[derive(Deserialize)]
 struct GameReady {}
 
+#[derive(Serialize)]
+struct NativeRendererReady {
+    active: bool,
+}
+
 #[derive(Clone, Serialize)]
 struct GameConfiguration {
     server_url: Option<String>,
@@ -150,6 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .expect("webview handle is installed")
         .clone();
     let mut renderer = NativeWorldRenderer::default();
+    let mut native_world_rendered = false;
     Application::new()
         .window(WindowConfig {
             title: "ChibiMadness — Yuyib Desktop".to_owned(),
@@ -169,7 +175,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .on_render(move |frame| {
             if native_renderer {
-                renderer.render(frame, &native_world.borrow());
+                if renderer.render(frame, &native_world.borrow()) && !native_world_rendered {
+                    emit_native_renderer_ready(&native_metrics_handle, session, limits);
+                    native_world_rendered = true;
+                }
                 if let Some(metrics) = renderer.record_presentation() {
                     emit_native_renderer_metrics(&native_metrics_handle, session, limits, metrics);
                 }
@@ -178,6 +187,23 @@ fn main() -> Result<(), Box<dyn Error>> {
         .webview(webview)
         .run()?;
     Ok(())
+}
+
+fn emit_native_renderer_ready(
+    handle: &ApplicationWebViewHandle,
+    session: PageSessionId,
+    limits: BridgeLimits,
+) {
+    let Ok(event) = PageEvent::from_typed(
+        limits.protocol_version(),
+        session,
+        EndpointName::parse("world.renderer_ready").expect("static endpoint is valid"),
+        NativeRendererReady { active: true },
+        limits,
+    ) else {
+        return;
+    };
+    let _ = handle.enqueue(event);
 }
 
 fn emit_native_renderer_metrics(

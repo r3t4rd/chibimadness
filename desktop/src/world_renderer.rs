@@ -228,18 +228,20 @@ impl NativeWorldRenderer {
         Some(metrics)
     }
 
-    pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) {
+    /// Returns true only after the frame reached the native surface. The
+    /// WebView uses this acknowledgement to hide its Canvas fallback safely.
+    pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
         let Some((world, prediction_seconds)) = state.frame_with_prediction() else {
-            return;
+            return false;
         };
         self.build_vertices(world, prediction_seconds);
         if self.vertices.is_empty() {
-            return;
+            return false;
         }
         self.ensure_pipeline(frame);
         self.upload_vertices(frame);
         let (Some(pipeline), Some(vertex_buffer)) = (&self.pipeline, &self.vertex_buffer) else {
-            return;
+            return false;
         };
         let vertex_count = self.vertices.len() as u32;
         frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
@@ -247,6 +249,7 @@ impl NativeWorldRenderer {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.draw(0..vertex_count, 0..1);
         });
+        true
     }
 
     fn ensure_pipeline(&mut self, frame: &RenderFrame<'_>) {
