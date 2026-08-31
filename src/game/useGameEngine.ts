@@ -761,13 +761,22 @@ export function useGameEngine(initialPlayer: Player) {
         if (self) {
           const current = playerRef.current;
           const stats = { ...current.stats, hp: self.stats.hp, maxHp: self.stats.maxHp };
-          const serverSaysDead = self.stats.hp <= 0;
-          const syncedState = self.state === 'dead' ? 'dead' : self.state;
+          // A shared world is authoritative for death and respawn.  Previously
+          // this deliberately preserved the local `dead` state, which meant a
+          // later server revive (idle state + restored HP) could never reach
+          // the local player.  Accept the full server state instead.
+          const serverSaysDead = self.stats.hp <= 0 || self.state === 'dead';
+          const syncedState = serverSaysDead ? 'dead' : self.state;
+          const serverRespawned = !serverSaysDead && (current.isRespawning || current.state === 'dead');
           const serverMovedAcrossWorlds = isInHordeArena(self.x, self.y) || isInHordeArena(current.x, current.y);
-          playerRef.current = serverMovedAcrossWorlds
+          // Normal-map respawns also move the player back to the camp.  Keep
+          // movement client-predicted during play, but accept that one
+          // server-authoritative transform when a death has just resolved.
+          const shouldApplyServerTransform = serverMovedAcrossWorlds || serverRespawned;
+          playerRef.current = shouldApplyServerTransform
             ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
             : { ...current, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined };
-          setPlayer((previous) => serverMovedAcrossWorlds
+          setPlayer((previous) => shouldApplyServerTransform
             ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
             : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined });
         }
