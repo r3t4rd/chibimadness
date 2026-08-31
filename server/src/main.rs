@@ -1285,7 +1285,7 @@ fn tick_combat_world(state: &mut WorldState) {
                             set_number(
                                 &mut player.value,
                                 "hp",
-                                (number(&player.value, "hp", 0.0) + heal).min(max_hp),
+                                (number(&clone, "hp", 0.0) + heal).min(max_hp),
                             );
                         }
                     }
