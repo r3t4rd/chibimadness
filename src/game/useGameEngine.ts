@@ -5754,6 +5754,7 @@ export function useGameEngine(initialPlayer: Player) {
 
   const handleSendChat = useCallback((msg: string) => {
     setPlayer((prev) => ({ ...prev, chatMessage: msg, chatTimer: 4 }));
+    net.sendChat(msg, playerRef.current.name);
   }, []);
 
   const handleEnterHorde = useCallback(() => {
