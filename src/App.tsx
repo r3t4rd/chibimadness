@@ -159,6 +159,7 @@ export function App() {
     // `body` used to carry an opaque Tailwind background for the Canvas2D
     // game. Once WGPU has acknowledged its first frame, leaving that class
     // in place visually covers the native surface even though it is drawing.
+    document.documentElement.classList.toggle('native-world', nativeWorldRenderer);
     document.body.classList.toggle('bg-transparent', nativeWorldRenderer);
     document.body.classList.toggle('bg-slate-950', !nativeWorldRenderer);
   }, [nativeWorldRenderer]);
