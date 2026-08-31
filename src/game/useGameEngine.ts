@@ -590,6 +590,7 @@ function remotePlayerFromWire(value: unknown): Player | null {
 }
 
 export function useGameEngine(initialPlayer: Player) {
+  const initialPlayerId = initialPlayer.id;
   const [player, setPlayer] = useState<Player>(() => ({
     ...initialPlayer,
     elevationZ: 0,
@@ -609,6 +610,8 @@ export function useGameEngine(initialPlayer: Player) {
     isReloading: false,
     reloadTimer: 0,
   }));
+  const initialPlayerRef = useRef(initialPlayer);
+  initialPlayerRef.current = initialPlayer;
 
   // Sync state if initialPlayer changes (e.g. after Character Creation)
   useEffect(() => {
@@ -696,11 +699,15 @@ export function useGameEngine(initialPlayer: Player) {
       history.shift();
     }
   };
+  // `initialPlayer` is rehydrated from persistence and may get a new object
+  // identity while the same session is running. Depending on the full object
+  // made React run this cleanup, which deliberately disconnected multiplayer
+  // and caused a new join/reconnect loop on the server.
   useEffect(() => {
-    if (initialPlayer.id === 'default') return;
-    net.connect(initialPlayer);
+    if (initialPlayerId === 'default') return;
+    net.connect(initialPlayerRef.current);
     return () => net.disconnect();
-  }, [initialPlayer]);
+  }, [initialPlayerId]);
 
   useEffect(() => net.subscribe((type, data) => {
     if (type === 'init_world' && Array.isArray(data.players)) {
