@@ -1,7 +1,7 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use yuyib::render::{RenderFrame, wgpu};
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
@@ -104,6 +104,17 @@ pub struct NativeWorldRenderer {
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
+    last_presented_at: Option<Instant>,
+    metrics_started_at: Instant,
+    metrics_frame_count: u32,
+    metrics_total_ms: f32,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeRendererMetrics {
+    pub fps: u32,
+    pub frame_ms: f32,
 }
 
 impl Default for NativeWorldRenderer {
@@ -114,11 +125,40 @@ impl Default for NativeWorldRenderer {
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
+            last_presented_at: None,
+            metrics_started_at: Instant::now(),
+            metrics_frame_count: 0,
+            metrics_total_ms: 0.0,
         }
     }
 }
 
 impl NativeWorldRenderer {
+    /// Returns a half-second rolling sample for the native WGPU presentation
+    /// loop. This must not reuse `requestAnimationFrame` metrics from the
+    /// WebView: WebView2 can be throttled while the native surface is smooth.
+    pub fn record_presentation(&mut self) -> Option<NativeRendererMetrics> {
+        let now = Instant::now();
+        if let Some(previous) = self.last_presented_at.replace(now) {
+            self.metrics_total_ms += (now - previous).as_secs_f32() * 1_000.0;
+            self.metrics_frame_count = self.metrics_frame_count.saturating_add(1);
+        }
+
+        let elapsed = now - self.metrics_started_at;
+        if elapsed < std::time::Duration::from_millis(500) || self.metrics_frame_count == 0 {
+            return None;
+        }
+
+        let metrics = NativeRendererMetrics {
+            fps: (self.metrics_frame_count as f32 / elapsed.as_secs_f32()).round() as u32,
+            frame_ms: self.metrics_total_ms / self.metrics_frame_count as f32,
+        };
+        self.metrics_started_at = now;
+        self.metrics_frame_count = 0;
+        self.metrics_total_ms = 0.0;
+        Some(metrics)
+    }
+
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) {
         let Some(world) = state.frame() else {
             return;

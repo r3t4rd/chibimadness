@@ -34,6 +34,11 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) =>
         </div>
         <div className="mt-1 pt-1 border-t border-white/10 space-y-0.5">
           <div>draw {stats.drawMs.toFixed(1)} ms</div>
+          {stats.nativeFps !== null && stats.nativeFrameMs !== null && (
+            <div className="text-cyan-300">
+              native {stats.nativeFps} FPS {stats.nativeFrameMs.toFixed(1)} ms
+            </div>
+          )}
           <div>zoom {stats.zoom.toFixed(2)}x</div>
           <div>
             {stats.canvasW}×{stats.canvasH}

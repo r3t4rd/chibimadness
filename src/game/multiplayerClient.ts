@@ -1,4 +1,5 @@
 import { Player, DropItem, Monster, Projectile } from '../types/game';
+import { perfMonitor } from './performanceMonitor';
 
 export type NetEventListener = (type: string, data: any) => void;
 export type ContentBuildInfo = {
@@ -64,6 +65,8 @@ if (typeof window !== 'undefined') {
         content_version?: unknown;
         content_source?: unknown;
         native_renderer?: unknown;
+        fps?: unknown;
+        frameMs?: unknown;
       };
     }>).detail;
     if (detail?.event === 'game.configuration') {
@@ -84,6 +87,8 @@ if (typeof window !== 'undefined') {
       }
       serverConfigurationListeners.forEach((listener) => listener());
       contentBuildListeners.forEach((listener) => listener());
+    } else if (detail?.event === 'world.renderer_metrics') {
+      perfMonitor.recordNativePresentation(detail.payload?.fps, detail.payload?.frameMs);
     }
   });
 

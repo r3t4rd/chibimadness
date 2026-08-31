@@ -3,6 +3,8 @@ export type PerfSnapshot = {
   frameMs: number;
   avgFrameMs: number;
   drawMs: number;
+  nativeFps: number | null;
+  nativeFrameMs: number | null;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -18,6 +20,8 @@ class PerformanceMonitor {
   private frameTimes: number[] = [];
   private frameMs = 0;
   private drawMs = 0;
+  private nativeFps: number | null = null;
+  private nativeFrameMs: number | null = null;
   private fogMs = 0;
   private extras: Partial<PerfSnapshot> = {};
 
@@ -29,6 +33,15 @@ class PerformanceMonitor {
 
   recordDraw(ms: number) {
     this.drawMs = ms;
+  }
+
+  recordNativePresentation(fps: unknown, frameMs: unknown) {
+    this.nativeFps = typeof fps === 'number' && Number.isFinite(fps)
+      ? Math.max(0, Math.round(fps))
+      : null;
+    this.nativeFrameMs = typeof frameMs === 'number' && Number.isFinite(frameMs)
+      ? Math.max(0, frameMs)
+      : null;
   }
 
   recordFog(ms: number) {
@@ -46,6 +59,8 @@ class PerformanceMonitor {
       frameMs: this.frameMs,
       avgFrameMs: avg,
       drawMs: this.drawMs,
+      nativeFps: this.nativeFps,
+      nativeFrameMs: this.nativeFrameMs,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,

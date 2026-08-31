@@ -22,7 +22,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
-use world_renderer::{NativeRenderFrame, NativeWorldRenderer, NativeWorldState};
+use world_renderer::{
+    NativeRenderFrame, NativeRendererMetrics, NativeWorldRenderer, NativeWorldState,
+};
 use yuyib::{
     app::{Application, ApplicationWebView, ApplicationWebViewHandle, RenderLoop},
     platform::{WindowConfig, WindowMode},
@@ -142,6 +144,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_bridge_router(bridge);
     let (webview, handle) = ApplicationWebView::new(builder).with_event_queue(8)?;
     *outbound.borrow_mut() = Some(handle);
+    let native_metrics_handle = outbound
+        .borrow()
+        .as_ref()
+        .expect("webview handle is installed")
+        .clone();
     let mut renderer = NativeWorldRenderer::default();
     Application::new()
         .window(WindowConfig {
@@ -163,11 +170,32 @@ fn main() -> Result<(), Box<dyn Error>> {
         .on_render(move |frame| {
             if native_renderer {
                 renderer.render(frame, &native_world.borrow());
+                if let Some(metrics) = renderer.record_presentation() {
+                    emit_native_renderer_metrics(&native_metrics_handle, session, limits, metrics);
+                }
             }
         })
         .webview(webview)
         .run()?;
     Ok(())
+}
+
+fn emit_native_renderer_metrics(
+    handle: &ApplicationWebViewHandle,
+    session: PageSessionId,
+    limits: BridgeLimits,
+    metrics: NativeRendererMetrics,
+) {
+    let Ok(event) = PageEvent::from_typed(
+        limits.protocol_version(),
+        session,
+        EndpointName::parse("world.renderer_metrics").expect("static endpoint is valid"),
+        metrics,
+        limits,
+    ) else {
+        return;
+    };
+    let _ = handle.enqueue(event);
 }
 
 fn local_page(csp: LocalCsp, assets: AssetBundle) -> Result<LocalPage, Box<dyn Error>> {
