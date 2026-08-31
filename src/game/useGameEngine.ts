@@ -1364,56 +1364,60 @@ export function useGameEngine(initialPlayer: Player) {
 
   // Award EXP & Gold
   const awardExpAndGold = useCallback((exp: number, gold: number) => {
-    setPlayer((prev) => {
-      let newExp = prev.stats.exp + exp;
-      let newLevel = prev.stats.level;
-      let newMaxExp = prev.stats.maxExp;
-      let newStatPoints = prev.stats.statPoints;
-      let newHp = prev.stats.hp;
-      let newMaxHp = prev.stats.maxHp;
-      let newAtk = prev.stats.atk;
-      let newDef = prev.stats.def;
+    const prev = playerRef.current;
+    let newExp = prev.stats.exp + exp;
+    let newLevel = prev.stats.level;
+    let newMaxExp = prev.stats.maxExp;
+    let newStatPoints = prev.stats.statPoints;
+    let newHp = prev.stats.hp;
+    let newMaxHp = prev.stats.maxHp;
+    let newAtk = prev.stats.atk;
+    let newDef = prev.stats.def;
 
-      let leveledUp = false;
-      let levelsGained = 0;
-      while (newExp >= newMaxExp) {
-        newExp -= newMaxExp;
-        newLevel += 1;
-        newMaxExp = Math.floor(newMaxExp * 1.35);
-        newStatPoints += 3;
-        newMaxHp += 40;
-        newHp = newMaxHp;
-        newAtk += 4;
-        newDef += 2;
-        leveledUp = true;
-        levelsGained += 1;
+    let leveledUp = false;
+    let levelsGained = 0;
+    while (newExp >= newMaxExp) {
+      newExp -= newMaxExp;
+      newLevel += 1;
+      newMaxExp = Math.floor(newMaxExp * 1.35);
+      newStatPoints += 3;
+      newMaxHp += 40;
+      newHp = newMaxHp;
+      newAtk += 4;
+      newDef += 2;
+      leveledUp = true;
+      levelsGained += 1;
+    }
+
+    if (leveledUp) {
+      sound.playLevelUp();
+      showToast('LEVEL UP! 🌟', `Уровень ${newLevel}! Выбери эволюцию`, '⬆️');
+      if (net.hasSharedWorld()) {
+        net.healPlayer(newMaxHp);
       }
+    }
 
-      if (leveledUp) {
-        sound.playLevelUp();
-        showToast('LEVEL UP! 🌟', `Уровень ${newLevel}! Выбери эволюцию`, '⬆️');
-        if (net.hasSharedWorld()) {
-          net.healPlayer(newMaxHp);
-        }
-      }
-
-      return {
-        ...prev,
-        gold: prev.gold + gold,
-        stats: {
-          ...prev.stats,
-          level: newLevel,
-          exp: newExp,
-          maxExp: newMaxExp,
-          statPoints: newStatPoints,
-          hp: newHp,
-          maxHp: newMaxHp,
-          atk: newAtk,
-          def: newDef,
-        },
-        pendingEvolutionPicks: (prev.pendingEvolutionPicks ?? 0) + levelsGained,
-      };
-    });
+    const nextPlayer: Player = {
+      ...prev,
+      gold: Math.max(0, (Number.isFinite(prev.gold) ? prev.gold : 0) + gold),
+      stats: {
+        ...prev.stats,
+        level: newLevel,
+        exp: newExp,
+        maxExp: newMaxExp,
+        statPoints: newStatPoints,
+        hp: newHp,
+        maxHp: newMaxHp,
+        atk: newAtk,
+        def: newDef,
+      },
+      pendingEvolutionPicks: (prev.pendingEvolutionPicks ?? 0) + levelsGained,
+    };
+    // The movement loop reads playerRef synchronously. Updating only React
+    // state let its next frame rebuild the player from stale gold and erase
+    // a just-awarded reward before it could be persisted.
+    playerRef.current = nextPlayer;
+    setPlayer(nextPlayer);
   }, [showToast]);
 
   // Handle Monster Defeated (Initiates ragdoll death fall and drops loot)
@@ -2053,6 +2057,10 @@ export function useGameEngine(initialPlayer: Player) {
     const aimDirX = Math.cos(aimAngle);
     const aimDirY = Math.sin(aimAngle);
     const newFacing: 'left' | 'right' = aimDirX >= 0 ? 'right' : 'left';
+    const visualLaunchOffsetY = -(
+      Math.min(55, Math.max(0, curPlayer.elevationZ ?? 0) * 0.4)
+      + Math.max(0, curPlayer.jumpZ ?? 0)
+    );
 
     const evoFire = getEvolutionMods(curPlayer, hordeRunRef.current.active).fireRateMult;
     playerRef.current = {
@@ -2094,7 +2102,7 @@ export function useGameEngine(initialPlayer: Player) {
                         currentGun === 'mac10' ? 28 : 26;
 
       const muzzleBaseX = curPlayer.x + aimDirX * barrelLen;
-      const muzzleBaseY = curPlayer.y + aimDirY * barrelLen - 3;
+      const muzzleBaseY = curPlayer.y + aimDirY * barrelLen - 3 + visualLaunchOffsetY;
       const count = currentGun === 'shotgun' ? 18 : currentGun === 'cheytac' ? 14 : 11;
       const colors = ['#FFFBEB', '#FEF08A', '#FDE047', '#FBBF24', '#FB923C'];
       const sparks: VisualParticle[] = [];
@@ -2140,11 +2148,14 @@ export function useGameEngine(initialPlayer: Player) {
     };
 
     const pushProj = (proj: Projectile) => {
+      const launchedProjectile = visualLaunchOffsetY === 0
+        ? proj
+        : { ...proj, visualOffsetY: visualLaunchOffsetY };
       if (net.hasSharedWorld()) {
-        net.fireProjectile(proj);
+        net.fireProjectile(launchedProjectile);
         return;
       }
-      projectilesRef.current = [...projectilesRef.current, proj];
+      projectilesRef.current = [...projectilesRef.current, launchedProjectile];
       setProjectiles([...projectilesRef.current]);
     };
 
@@ -3639,6 +3650,11 @@ export function useGameEngine(initialPlayer: Player) {
         const oTargetX = curPlayer.omnislashTargetX ?? curPlayer.x;
         const oTargetY = curPlayer.omnislashTargetY ?? curPlayer.y;
 
+        // A cast must remain invulnerable through its final strike and the
+        // return frame. The old fixed one-second timer could expire before
+        // the 12-step sequence completed under a low frame rate.
+        dodgeTimer = Math.max(dodgeTimer, Math.max(0.12, strikesLeft * 0.08 + strikeTimer));
+
         if (strikeTimer <= 0 && strikesLeft > 0) {
           strikesLeft -= 1;
           strikeTimer = 0.08;
@@ -4865,8 +4881,10 @@ export function useGameEngine(initialPlayer: Player) {
         // Enemy Projectile hits Player
         else if (p.ownerId !== nextPlayer.id) {
           const dx = nextX - p.x;
-          // In-Air 3D Hitbox: player visual vertical position elevated by jumpZ
-          const playerHitboxY = nextY - jumpZ;
+          // Keep hit detection aligned with the same compressed elevation
+          // projection used by the character and projectile renderer.
+          const projectedElevation = Math.min(55, Math.max(0, curElevation) * 0.4);
+          const playerHitboxY = nextY - projectedElevation - jumpZ;
           const dy = playerHitboxY - p.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
 

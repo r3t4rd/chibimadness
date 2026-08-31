@@ -46,9 +46,12 @@ export function drawChibiCharacter(
   ctx.save();
   ctx.translate(x + (player.previewOffsetX ?? 0), y + (player.previewOffsetY ?? 0));
 
-  // Vertical offsets for elevation and airborne jump
-  const shadowOffsetY = -elevationZ;
-  const jumpOffsetY = -(elevationZ + jumpZ);
+  // World elevation is physical height, while the 2D world renders cliff
+  // faces with a compressed vertical projection. Using the raw value here
+  // made an operator on a 200-unit roof appear ~200px away from its platform.
+  const projectedElevation = Math.min(55, Math.max(0, elevationZ) * 0.4);
+  const shadowOffsetY = -projectedElevation;
+  const jumpOffsetY = -(projectedElevation + jumpZ);
 
   // 1. Draw Drop Shadow (shrinks when player jumps high in the air)
   if (isShadow) {

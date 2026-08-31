@@ -1031,6 +1031,11 @@ export interface Projectile {
   damage: number;
   range: number;
   distanceTraveled: number;
+  /**
+   * Screen-space launch offset. It lets a projectile originate at an elevated
+   * character without changing its authoritative world-space collision path.
+   */
+  visualOffsetY?: number;
   color: string;
   size: number;
   tracerLength?: number;

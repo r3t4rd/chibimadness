@@ -1520,6 +1520,8 @@ fn sanitize_player_projectile(
     let vx = bounded_number(&Value::Object(value.clone()), "vx", -50.0, 50.0)?;
     let vy = bounded_number(&Value::Object(value.clone()), "vy", -50.0, 50.0)?;
     let size = bounded_number(&Value::Object(value.clone()), "size", 2.0, 32.0).unwrap_or(5.0);
+    let visual_offset_y = bounded_number(&Value::Object(value.clone()), "visualOffsetY", -300.0, 0.0)
+        .unwrap_or(0.0);
     let color = value
         .get("color")
         .and_then(Value::as_str)
@@ -1529,7 +1531,7 @@ fn sanitize_player_projectile(
         "id": format!("srv_projectile_{}", NEXT_PROJECTILE_ID.fetch_add(1, Ordering::Relaxed)),
         "ownerId": owner_id, "type": kind.0, "x": x, "y": y, "vx": vx, "vy": vy,
         "damage": kind.1, "range": kind.2, "distanceTraveled": 0.0, "color": color,
-        "size": size, "piercing": kind.0 == "laser",
+        "size": size, "piercing": kind.0 == "laser", "visualOffsetY": visual_offset_y,
     }))
 }
 
@@ -1883,13 +1885,15 @@ mod tests {
         let projectile = sanitize_player_projectile(
             Some(&json!({
                 "type": "meteor", "x": 1_350.0, "y": 750.0,
-                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
+                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185",
+                "visualOffsetY": -42.0
             })),
             "caster",
             &player,
         )
         .expect("targeted meteor within cast range");
         assert_eq!(projectile["type"], "magic_orb");
+        assert_eq!(projectile["visualOffsetY"], -42.0);
 
         assert!(sanitize_player_projectile(
             Some(&json!({

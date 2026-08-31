@@ -4481,7 +4481,10 @@ function drawSummons(ctx: CanvasRenderingContext2D, summons: SummonedAlly[], tim
 function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[]) {
   projectiles.forEach((p) => {
     ctx.save();
-    ctx.translate(p.x, p.y);
+    // Launch effects from an elevated muzzle, then smoothly converge with the
+    // authoritative ground-plane trajectory used for collision detection.
+    const launchOffset = (p.visualOffsetY ?? 0) * Math.max(0, 1 - p.distanceTraveled / 260);
+    ctx.translate(p.x, p.y + launchOffset);
     const angle = Math.atan2(p.vy, p.vx);
     ctx.rotate(angle);
 
