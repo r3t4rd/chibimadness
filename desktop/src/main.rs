@@ -26,12 +26,21 @@ use world_renderer::{
     NativeRenderFrame, NativeRendererMetrics, NativeWorldRenderer, NativeWorldState,
 };
 use yuyib::{
-    app::{Application, ApplicationWebView, ApplicationWebViewHandle, RenderLoop},
-    platform::{WindowConfig, WindowMode},
+    platform::{
+        ChildWindowPlacement, Window, WindowConfig, WindowMode,
+        winit::{
+            application::ApplicationHandler,
+            dpi::{PhysicalPosition, PhysicalSize},
+            event::WindowEvent,
+            event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+            window::WindowId,
+        },
+    },
+    render::{ClearColor, Renderer},
     webview::{
         AssetBundle, AssetLimits, AssetPath, BridgeLimits, BridgeRouter, EndpointName, LocalCsp,
         LocalPage, MimePolicy, PageEvent, PageSessionId, TypedEndpoint, WebSocketOrigin,
-        WebViewBuilder,
+        WebViewBuilder, WebViewHost,
     },
 };
 
@@ -96,6 +105,220 @@ struct LaunchAssets {
     source: ContentSource,
 }
 
+/// Owns the two native child surfaces explicitly instead of using Yuyib's
+/// convenience `Application` facade. WebView2 is a windowed child: a
+/// transparent WebView cannot reveal a DXGI swapchain on its *parent* HWND.
+/// The game world therefore has to be a sibling child HWND beneath the
+/// transparent WebView/HUD.
+struct GameDesktopApp {
+    native_renderer: bool,
+    session: PageSessionId,
+    limits: BridgeLimits,
+    builder: Option<WebViewBuilder>,
+    outbound: Rc<RefCell<Option<WebViewHost>>>,
+    native_world: Rc<RefCell<NativeWorldState>>,
+    parent_window: Option<Window>,
+    world_window: Option<Window>,
+    renderer: Option<Renderer>,
+    world_renderer: NativeWorldRenderer,
+    native_world_rendered: bool,
+}
+
+impl GameDesktopApp {
+    fn resize_children(&mut self) {
+        let Some(parent) = &self.parent_window else {
+            return;
+        };
+        let physical = parent.physical_size();
+        let width = physical.width.max(1);
+        let height = physical.height.max(1);
+        let logical = physical.to_logical::<f64>(parent.raw().scale_factor());
+        let bounds = yuyib::webview::WebViewBounds::new(
+            0.0,
+            0.0,
+            logical.width.max(1.0),
+            logical.height.max(1.0),
+        );
+        if let (Ok(bounds), Some(webview)) = (bounds, self.outbound.borrow().as_ref()) {
+            if let Err(error) = webview.set_bounds(bounds) {
+                eprintln!("could not resize local WebView: {error}");
+            }
+        }
+        if let Some(child) = &self.world_window {
+            // Do not call Window::set_child_placement here: it raises the child
+            // above the WebView. The world must remain below the transparent HUD.
+            child.raw().set_outer_position(PhysicalPosition::new(0, 0));
+            let _ = child
+                .raw()
+                .request_inner_size(PhysicalSize::new(width, height));
+            if let Some(renderer) = &mut self.renderer {
+                renderer.resize(width, height);
+            }
+        }
+    }
+
+    fn render_world(&mut self) {
+        if !self.native_renderer {
+            return;
+        }
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let state = self.native_world.borrow();
+        let world_renderer = &mut self.world_renderer;
+        let mut rendered = false;
+        let result = renderer.render_frame(ClearColor::default(), |frame| {
+            rendered = world_renderer.render(frame, &state);
+        });
+        drop(state);
+        if let Err(error) = result {
+            eprintln!("native world presentation failed: {error}");
+            return;
+        }
+        if rendered && !self.native_world_rendered {
+            emit_native_renderer_ready(&self.outbound, self.session, self.limits);
+            self.native_world_rendered = true;
+        }
+        if let Some(metrics) = self.world_renderer.record_presentation() {
+            emit_native_renderer_metrics(&self.outbound, self.session, self.limits, metrics);
+        }
+    }
+
+    fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
+        self.renderer.take();
+        self.world_window.take();
+        self.outbound.borrow_mut().take();
+        self.parent_window.take();
+        event_loop.exit();
+    }
+}
+
+impl ApplicationHandler for GameDesktopApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.parent_window.is_some() {
+            return;
+        }
+        let parent = match Window::create(
+            event_loop,
+            &WindowConfig {
+                title: "ChibiMadness — Yuyib Desktop".to_owned(),
+                width: 1_600,
+                height: 900,
+                resizable: true,
+                decorations: true,
+                mode: WindowMode::Windowed,
+            },
+        ) {
+            Ok(window) => window,
+            Err(error) => {
+                eprintln!("could not create game window: {error}");
+                event_loop.exit();
+                return;
+            }
+        };
+
+        // Creation order is intentional. The game child is created first, then
+        // WebView2 is layered above it and routes all HTML input. A parent WGPU
+        // surface cannot appear through WebView2 transparency on Windows.
+        let (world_window, renderer) = if self.native_renderer {
+            let size = parent.physical_size();
+            let placement =
+                match ChildWindowPlacement::new(0, 0, size.width.max(1), size.height.max(1)) {
+                    Ok(placement) => placement,
+                    Err(error) => {
+                        eprintln!("could not size native world child: {error}");
+                        event_loop.exit();
+                        return;
+                    }
+                };
+            let child = match Window::create_child(event_loop, &parent, placement) {
+                Ok(child) => child,
+                Err(error) => {
+                    eprintln!("could not create native world child: {error}");
+                    event_loop.exit();
+                    return;
+                }
+            };
+            let renderer = match Renderer::new(&child) {
+                Ok(renderer) => renderer,
+                Err(error) => {
+                    eprintln!("could not initialise native world renderer: {error}");
+                    event_loop.exit();
+                    return;
+                }
+            };
+            (Some(child), Some(renderer))
+        } else {
+            (None, None)
+        };
+
+        let Some(builder) = self.builder.take() else {
+            eprintln!("game WebView was already consumed");
+            event_loop.exit();
+            return;
+        };
+        let webview = match builder.build(&parent) {
+            Ok(webview) => webview,
+            Err(error) => {
+                eprintln!("could not create game WebView: {error}");
+                event_loop.exit();
+                return;
+            }
+        };
+        *self.outbound.borrow_mut() = Some(webview);
+        self.parent_window = Some(parent);
+        self.world_window = world_window;
+        self.renderer = renderer;
+        self.resize_children();
+        if let Some(child) = &self.world_window {
+            child.request_redraw();
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let parent_id = self.parent_window.as_ref().map(|window| window.raw().id());
+        let world_id = self.world_window.as_ref().map(|window| window.raw().id());
+        if parent_id == Some(window_id) {
+            match event {
+                WindowEvent::CloseRequested => self.shutdown(event_loop),
+                WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
+                    self.resize_children();
+                    if let Some(child) = &self.world_window {
+                        child.request_redraw();
+                    }
+                }
+                _ => {}
+            }
+        } else if world_id == Some(window_id) {
+            match event {
+                WindowEvent::Resized(size) => {
+                    if let Some(renderer) = &mut self.renderer {
+                        renderer.resize(size.width, size.height);
+                    }
+                }
+                WindowEvent::RedrawRequested => self.render_world(),
+                _ => {}
+            }
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.native_renderer {
+            if let Some(child) = &self.world_window {
+                child.request_redraw();
+            }
+            event_loop.set_control_flow(ControlFlow::Poll);
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let server = configured_server()?;
     let native_renderer = native_renderer_enabled();
@@ -108,7 +331,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let session = PageSessionId::parse("b9c9f5bbfae14dbdb3f5e2356b74d0aa")?;
     let limits = BridgeLimits::default();
-    let outbound = Rc::new(RefCell::new(None::<ApplicationWebViewHandle>));
+    let outbound = Rc::new(RefCell::new(None::<WebViewHost>));
     let outbound_for_endpoint = Rc::clone(&outbound);
     let native_world = Rc::new(RefCell::new(NativeWorldState::default()));
     let native_world_for_endpoint = Rc::clone(&native_world);
@@ -119,7 +342,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("game.ready")?,
         move |_message: GameReady| {
-            let Some(handle) = outbound_for_endpoint.borrow().clone() else {
+            let outbound = outbound_for_endpoint.borrow();
+            let Some(webview) = outbound.as_ref() else {
                 return;
             };
             let event = PageEvent::from_typed(
@@ -135,7 +359,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 limits,
             );
             if let Ok(event) = event {
-                let _ = handle.enqueue(event);
+                let _ = webview.emit_event(&event);
             }
         },
     ))?;
@@ -147,50 +371,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_local_page(page)
         .with_transparent(native_renderer)
         .with_bridge_router(bridge);
-    let (webview, handle) = ApplicationWebView::new(builder).with_event_queue(8)?;
-    *outbound.borrow_mut() = Some(handle);
-    let native_metrics_handle = outbound
-        .borrow()
-        .as_ref()
-        .expect("webview handle is installed")
-        .clone();
-    let mut renderer = NativeWorldRenderer::default();
-    let mut native_world_rendered = false;
-    Application::new()
-        .window(WindowConfig {
-            title: "ChibiMadness — Yuyib Desktop".to_owned(),
-            width: 1_600,
-            height: 900,
-            resizable: true,
-            decorations: true,
-            mode: WindowMode::Windowed,
-        })
-        // This is now the intended game renderer, not an invisible surface
-        // behind an opaque WebView. It presents the last bridge frame at the
-        // display cadence while the WebView owns only sparse UI.
-        .render_loop(if native_renderer {
-            RenderLoop::Continuous
-        } else {
-            RenderLoop::OnDemand
-        })
-        .on_render(move |frame| {
-            if native_renderer {
-                if renderer.render(frame, &native_world.borrow()) && !native_world_rendered {
-                    emit_native_renderer_ready(&native_metrics_handle, session, limits);
-                    native_world_rendered = true;
-                }
-                if let Some(metrics) = renderer.record_presentation() {
-                    emit_native_renderer_metrics(&native_metrics_handle, session, limits, metrics);
-                }
-            }
-        })
-        .webview(webview)
-        .run()?;
+    let mut app = GameDesktopApp {
+        native_renderer,
+        session,
+        limits,
+        builder: Some(builder),
+        outbound,
+        native_world,
+        parent_window: None,
+        world_window: None,
+        renderer: None,
+        world_renderer: NativeWorldRenderer::default(),
+        native_world_rendered: false,
+    };
+    let event_loop = EventLoop::new()?;
+    event_loop.run_app(&mut app)?;
     Ok(())
 }
 
 fn emit_native_renderer_ready(
-    handle: &ApplicationWebViewHandle,
+    outbound: &Rc<RefCell<Option<WebViewHost>>>,
     session: PageSessionId,
     limits: BridgeLimits,
 ) {
@@ -203,11 +403,13 @@ fn emit_native_renderer_ready(
     ) else {
         return;
     };
-    let _ = handle.enqueue(event);
+    if let Some(webview) = outbound.borrow().as_ref() {
+        let _ = webview.emit_event(&event);
+    }
 }
 
 fn emit_native_renderer_metrics(
-    handle: &ApplicationWebViewHandle,
+    outbound: &Rc<RefCell<Option<WebViewHost>>>,
     session: PageSessionId,
     limits: BridgeLimits,
     metrics: NativeRendererMetrics,
@@ -221,7 +423,9 @@ fn emit_native_renderer_metrics(
     ) else {
         return;
     };
-    let _ = handle.enqueue(event);
+    if let Some(webview) = outbound.borrow().as_ref() {
+        let _ = webview.emit_event(&event);
+    }
 }
 
 fn local_page(csp: LocalCsp, assets: AssetBundle) -> Result<LocalPage, Box<dyn Error>> {
