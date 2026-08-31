@@ -65,8 +65,33 @@ jobs:
           $manifest = [ordered]@{ formatVersion = 1; version = $version; files = @($entries) }
           [IO.File]::WriteAllText((Join-Path $release 'patch-manifest.json'), ($manifest | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
           Compress-Archive -Path (Join-Path $staging '*') -DestinationPath (Join-Path $release 'web-patch.zip') -Force
-      - name: Build desktop binary
-        run: cargo build --release --target x86_64-pc-windows-msvc --manifest-path desktop/Cargo.toml
+      - name: Build native launcher and game host
+        run: cargo build --release --target x86_64-pc-windows-msvc --manifest-path desktop/Cargo.toml --bin chibimadness-desktop --bin chibimadness-game
+      - name: Package native self-update bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nativeSource = Join-Path $env:GITHUB_WORKSPACE 'desktop\target\x86_64-pc-windows-msvc\release'
+          $staging = Join-Path $env:RUNNER_TEMP 'chibimadness-native-patch'
+          $release = Join-Path $env:GITHUB_WORKSPACE 'release'
+          Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $staging, $release | Out-Null
+          $entries = @()
+          Get-ChildItem -Path $nativeSource -File | Where-Object {
+            $_.Name -eq 'chibimadness-game.exe' -or $_.Extension -eq '.dll'
+          } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $staging $_.Name)
+            $entries += [ordered]@{
+              path = $_.Name
+              sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              size = $_.Length
+            }
+          }
+          if (-not ($entries.path -contains 'chibimadness-game.exe')) { throw 'Native game host was not built' }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "main-$($env:GITHUB_SHA.Substring(0, 12))" }
+          $manifest = [ordered]@{ formatVersion = 1; version = $version; files = @($entries) }
+          [IO.File]::WriteAllText((Join-Path $release 'native-patch-manifest.json'), ($manifest | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
+          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath (Join-Path $release 'native-patch.zip') -Force
       - name: Install Inno Setup
         run: choco install innosetup --no-progress --yes
       - name: Build Windows installer
@@ -76,11 +101,25 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "main-$($env:GITHUB_SHA.Substring(0, 12))" }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) { throw "Inno Setup compiler was not found at $iscc" }
-          & $iscc "/DMyAppVersion=$version" "/DSourceExe=$env:GITHUB_WORKSPACE\desktop\target\x86_64-pc-windows-msvc\release\chibimadness-desktop.exe" "$env:GITHUB_WORKSPACE\installer\chibimadness.iss"
+          & $iscc "/DMyAppVersion=$version" "/DSourceLauncher=$env:GITHUB_WORKSPACE\desktop\target\x86_64-pc-windows-msvc\release\chibimadness-desktop.exe" "/DSourceGame=$env:GITHUB_WORKSPACE\desktop\target\x86_64-pc-windows-msvc\release\chibimadness-game.exe" "$env:GITHUB_WORKSPACE\installer\chibimadness.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
-      - name: Stage desktop binary
+      - name: Package portable client
         shell: pwsh
-        run: Copy-Item desktop/target/x86_64-pc-windows-msvc/release/chibimadness-desktop.exe release/chibimadness-desktop.exe
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $nativeSource = Join-Path $env:GITHUB_WORKSPACE 'desktop\target\x86_64-pc-windows-msvc\release'
+          $portable = Join-Path $env:RUNNER_TEMP 'ChibiMadness-Portable'
+          $release = Join-Path $env:GITHUB_WORKSPACE 'release'
+          Remove-Item -Recurse -Force $portable -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path (Join-Path $portable 'runtime') | Out-Null
+          Copy-Item -LiteralPath (Join-Path $nativeSource 'chibimadness-desktop.exe') -Destination $portable
+          Get-ChildItem -Path $nativeSource -File | Where-Object {
+            $_.Name -eq 'chibimadness-game.exe' -or $_.Extension -eq '.dll'
+          } | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $portable 'runtime')
+          }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "main-$($env:GITHUB_SHA.Substring(0, 12))" }
+          Compress-Archive -Path (Join-Path $portable '*') -DestinationPath (Join-Path $release "ChibiMadness-Portable-$version.zip") -Force
       - uses: actions/upload-artifact@v4
         with:
           name: chibimadness-windows
@@ -104,4 +143,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/chibimadness-desktop.exe artifacts/ChibiMadness-Setup-*.exe artifacts/web-patch.zip artifacts/patch-manifest.json --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" artifacts/ChibiMadness-Portable-*.zip artifacts/ChibiMadness-Setup-*.exe artifacts/web-patch.zip artifacts/patch-manifest.json artifacts/native-patch.zip artifacts/native-patch-manifest.json --generate-notes

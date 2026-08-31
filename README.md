@@ -13,7 +13,7 @@ ChibiMadness — проект и Windows-дистрибутив 2D action RPG, �
 | Локальный web-сервер | **server.ts** | Express, Vite middleware, /api/health и базовый WebSocket-релей для разработки |
 | Production world server | **server/src/main.rs** | Authoritative состояние игроков, мобов, снарядов, урона и Nullspace |
 | NPC runtime | **server/src/ai.rs** | Utility AI, архетипы, память цели, телеграфы, attack tokens и уровни 1–40 |
-| Windows-клиент | **desktop/src/main.rs** | Встроенный web-бандл, WSS-конфигурация и проверяемые hot-update пакеты |
+| Windows-клиент | **desktop/src/launcher.rs**, **desktop/src/main.rs** | Стабильный launcher, обновляемый WebView game host, WSS и проверяемые web/native updates |
 
 **server.ts** и **server/** — разные серверы. Первый нужен для быстрого web-разработческого цикла. Rust-сервер используется там, где мир и бой должны быть authoritative.
 
@@ -98,10 +98,11 @@ Rust-процесс предоставляет только WebSocket. В produc
 
 ~~~text
 .
-├── .github/workflows/release.yml  # Windows build, installer, web patch, GitHub Release
+├── .github/workflows/release.yml  # Windows packages, web/native patches, GitHub Release
 ├── desktop/
-│   ├── build.rs                   # Встраивает разрешённые файлы dist/ в executable
-│   └── src/main.rs                # WebView host, WSS config, patch cache/verification
+│   ├── build.rs                   # Встраивает разрешённые файлы dist/ в game host
+│   ├── src/launcher.rs            # Стабильный launcher и native self-update
+│   └── src/main.rs                # WebView game host, WSS и web patch validation
 ├── docs/
 │   ├── README.md                  # Индекс документации
 │   ├── ARCHITECTURE.md            # Runtime-границы и потоки данных
@@ -149,7 +150,9 @@ Rust-процесс предоставляет только WebSocket. В produc
 
 ## Релизы
 
-Workflow **.github/workflows/release.yml** собирает Windows executable, Inno Setup installer, **web-patch.zip** и **patch-manifest.json**. Push в main создаёт Actions artifact; тег v* дополнительно создаёт GitHub Release.
+Workflow **.github/workflows/release.yml** собирает portable ZIP, Inno Setup installer, проверяемый web patch и native patch с обновляемым Rust game host. Push в main создаёт Actions artifact; тег v* дополнительно публикует все шесть файлов в GitHub Release.
+
+Стабильный **chibimadness-desktop.exe** запускает установленный или SHA-256-проверенный **chibimadness-game.exe**. Изменения launcher требуют нового installer/portable package; game host и web-контент обновляются своими patch-пакетами.
 
 Полная процедура и границы hot-update механизма описаны в [docs/RELEASES.md](docs/RELEASES.md).
 

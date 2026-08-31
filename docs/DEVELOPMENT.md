@@ -88,7 +88,7 @@ npm run build
 
 $env:CHIBIMADNESS_SERVER_URL = 'wss://example.com/ws'
 $env:CHIBIMADNESS_BUILD_VERSION = 'dev-local'
-cargo build --release --target x86_64-pc-windows-msvc --manifest-path desktop/Cargo.toml
+cargo build --release --target x86_64-pc-windows-msvc --manifest-path desktop/Cargo.toml --bin chibimadness-desktop --bin chibimadness-game
 ~~~
 
 Без compile-time server URL desktop остаётся offline, пока endpoint не задан в другом build. Runtime override:
@@ -120,7 +120,8 @@ cargo test --manifest-path desktop/Cargo.toml
 | Сетевой клиент | src/game/multiplayerClient.ts |
 | Authoritative мир | server/src/main.rs |
 | Поведение NPC | server/src/ai.rs |
-| Desktop updater/CSP | desktop/src/main.rs |
+| WebView game host, CSP и web updater | desktop/src/main.rs |
+| Native launcher и обновление game host | desktop/src/launcher.rs |
 
 ## Минимальная матрица проверки
 
@@ -131,7 +132,7 @@ cargo test --manifest-path desktop/Cargo.toml
 | NPC/баланс | server tests, telegraph/order tests, ручной бой |
 | Интерьеры/коллизии | typecheck и проход затронутых этажей |
 | Desktop | web build до Cargo; desktop fmt/test/build |
-| Release workflow | проверить paths и имена четырёх artifacts |
+| Release workflow | проверить paths и имена шести release artifacts |
 | Docs/config | проверить команды против manifests и отсутствие секретов |
 
 Автоматические проверки не доказывают качество боя. Изменение TTK, управления, телеграфов или камеры требует короткого ручного playtest.

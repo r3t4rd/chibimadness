@@ -35,7 +35,7 @@ Rust world server
 - оружие, навыки, анимационные состояния и визуальные эффекты;
 - квесты, инвентарь, дропы и локальная прогрессия;
 - переходы в здания, Nullspace и обратно;
-- применение authoritative snapshots, если доступен Rust world server.
+- применение authoritative snapshot/delta кадров, если доступен Rust world server.
 
 Отрисовка отделена по назначению:
 
@@ -64,7 +64,7 @@ Node-процесс объединяет Express, Vite middleware и WebSocket p
 
 Rust-процесс — production world server. Он слушает raw WebSocket, по умолчанию на 127.0.0.1:3010, и ожидает TLS termination/reverse proxy снаружи.
 
-Основной цикл работает с шагом 20 мс (50 Hz). Движение клиентов принимается и snapshots отправляются не чаще 20 Hz. Состояние хранится в памяти одного процесса.
+Основной цикл работает с шагом 20 мс (50 Hz). Движение клиентов принимается и replication delta отправляются не чаще 20 Hz. Состояние хранится в памяти одного процесса.
 
 ## Границы authoritative состояния
 
@@ -80,7 +80,7 @@ Rust-процесс — production world server. Он слушает raw WebSock
 | Инвентарь, экипировка, золото и навыки | Клиент/localStorage |
 | Квесты, локальные дропы и эволюции | Клиент/localStorage |
 
-Legacy сообщения sync_monster_damage, sync_drop_spawn и sync_drop_pickup Rust-сервер намеренно игнорирует. Общий бой проходит через world_bootstrap, world_fire и world_snapshot.
+Legacy сообщения sync_monster_damage, sync_drop_spawn и sync_drop_pickup Rust-сервер намеренно игнорирует. Общий бой проходит через world_bootstrap, world_fire, полные world_snapshot и периодические world_delta.
 
 ## Сетевой поток
 
@@ -89,8 +89,8 @@ Legacy сообщения sync_monster_damage, sync_drop_spawn и sync_drop_pick
 3. В init_world возвращаются существующие игроки, недавний чат и resume token.
 4. Первый клиент передаёт authored monster manifest через world_bootstrap. Сервер очищает входные данные, применяет уровни NPC и становится владельцем мира.
 5. Клиенты отправляют movement не чаще 20 Hz и запросы действий.
-6. Rust loop двигает NPC/снаряды, считает попадания и рассылает world_snapshot.
-7. Клиент принимает snapshot перед следующим animation frame и использует его как новую основу состояния.
+6. Rust loop двигает NPC/снаряды, считает попадания и каждые 50 мс формирует interest-scoped world_delta для каждой сессии.
+7. Клиент применяет upsert/remove delta, хранит короткую историю кадров и интерполирует мобов и снаряды с задержкой 80 мс. Полные world_snapshot остаются для bootstrap и немедленных переходов состояния.
 
 Resume token не является учётной записью. Он предотвращает замену активной сессии с тем же id и исчезает после остановки процесса.
 
@@ -115,9 +115,14 @@ Resume token не является учётной записью. Он пред�
 
 ## Desktop-клиент
 
-**desktop/build.rs** читает production **dist/** и встраивает разрешённые web-файлы в executable. Поэтому web-бандл всегда собирается до Cargo desktop build.
+**desktop/build.rs** читает production **dist/** и встраивает разрешённые web-файлы в **chibimadness-game.exe**. Поэтому web-бандл всегда собирается до Cargo desktop build.
 
-Native host:
+Windows runtime разделён на два процесса:
+
+- **chibimadness-desktop.exe** из **desktop/src/launcher.rs** остаётся стабильным, проверяет native manifest/bundle и запускает подходящий game host;
+- **chibimadness-game.exe** из **desktop/src/main.rs** содержит WebView, bridge, WSS-конфигурацию и web patch updater.
+
+Game host:
 
 - принимает только wss:// endpoint без credentials;
 - добавляет его origin в строгий CSP;
@@ -126,7 +131,7 @@ Native host:
 - загружает patch во staging и активирует его только после полной проверки;
 - при ошибке остаётся на последнем валидном cache или embedded bundle.
 
-Patch меняет только web-контент. Изменение Rust native host требует нового executable.
+Launcher хранит проверенные native-версии в **%LOCALAPPDATA%\ChibiMadness\native-versions** и откатывается к последнему валидному либо установленному host. Изменения game host распространяются через native patch; изменение самого launcher требует нового installer или portable package.
 
 ## Как расширять проект
 
@@ -135,6 +140,7 @@ Patch меняет только web-контент. Изменение Rust nati
 - Новый authored контент: **constants.ts** либо тематический модуль рядом с существующими.
 - Новая authoritative механика: обработчик сообщения и состояние в **server/src/main.rs**, тест рядом с серверным модулем.
 - Изменение NPC decision model: **server/src/ai.rs**, без дублирования логики в renderer.
-- Изменение desktop protocol/update: **desktop/src/main.rs** плюс unit test для validation boundary.
+- Изменение WebView/CSP/web updater: **desktop/src/main.rs** плюс unit test для validation boundary.
+- Изменение native launcher/updater: **desktop/src/launcher.rs**; такое обновление требует нового installer/portable package.
 
 Крупные файлы движка уже являются зонами концентрации сложности. Новая независимая подсистема предпочтительно получает отдельный модуль, а не ещё одну несвязанную ветку внутри useGameEngine.

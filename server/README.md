@@ -45,7 +45,7 @@ cargo run --manifest-path server/Cargo.toml -- \
 | --- | ---: |
 | Simulation tick | 20 ms / 50 Hz |
 | Movement interval | 50 ms / 20 Hz |
-| Snapshot interval | 50 ms / 20 Hz |
+| Replication interval | 50 ms / 20 Hz |
 | Максимальный message/frame | 128 KiB |
 | Максимум world monsters | 256 |
 | Максимум world projectiles | 1024 |
@@ -65,7 +65,7 @@ Movement проходит bounds/rate validation. Слишком быстрый 
 | chat | Сообщение в общий chat history |
 | world_bootstrap | Передать authored roster при пустом мире |
 | world_fire | Запрос создать player projectile |
-| player_heal | Authoritative heal с немедленным snapshot |
+| player_heal | Authoritative heal, подтверждаемый следующим world_delta |
 | teleport | Валидированный переход |
 | horde_enter | Войти в общий Nullspace run |
 | horde_extract | Покинуть run после unlock |
@@ -77,7 +77,8 @@ Movement проходит bounds/rate validation. Слишком быстрый 
 | init_world | Existing players, recent chat и resume token |
 | player_joined / player_moved / player_left | Presence deltas |
 | chat_message | Нормализованное сообщение |
-| world_snapshot | Players, monsters, projectiles и horde state |
+| world_snapshot | Полное состояние players, monsters, projectiles и horde при bootstrap/переходах |
+| world_delta | Interest-scoped upsert/remove изменения общего мира с sequence number |
 | horde_join_rejected | Причина отказа позднему участнику |
 
 Legacy action, sync_monster_damage, sync_drop_spawn и sync_drop_pickup принимаются как no-op. Клиентский combat payload не должен обходить server simulation.

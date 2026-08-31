@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld, getCameraState } from './game/worldRenderer';
+import { drawWorld, screenToWorld, getCameraState, getStaticTerrainCache, type RenderQuality } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -82,6 +82,7 @@ export function App() {
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const staticTerrainCacheRef = useRef<CanvasImageSource | null>(null);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -104,10 +105,24 @@ export function App() {
     setContentBuild(getContentBuildInfo());
   }), []);
 
+  useEffect(() => perfMonitor.observeLongTasks(), []);
+
+  useEffect(() => {
+    if (!createdPlayer) return;
+    const warmCache = () => {
+      staticTerrainCacheRef.current = getStaticTerrainCache();
+    };
+    const id = window.setTimeout(warmCache, 0);
+    return () => window.clearTimeout(id);
+  }, [createdPlayer]);
+
   // Main Canvas Render Loop
   useEffect(() => {
     let animationId: number;
     let lastRenderedAt: number | null = null;
+    let nextRenderAt = 0;
+    let quality: RenderQuality = 'high';
+    let fastFrames = 0;
     const canvas = canvasRef.current;
     if (!canvas || !createdPlayer) return;
 
@@ -123,15 +138,27 @@ export function App() {
     window.addEventListener('resize', handleResize);
 
     const render = (time: number) => {
+      const minFrameMs = quality === 'high' ? 1000 / 120 : quality === 'medium' ? 1000 / 90 : 1000 / 60;
+      if (time < nextRenderAt) {
+        animationId = requestAnimationFrame(render);
+        return;
+      }
+      nextRenderAt = time + minFrameMs;
       const frameIntervalMs = lastRenderedAt === null ? 1000 / 60 : time - lastRenderedAt;
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
+      const replicatedCombat = net.hasSharedWorld()
+        ? curEngine.combatRenderStateRef.current
+        : null;
+      const renderMonsters = replicatedCombat?.monsters ?? curEngine.monsters;
+      const renderProjectiles = replicatedCombat?.projectiles ?? curEngine.projectiles;
 
       perfMonitor.setExtras({
-        monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
+        monsters: renderMonsters.filter((m) => m.state !== 'dead').length,
         particles: curEngine.particles.length,
-        projectiles: curEngine.projectiles.length,
+        projectiles: renderProjectiles.length,
+        quality,
         zoom: getCameraState().zoom,
         canvasW: canvas.width,
         canvasH: canvas.height,
@@ -144,10 +171,10 @@ export function App() {
         canvas.height,
         curEngine.player,
         curEngine.remotePlayers,
-        curEngine.monsters,
+        renderMonsters,
         curEngine.resourceNodes,
         curEngine.dropItems,
-        curEngine.projectiles,
+        renderProjectiles,
         curEngine.particles,
         curEngine.damagePopups,
         curEngine.screenShake,
@@ -157,9 +184,27 @@ export function App() {
         curEngine.worldPois,
         curEngine.cars,
         curEngine.summons,
-        curEngine.gameTimePhase
+        curEngine.gameTimePhase,
+        staticTerrainCacheRef.current,
+        quality
       );
-      perfMonitor.recordDraw(performance.now() - drawStart);
+      const drawMs = performance.now() - drawStart;
+      perfMonitor.recordDraw(drawMs);
+      if (drawMs > 18) {
+        quality = 'low';
+        fastFrames = 0;
+      } else if (drawMs > 10 && quality === 'high') {
+        quality = 'medium';
+        fastFrames = 0;
+      } else if (drawMs < 5) {
+        fastFrames += 1;
+        if (fastFrames >= 180) {
+          quality = quality === 'low' ? 'medium' : 'high';
+          fastFrames = 0;
+        }
+      } else {
+        fastFrames = 0;
+      }
       perfMonitor.recordFrame(frameIntervalMs);
       animationId = requestAnimationFrame(render);
     };

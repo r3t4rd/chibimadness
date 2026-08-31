@@ -12,18 +12,21 @@ Job build-windows-client использует Node 22 и Windows runner:
 
 1. npm ci, TypeScript check и web build;
 2. создание проверяемого web patch;
-3. release build desktop executable;
-4. сборка per-user installer через Inno Setup;
-5. публикация Actions artifact **chibimadness-windows**.
+3. release build стабильного launcher и обновляемого game host;
+4. создание native patch;
+5. сборка portable ZIP и per-user installer через Inno Setup;
+6. публикация Actions artifact **chibimadness-windows**.
 
 Содержимое artifact:
 
-- **chibimadness-desktop.exe**;
+- **ChibiMadness-Portable-<version>.zip**;
 - **ChibiMadness-Setup-<version>.exe**;
 - **web-patch.zip**;
-- **patch-manifest.json**.
+- **patch-manifest.json**;
+- **native-patch.zip**;
+- **native-patch-manifest.json**.
 
-Только tag build запускает publish-release и создаёт GitHub Release с этими четырьмя типами файлов. Обычный push в main оставляет artifact в Actions.
+Только tag build запускает publish-release и создаёт GitHub Release с этими шестью файлами. Обычный push в main оставляет artifact в Actions.
 
 ## Создание версии
 
@@ -38,8 +41,8 @@ git push origin v<version>
 
 После workflow проверьте:
 
-- оба Windows binary присутствуют;
-- patch archive и manifest приложены к тому же Release;
+- installer и portable ZIP присутствуют;
+- обе пары patch archive/manifest приложены к тому же Release;
 - installer запускается без UAC в стандартном per-user режиме;
 - desktop показывает ожидаемый content version/source;
 - клиент подключается к настроенному WSS;
@@ -56,14 +59,14 @@ CHIBIMADNESS_BUILD_VERSION=<tag или branch ref>
 
 Runtime флаг --server может заменить endpoint, но принимает только wss:// URL без credentials.
 
-## Hot update
+## Web hot update
 
-Desktop executable содержит embedded web build. При запуске он также проверяет:
+Game host содержит embedded web build. При запуске он также проверяет:
 
 - **releases/latest/download/patch-manifest.json**;
 - **releases/latest/download/web-patch.zip**.
 
-Manifest format version равен 1 и содержит version, path, SHA-256 и size каждого разрешённого файла. Ограничения native host:
+Manifest format version равен 1 и содержит version, path, SHA-256 и size каждого разрешённого файла. Ограничения game host:
 
 - максимум 512 файлов;
 - максимум 64 MiB на весь patch;
@@ -82,7 +85,29 @@ Cache:
 
 Installer удаляет этот cache при uninstall.
 
-Web patch подходит для React/TypeScript logic, UI, карты и web assets. Изменения **desktop/src/**, CSP, bridge protocol или patch validation требуют нового executable.
+Web patch подходит для React/TypeScript logic, UI, карты и web assets. Изменения CSP, bridge protocol или web patch validation требуют нового game host.
+
+## Native self-update
+
+Windows package содержит:
+
+- стабильный **chibimadness-desktop.exe** launcher;
+- начальный **runtime/chibimadness-game.exe** с WebView и игровой native-логикой.
+
+При старте launcher проверяет:
+
+- **releases/latest/download/native-patch-manifest.json**;
+- **releases/latest/download/native-patch.zip**.
+
+Native manifest format version равен 1, обязательно включает **chibimadness-game.exe** и ограничивает bundle размером 512 MiB. Пути, размеры и SHA-256 каждого файла проверяются до активации. Версии хранятся в:
+
+~~~text
+%LOCALAPPDATA%\ChibiMadness\native-versions
+~~~
+
+Если загрузка или проверка не проходит, launcher использует последнюю валидную версию либо game host из установленного **runtime/**. Installer удаляет web и native caches при uninstall.
+
+Изменения **desktop/src/main.rs** и native DLL распространяются через native patch. Сам launcher из **desktop/src/launcher.rs** не обновляет себя и требует нового installer/portable package.
 
 ## Production Rust server
 

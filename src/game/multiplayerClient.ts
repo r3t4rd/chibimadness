@@ -1,4 +1,5 @@
 import { Player, DropItem, Monster, Projectile } from '../types/game';
+import { perfMonitor } from './performanceMonitor';
 
 export type NetEventListener = (type: string, data: any) => void;
 export type ContentBuildInfo = {
@@ -161,13 +162,16 @@ class MultiplayerClient {
 
       socket.onmessage = (event) => {
         if (this.ws !== socket) return;
+        const parseStartedAt = performance.now();
         try {
           const msg = JSON.parse(event.data);
+          perfMonitor.recordNetworkParse(performance.now() - parseStartedAt);
           if (msg.type === 'init_world' && typeof msg.resumeToken === 'string') {
             this.resumeToken = msg.resumeToken;
           }
           this.emitToListeners(msg.type, msg);
         } catch (e) {
+          perfMonitor.recordNetworkParse(performance.now() - parseStartedAt);
           console.error('Error parsing WS message:', e);
         }
       };
