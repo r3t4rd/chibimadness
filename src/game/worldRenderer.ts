@@ -12,25 +12,7 @@ let smoothedCameraX = 650;
 let smoothedCameraY = 750;
 let smoothedZoom = 1.0;
 let lastRenderTimestamp = 0;
-const TERRAIN_CACHE_SCALE = 0.5;
-let terrainCache: HTMLCanvasElement | null = null;
-
 export type RenderQuality = 'high' | 'medium' | 'low';
-
-export function getStaticTerrainCache(): HTMLCanvasElement | null {
-  if (terrainCache || typeof document === 'undefined') return terrainCache;
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(WORLD_WIDTH * TERRAIN_CACHE_SCALE);
-  canvas.height = Math.ceil(WORLD_HEIGHT * TERRAIN_CACHE_SCALE);
-  const context = canvas.getContext('2d');
-  if (!context) return null;
-  context.scale(TERRAIN_CACHE_SCALE, TERRAIN_CACHE_SCALE);
-  // Terrain is overwhelmingly static. Dynamic combat, water-adjacent effects,
-  // lighting and all entities are still rendered in the live pass.
-  drawTerrain(context, { x: 0, y: 0 }, WORLD_WIDTH, WORLD_HEIGHT, 0);
-  terrainCache = canvas;
-  return terrainCache;
-}
 
 export function getCameraState() {
   return {
@@ -86,7 +68,6 @@ export function drawWorld(
   cars: CarEntity[] = [],
   summons: SummonedAlly[] = [],
   gameTimePhase: number = 0.35,
-  staticTerrain: CanvasImageSource | null = null,
   quality: RenderQuality = 'high'
 ) {
   // Screen shake offset calculation with smooth decay
@@ -177,7 +158,6 @@ export function drawWorld(
     cars,
     summons,
     gameTimePhase,
-    staticTerrain,
     quality
   );
 }
@@ -204,7 +184,6 @@ export function renderWorld(
   cars: CarEntity[] = [],
   summons: SummonedAlly[] = [],
   gameTimePhase: number = 0.35,
-  staticTerrain: CanvasImageSource | null = null,
   quality: RenderQuality = 'high'
 ) {
   ctx.save();
@@ -288,11 +267,7 @@ export function renderWorld(
         drawHordeArena(ctx, camera, canvasWidth, canvasHeight, time, viewBounds);
       }
     } else {
-      if (staticTerrain) {
-        ctx.drawImage(staticTerrain, 0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-      } else {
-        drawTerrain(ctx, camera, canvasWidth, canvasHeight, time);
-      }
+      drawTerrain(ctx, camera, canvasWidth, canvasHeight, time);
       drawPlatformsAndBridges(ctx, camera, time);
     }
   }

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld, getCameraState, getStaticTerrainCache, type RenderQuality } from './game/worldRenderer';
+import { drawWorld, screenToWorld, getCameraState, type RenderQuality } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -82,7 +82,6 @@ export function App() {
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const staticTerrainCacheRef = useRef<CanvasImageSource | null>(null);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -106,15 +105,6 @@ export function App() {
   }), []);
 
   useEffect(() => perfMonitor.observeLongTasks(), []);
-
-  useEffect(() => {
-    if (!createdPlayer) return;
-    const warmCache = () => {
-      staticTerrainCacheRef.current = getStaticTerrainCache();
-    };
-    const id = window.setTimeout(warmCache, 0);
-    return () => window.clearTimeout(id);
-  }, [createdPlayer]);
 
   // Main Canvas Render Loop
   useEffect(() => {
@@ -185,7 +175,6 @@ export function App() {
         curEngine.cars,
         curEngine.summons,
         curEngine.gameTimePhase,
-        staticTerrainCacheRef.current,
         quality
       );
       const drawMs = performance.now() - drawStart;
