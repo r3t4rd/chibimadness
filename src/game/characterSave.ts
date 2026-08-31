@@ -78,7 +78,11 @@ export function createOperatorPlayer(opts: {
   const id = opts.id || newId();
 
   return {
-    id: 'local_player',
+    // `id` is the multiplayer identity.  Reusing the old constant here made
+    // every operator restored from local storage join as `local_player`, so a
+    // server correctly accepted only one of them.  The save slot ID is already
+    // a per-install random ID and is stable across launches.
+    id,
     saveId: id,
     name: opts.name.trim() || 'Hero',
     characterClass: cls,
