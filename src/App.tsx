@@ -17,6 +17,7 @@ import { WorldMapModal } from './components/WorldMapModal';
 import { LevelUpModal } from './components/LevelUpModal';
 import { GunsmithModal } from './components/GunsmithModal';
 import { ChatAndEmotes } from './components/ChatAndEmotes';
+
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
 import { CLASS_DEFAULTS } from './game/constants';
@@ -100,6 +101,7 @@ export function App() {
   // Main Canvas Render Loop
   useEffect(() => {
     let animationId: number;
+    let lastRenderedAt: number | null = null;
     const canvas = canvasRef.current;
     if (!canvas || !createdPlayer) return;
 
@@ -115,7 +117,8 @@ export function App() {
     window.addEventListener('resize', handleResize);
 
     const render = (time: number) => {
-      const frameStart = performance.now();
+      const frameIntervalMs = lastRenderedAt === null ? 1000 / 60 : time - lastRenderedAt;
+      lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
 
@@ -151,7 +154,7 @@ export function App() {
         curEngine.gameTimePhase
       );
       perfMonitor.recordDraw(performance.now() - drawStart);
-      perfMonitor.recordFrame(performance.now() - frameStart);
+      perfMonitor.recordFrame(frameIntervalMs);
       animationId = requestAnimationFrame(render);
     };
 

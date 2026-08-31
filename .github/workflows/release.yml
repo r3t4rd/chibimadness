@@ -1,0 +1,50 @@
+name: Build desktop release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-client:
+    runs-on: windows-latest
+    env:
+      CHIBIMADNESS_SERVER_URL: wss://testgame.zei.su/ws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build web bundle
+        run: |
+          npm ci
+          npm run lint
+          npm run build
+      - name: Build desktop binary
+        run: cargo build --release --target x86_64-pc-windows-msvc --manifest-path desktop/Cargo.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chibimadness-windows
+          path: desktop/target/x86_64-pc-windows-msvc/release/chibimadness-desktop.exe
+          if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-windows-client
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: chibimadness-windows
+          path: artifacts
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/chibimadness-desktop.exe --generate-notes

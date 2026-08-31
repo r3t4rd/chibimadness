@@ -1,0 +1,13 @@
+[package]
+name = "chibimadness-desktop"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Native WebView desktop client for ChibiMadness."
+build = "build.rs"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+url = "2.5.8"
+yuyib = { git = "https://github.com/Anerson-Auf/yuyib.git", rev = "edbf5f27bf40f94688373ef06412ce7067bfd7e9", default-features = false, features = ["webview"] }

@@ -2,6 +2,27 @@
 
 Многопользовательская 2D MMORPG в стиле Chibi с открытым миром, транспортом, прокачкой, крафтом, квестами, диалогами с NPC, мировыми боссами и сетевым коопом в реальном времени.
 
+> Основной репозиторий игры, desktop-клиента и production multiplayer-сервера. Больше не нужно вручную переносить изменения между отдельными папками: веб-игра живёт в корне, Rust-сервер — в [`server/`](server), Windows-клиент WebView — в [`desktop/`](desktop).
+
+## Релизы Windows
+
+Создай и отправь тег — GitHub Actions соберёт `.exe`, встроит в него текущий веб-бандл и создаст GitHub Release. По умолчанию клиент подключается к `wss://testgame.zei.su/ws`.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Также workflow можно запустить вручную во вкладке **Actions**: в этом случае `.exe` будет доступен как artifact запуска. Чтобы вручную указать другой сервер при старте, используй:
+
+```powershell
+.\chibimadness-desktop.exe --server wss://example.com/ws
+```
+
+## Production multiplayer
+
+Rust-сервер в [`server/`](server) — authoritative для общего мира: игроков, мобов, урона, снарядов и Nullspace. Инвентари, квесты и дропы намеренно остаются локальными. Инструкция для Linux, Nginx и PM2 находится в [`server/README.md`](server/README.md).
+
 ---
 
 ## 🚀 Быстрый старт

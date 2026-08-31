@@ -523,6 +523,72 @@ function generateForestNodes(): ResourceNode[] {
   return nodes;
 }
 
+function remotePlayerFromWire(value: unknown): Player | null {
+  if (!value || typeof value !== 'object') return null;
+  const wire = value as Record<string, unknown>;
+  if (
+    typeof wire.id !== 'string' ||
+    typeof wire.name !== 'string' ||
+    typeof wire.x !== 'number' ||
+    typeof wire.y !== 'number' ||
+    !Number.isFinite(wire.x) ||
+    !Number.isFinite(wire.y) ||
+    !wire.chibi || typeof wire.chibi !== 'object'
+  ) {
+    return null;
+  }
+
+  const state = wire.state;
+  const safeState: Player['state'] =
+    state === 'walk' || state === 'attack' || state === 'dodge' || state === 'riding' || state === 'cast' || state === 'dead'
+      ? state
+      : 'idle';
+  const facing: Player['facing'] = wire.facing === 'left' ? 'left' : 'right';
+  const level = typeof wire.level === 'number' && Number.isFinite(wire.level) ? Math.max(1, Math.floor(wire.level)) : 1;
+  const maxHp = typeof wire.maxHp === 'number' && Number.isFinite(wire.maxHp) ? Math.max(1, wire.maxHp) : 100;
+  const hp = typeof wire.hp === 'number' && Number.isFinite(wire.hp) ? Math.max(0, Math.min(wire.hp, maxHp)) : maxHp;
+
+  return {
+    id: wire.id,
+    name: wire.name.slice(0, 24),
+    characterClass: wire.characterClass === 'swordmaster' || wire.characterClass === 'cybermage' ? wire.characterClass : 'gunslinger',
+    chibi: wire.chibi as Player['chibi'],
+    x: wire.x,
+    y: wire.y,
+    vx: typeof wire.vx === 'number' && Number.isFinite(wire.vx) ? wire.vx : 0,
+    vy: typeof wire.vy === 'number' && Number.isFinite(wire.vy) ? wire.vy : 0,
+    facing,
+    state: safeState,
+    stats: { level, exp: 0, maxExp: 100, hp, maxHp, mp: 0, maxMp: 0, atk: 0, def: 0, speed: 0, critRate: 0, statPoints: 0, str: 0, agi: 0, int: 0, vit: 0 },
+    stamina: 0,
+    maxStamina: 0,
+    isSprinting: false,
+    jumpZ: 0,
+    jumpVz: 0,
+    isJumping: false,
+    bhopStreak: 0,
+    bhopTimer: 0,
+    bhopSpeedMult: 1,
+    gold: 0,
+    inventory: [],
+    equipment: wire.equipment && typeof wire.equipment === 'object'
+      ? wire.equipment as Player['equipment']
+      : { weapon: null, headwear: null, outfit: null, vehicle: null, accessory: null },
+    skills: [],
+    activeVehicleId: typeof wire.activeVehicleId === 'string' ? wire.activeVehicleId : null,
+    isRiding: wire.isRiding === true,
+    spawnBounce: 0,
+    attackTimer: 0,
+    dodgeTimer: 0,
+    combo: 0,
+    lastAttackTime: 0,
+    activeQuests: {},
+    completedQuestIds: [],
+    currentZone: '',
+    activeBuffs: [],
+  };
+}
+
 export function useGameEngine(initialPlayer: Player) {
   const [player, setPlayer] = useState<Player>(() => ({
     ...initialPlayer,
@@ -610,6 +676,146 @@ export function useGameEngine(initialPlayer: Player) {
   }, [player.pendingEvolutionPicks, player.evolutions, player.characterClass]);
 
   const [remotePlayers, setRemotePlayers] = useState<Record<string, Player>>({});
+  const remoteTargetsRef = useRef<Record<string, Player>>({});
+  useEffect(() => {
+    if (initialPlayer.id === 'default') return;
+    net.connect(initialPlayer);
+    return () => net.disconnect();
+  }, [initialPlayer]);
+
+  useEffect(() => net.subscribe((type, data) => {
+    if (type === 'init_world' && Array.isArray(data.players)) {
+      const players = data.players
+        .map(remotePlayerFromWire)
+        .filter((player): player is Player => player !== null && player.id !== initialPlayer.id);
+      const remotePlayers = Object.fromEntries(players.map((player) => [player.id, player]));
+      remoteTargetsRef.current = { ...remotePlayers };
+      setRemotePlayers(remotePlayers);
+      // Only the first client initializes the map. The server accepts this
+      // immutable spawn manifest once, then owns every combat mutation.
+      net.bootstrapWorld(INITIAL_MONSTERS);
+    } else if (type === 'player_joined') {
+      const player = remotePlayerFromWire(data.player);
+      if (player && player.id !== initialPlayer.id) {
+        remoteTargetsRef.current[player.id] = player;
+        setRemotePlayers((current) => ({ ...current, [player.id]: player }));
+      }
+    } else if (type === 'player_moved' && typeof data.id === 'string') {
+      setRemotePlayers((current) => {
+        const existing = current[data.id];
+        if (!existing) return current;
+        const moved = remotePlayerFromWire({ ...existing, ...data, chibi: existing.chibi, equipment: existing.equipment });
+        if (!moved) return current;
+        remoteTargetsRef.current[data.id] = moved;
+        // Render starts at the previous snapshot, then the animation loop below
+        // converges toward this target instead of snapping at packet cadence.
+        return { ...current, [data.id]: { ...moved, x: existing.x, y: existing.y } };
+      });
+    } else if (type === 'world_snapshot' && data.ready === true && Array.isArray(data.monsters) && Array.isArray(data.projectiles)) {
+      const authoritativeMonsters = data.monsters.filter((monster: unknown): monster is Monster =>
+        typeof monster === 'object' && monster !== null && typeof (monster as Monster).id === 'string'
+      );
+      const authoritativeProjectiles = data.projectiles.filter((projectile: unknown): projectile is Projectile =>
+        typeof projectile === 'object' && projectile !== null && typeof (projectile as Projectile).id === 'string'
+      );
+      monstersRef.current = authoritativeMonsters;
+      projectilesRef.current = authoritativeProjectiles;
+      setMonsters(authoritativeMonsters);
+      setProjectiles(authoritativeProjectiles);
+
+      const selfInServerHorde = data.horde?.active === true
+        && Array.isArray(data.horde.participants)
+        && data.horde.participants.includes(initialPlayer.id);
+      if (selfInServerHorde) {
+        const previous = hordeRunRef.current;
+        const run: HordeRunState = {
+          ...createEmptyHordeRun(),
+          ...previous,
+          active: true,
+          elapsed: typeof data.horde.elapsed === 'number' ? data.horde.elapsed : previous.elapsed,
+          canExtract: data.horde.canExtract === true,
+          unlockedCount: typeof data.horde.unlockedCount === 'number' ? data.horde.unlockedCount : previous.unlockedCount,
+          nextUnlockIn: typeof data.horde.nextUnlockIn === 'number' ? data.horde.nextUnlockIn : previous.nextUnlockIn,
+          nextBossIn: typeof data.horde.nextBossIn === 'number' ? data.horde.nextBossIn : previous.nextBossIn,
+          bossIndex: typeof data.horde.bossIndex === 'number' ? data.horde.bossIndex : previous.bossIndex,
+          blindness: { active: false, remaining: 0, casterId: null },
+        };
+        hordeRunRef.current = run;
+        hordeHazardsRef.current = [];
+        publishHordeFx([], run.blindness);
+        setHordeRun(run);
+      } else if (hordeRunRef.current.active) {
+        const empty = createEmptyHordeRun();
+        hordeRunRef.current = empty;
+        hordeHazardsRef.current = [];
+        publishHordeFx([], empty.blindness);
+        setHordeRun(empty);
+      }
+
+      if (Array.isArray(data.players)) {
+        const players = data.players
+          .map(remotePlayerFromWire)
+          .filter((player): player is Player => player !== null);
+        const self = players.find((player) => player.id === initialPlayer.id);
+        if (self) {
+          const current = playerRef.current;
+          const stats = { ...current.stats, hp: self.stats.hp, maxHp: self.stats.maxHp };
+          const serverMovedAcrossWorlds = isInHordeArena(self.x, self.y) || isInHordeArena(current.x, current.y);
+          playerRef.current = serverMovedAcrossWorlds
+            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
+            : { ...current, stats };
+          setPlayer((previous) => serverMovedAcrossWorlds
+            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
+            : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp } });
+        }
+        const remote = Object.fromEntries(players
+          .filter((player) => player.id !== initialPlayer.id)
+          .map((player) => [player.id, player]));
+        remoteTargetsRef.current = remote;
+        setRemotePlayers((current) => Object.fromEntries(Object.entries(remote).map(([id, target]) => {
+          const previous = current[id];
+          return [id, previous ? { ...target, x: previous.x, y: previous.y } : target];
+        })));
+      }
+    } else if (type === 'player_left' && typeof data.id === 'string') {
+      setRemotePlayers((current) => {
+        if (!current[data.id]) return current;
+        delete remoteTargetsRef.current[data.id];
+        const { [data.id]: _left, ...remaining } = current;
+        return remaining;
+      });
+    }
+  }), [initialPlayer.id]);
+
+  useEffect(() => {
+    let animationFrameId = 0;
+    let previousTime = performance.now();
+
+    const interpolate = (time: number) => {
+      const dt = Math.min(0.1, Math.max(0, (time - previousTime) / 1000));
+      previousTime = time;
+      // At 30 Hz network snapshots, 16/s keeps motion responsive without
+      // exposing packet-to-packet snaps or overshooting the latest state.
+      const alpha = 1 - Math.exp(-16 * dt);
+      setRemotePlayers((current) => {
+        let next: Record<string, Player> | null = null;
+        for (const [id, player] of Object.entries(current) as Array<[string, Player]>) {
+          const target = remoteTargetsRef.current[id];
+          if (!target) continue;
+          const x = player.x + (target.x - player.x) * alpha;
+          const y = player.y + (target.y - player.y) * alpha;
+          if (Math.abs(target.x - x) < 0.01 && Math.abs(target.y - y) < 0.01) continue;
+          if (!next) next = { ...current };
+          next[id] = { ...player, x, y };
+        }
+        return next ?? current;
+      });
+      animationFrameId = requestAnimationFrame(interpolate);
+    };
+
+    animationFrameId = requestAnimationFrame(interpolate);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, []);
   const [monsters, setMonsters] = useState<Monster[]>(() =>
     relocateFactionEdgeSpawns(JSON.parse(JSON.stringify(INITIAL_MONSTERS)))
   );
@@ -1791,11 +1997,18 @@ export function useGameEngine(initialPlayer: Player) {
     };
 
     const pushProj = (proj: Projectile) => {
+      if (net.hasSharedWorld()) {
+        net.fireProjectile(proj);
+        return;
+      }
       projectilesRef.current = [...projectilesRef.current, proj];
       setProjectiles([...projectilesRef.current]);
     };
 
     const hurtCone = (range: number, arc: number, damage: number, knock: number) => {
+      // In a shared session collision and damage belong to the server. The
+      // visual slash below is still emitted as an authoritative projectile.
+      if (net.hasSharedWorld()) return;
       monstersRef.current.forEach((m) => {
         if (m.hp <= 0 || m.state === 'dead') return;
         const mdx = m.x - curPlayer.x;
@@ -3428,7 +3641,7 @@ export function useGameEngine(initialPlayer: Player) {
 
       // Horde director — infinite slaughter, unlock a type every 20s, boss every 60s
       const horde = hordeRunRef.current;
-      if (horde.active) {
+      if (horde.active && !net.isServerHordeActive()) {
         horde.elapsed += dt;
         horde.nextUnlockIn -= dt;
         horde.nextBossIn -= dt;
@@ -3688,7 +3901,7 @@ export function useGameEngine(initialPlayer: Player) {
           const liveBoss = monstersRef.current.find((m) => m.zone === HORDE_ZONE_ID && m.isBoss && m.hp > 0 && m.state !== 'dead') || null;
           setCurrentBoss(liveBoss);
         }
-      } else {
+      } else if (!horde.active) {
         publishHordeFx([], { active: false, remaining: 0, casterId: null });
       }
 
@@ -3791,6 +4004,10 @@ export function useGameEngine(initialPlayer: Player) {
       }
       }
 
+      // The offline simulator owns drops, projectile collisions and monster
+      // AI only when no authoritative world has been received. In multiplayer
+      // those mutations must never race the server snapshot.
+      if (!net.hasSharedWorld()) {
       // 3. Magnetic Item Pickup
       const remainingDrops: DropItem[] = [];
       dropItemsRef.current.forEach((drop) => {
@@ -5069,6 +5286,9 @@ export function useGameEngine(initialPlayer: Player) {
       }
 
       // 7. Update Visual Particles & Popups
+      }
+
+      // 7. Update Visual Particles & Popups
       particlesRef.current = particlesRef.current
         .map((pt) => ({
           ...pt,
@@ -5414,6 +5634,13 @@ export function useGameEngine(initialPlayer: Player) {
     if (worldFadeRef.current.phase !== 'none') return;
     const p = playerRef.current;
     if (p.stats.hp <= 0) return;
+    if (net.hasSharedWorld()) {
+      net.enterHorde();
+      setActiveModal('none');
+      setActiveNpc(null);
+      showToast('JOINING NULLSPACE', 'Connecting you to the shared run…', '💠');
+      return;
+    }
     hordeRunRef.current = {
       ...createEmptyHordeRun(),
       returnX: p.x,
@@ -5430,6 +5657,10 @@ export function useGameEngine(initialPlayer: Player) {
     if (!run.active || worldFadeRef.current.phase !== 'none') return;
     if (!run.canExtract) {
       showToast('TOO EARLY', 'Hold the line a bit longer before extract.', '⏳');
+      return;
+    }
+    if (net.hasSharedWorld()) {
+      net.extractHorde();
       return;
     }
     worldFadeRef.current = { phase: 'out', t: 0, pending: 'extract' };

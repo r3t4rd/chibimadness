@@ -43,6 +43,13 @@ interface CharacterCreatorProps {
   onStartGame: (player: Player) => void;
 }
 
+function createLocalPlayerId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `player_${crypto.randomUUID()}`;
+  }
+  return `player_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+}
+
 const HAIR_COLORS = [
   '#EF4444', // Teto Crimson Red
   '#06B6D4', // Miku Aqua Cyan
@@ -2237,6 +2244,7 @@ export const CharacterCreator: React.FC<CharacterCreatorProps> = ({ onStartGame 
           characterClass,
           chibi: { ...previewPlayer.chibi },
         });
+        newPlayer.id = createLocalPlayerId();
         const ammo = WEAPON_CONFIGS[starterWeapon?.gunType || 'pistol']?.maxAmmo || 12;
         newPlayer.ammo = ammo;
         newPlayer.maxAmmo = ammo;

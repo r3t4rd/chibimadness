@@ -1,6 +1,33 @@
-import { Player, ChatMessage, DropItem } from '../types/game';
+import { Player, DropItem, Monster, Projectile } from '../types/game';
 
 export type NetEventListener = (type: string, data: any) => void;
+
+declare global {
+  interface Window {
+    yuyib?: { post: (message: unknown) => void };
+  }
+}
+
+let configuredServerUrl: string | null = null;
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('yuyib:event', (event: Event) => {
+    const detail = (event as CustomEvent<{ event?: string; payload?: { server_url?: unknown } }>).detail;
+    if (detail?.event === 'game.configuration') {
+      const candidate = detail.payload?.server_url;
+      configuredServerUrl = typeof candidate === 'string' && candidate.startsWith('wss://')
+        ? candidate
+        : null;
+    }
+  });
+
+  window.yuyib?.post({
+    version: 1,
+    id: 1,
+    endpoint: 'game.ready',
+    payload: {},
+  });
+}
 
 class MultiplayerClient {
   private ws: WebSocket | null = null;
@@ -9,6 +36,9 @@ class MultiplayerClient {
   private isConnected: boolean = false;
   private reconnectTimer: number | null = null;
   private localPlayer: Player | null = null;
+  private lastPositionSentAt = 0;
+  private sharedWorldReady = false;
+  private serverHordeActive = false;
 
   constructor() {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -21,8 +51,19 @@ class MultiplayerClient {
 
   public connect(player: Player) {
     this.localPlayer = player;
+    const isEmbeddedDesktop =
+      window.location.protocol === 'app:' || window.location.hostname === 'app.localhost';
+
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    const wsUrl = isEmbeddedDesktop
+      ? configuredServerUrl
+      : `${protocol}//${window.location.host}/ws`;
+
+    // The desktop binary remains offline unless its host explicitly configured
+    // one WSS endpoint and allowed it in the page CSP.
+    if (!wsUrl) {
+      return;
+    }
 
     try {
       this.ws = new WebSocket(wsUrl);
@@ -69,6 +110,8 @@ class MultiplayerClient {
 
       this.ws.onclose = () => {
         this.isConnected = false;
+        this.sharedWorldReady = false;
+        this.serverHordeActive = false;
         // Schedule auto reconnect
         if (!this.reconnectTimer && this.localPlayer) {
           this.reconnectTimer = window.setTimeout(() => {
@@ -94,6 +137,12 @@ class MultiplayerClient {
   }
 
   private emitToListeners(type: string, data: any) {
+    if (type === 'world_snapshot') {
+      this.sharedWorldReady = data?.ready === true;
+      this.serverHordeActive = data?.horde?.active === true
+        && Array.isArray(data?.horde?.participants)
+        && data.horde.participants.includes(this.localPlayer?.id);
+    }
     this.listeners.forEach((fn) => fn(type, data));
   }
 
@@ -102,8 +151,9 @@ class MultiplayerClient {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
     }
-    // Also mirror to BroadcastChannel for seamless local multi-tab preview
-    if (this.broadcastChannel) {
+    // BroadcastChannel is an offline fallback. Mirroring a live WebSocket
+    // duplicates every event and doubles local multiplayer traffic.
+    if ((!this.ws || this.ws.readyState !== WebSocket.OPEN) && this.broadcastChannel) {
       try {
         this.broadcastChannel.postMessage(msg);
       } catch (err) {
@@ -113,6 +163,11 @@ class MultiplayerClient {
   }
 
   public updatePosition(player: Player) {
+    const now = performance.now();
+    if (now - this.lastPositionSentAt < 1000 / 30) {
+      return;
+    }
+    this.lastPositionSentAt = now;
     this.send({
       type: 'update_position',
       x: Math.round(player.x),
@@ -127,6 +182,30 @@ class MultiplayerClient {
       isRiding: player.isRiding,
       activeVehicleId: player.activeVehicleId,
     });
+  }
+
+  public bootstrapWorld(monsters: Monster[]) {
+    this.send({ type: 'world_bootstrap', monsters });
+  }
+
+  public fireProjectile(projectile: Projectile) {
+    this.send({ type: 'world_fire', projectile });
+  }
+
+  public hasSharedWorld() {
+    return this.sharedWorldReady;
+  }
+
+  public enterHorde() {
+    this.send({ type: 'horde_enter' });
+  }
+
+  public extractHorde() {
+    this.send({ type: 'horde_extract' });
+  }
+
+  public isServerHordeActive() {
+    return this.serverHordeActive;
   }
 
   public sendAction(action: string, data: any) {
@@ -179,6 +258,8 @@ class MultiplayerClient {
       this.ws = null;
     }
     this.isConnected = false;
+    this.sharedWorldReady = false;
+    this.serverHordeActive = false;
   }
 }
 
