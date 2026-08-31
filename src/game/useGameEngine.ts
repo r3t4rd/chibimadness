@@ -3795,16 +3795,14 @@ export function useGameEngine(initialPlayer: Player) {
           sound.playJump();
           showToast('Улица', bldg.shortName, '🚪');
         } else if (fl && isInElevator(nextX, nextY, occupancy) && !drivingCar) {
-          nextX = fl.elevator.x + fl.elevator.width / 2;
-          nextY = fl.elevator.y + fl.elevator.height / 2;
           const intent = getElevatorIntent(moveY);
           if (intent && ride.cooldown <= 0 && bldg) {
             const nextFloor = intent === 'up' ? occupancy.floor + 1 : occupancy.floor - 1;
             const dest = nextFloor >= 0 && nextFloor < bldg.floors.length ? getInterior(bldg.id, nextFloor) : undefined;
             if (dest) {
               occupancy = { buildingId: bldg.id, floor: nextFloor };
-              nextX = dest.elevator.x + dest.elevator.width / 2;
-              nextY = dest.elevator.y + dest.elevator.height / 2;
+              nextX = dest.elevatorLanding.x;
+              nextY = dest.elevatorLanding.y;
               ride.cooldown = 0.55;
               sound.playJump();
               addDamagePopup(nextX, nextY - 28, dest.name, '#22D3EE', true, false, 'system', 1.2, 0, -12);

@@ -6,7 +6,7 @@
 //! simulation before they can safely become shared state.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     error::Error,
     net::SocketAddr,
@@ -17,6 +17,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chibimadness_server::ai::{
+    AgentBrain, Archetype, DEFAULT_NPC_LEVEL, DifficultyProfile, Intent, NPC_LEVEL_COUNT,
+    PolicyParameters, StepInput, TargetObservation, Vec2, WorldBounds,
+};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use tokio::{
@@ -65,7 +69,6 @@ const OUTBOUND_QUEUE_CAPACITY: usize = 64;
 const PLAYER_RESPAWN_DELAY: Duration = Duration::from_secs(3);
 const PLAYER_RESPAWN_X: f64 = 650.0;
 const PLAYER_RESPAWN_Y: f64 = 750.0;
-
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_CHAT_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_PROJECTILE_ID: AtomicU64 = AtomicU64::new(1);
@@ -87,6 +90,7 @@ struct WorldState {
 struct CombatWorld {
     monsters: HashMap<String, Value>,
     projectiles: Vec<Value>,
+    brains: HashMap<String, AgentBrain>,
 }
 
 /// One shared Nullspace instance per server. A player explicitly joins it;
@@ -296,17 +300,14 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             return;
         }
 
-        let existing_session = state
-            .players
-            .get(&player_id)
-            .map(|record| {
-                (
-                    record.session_id,
-                    record.resume_token.clone(),
-                    record.value.clone(),
-                    record.respawn_at,
-                )
-            });
+        let existing_session = state.players.get(&player_id).map(|record| {
+            (
+                record.session_id,
+                record.resume_token.clone(),
+                record.value.clone(),
+                record.respawn_at,
+            )
+        });
         if let Some((_, expected_token, _, _)) = &existing_session
             && requested_resume_token.as_deref() != Some(expected_token.as_str())
         {
@@ -532,6 +533,7 @@ async fn world_bootstrap(server: &Arc<Server>, session_id: u64, message: Value) 
             state.combat_world = Some(CombatWorld {
                 monsters,
                 projectiles: Vec::new(),
+                brains: HashMap::new(),
             });
         }
         let payload = world_snapshot(&state);
@@ -613,7 +615,10 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
                     "retryIn": retry_in,
                 })
                 .to_string();
-                println!("Nullspace join rejected for {player_id}: run already at {:.1}s", active_run.elapsed);
+                println!(
+                    "Nullspace join rejected for {player_id}: run already at {:.1}s",
+                    active_run.elapsed
+                );
                 drop(state);
                 send_to(vec![sender], rejection);
                 return;
@@ -758,20 +763,21 @@ async fn teleport(server: &Arc<Server>, session_id: u64, message: Value) {
             .is_some_and(|horde| horde.participants.contains_key(&player_id));
         let target_in_horde = is_horde_coordinate(x, y);
 
-        if in_horde && !target_in_horde {
-            if let Some(horde) = state.horde.as_mut() {
-                horde.participants.remove(&player_id);
-                let should_close = horde.participants.is_empty();
-                if should_close {
-                    state.horde = None;
-                    if let Some(world) = state.combat_world.as_mut() {
-                        world
-                            .monsters
-                            .retain(|_, monster| !is_horde_monster(monster));
-                        world
-                            .projectiles
-                            .retain(|projectile| !is_horde_projectile(projectile));
-                    }
+        if in_horde
+            && !target_in_horde
+            && let Some(horde) = state.horde.as_mut()
+        {
+            horde.participants.remove(&player_id);
+            let should_close = horde.participants.is_empty();
+            if should_close {
+                state.horde = None;
+                if let Some(world) = state.combat_world.as_mut() {
+                    world
+                        .monsters
+                        .retain(|_, monster| !is_horde_monster(monster));
+                    world
+                        .projectiles
+                        .retain(|projectile| !is_horde_projectile(projectile));
                 }
             }
         }
@@ -870,8 +876,12 @@ fn tick_player_respawns(state: &mut WorldState) {
     if close_horde {
         state.horde = None;
         if let Some(world) = state.combat_world.as_mut() {
-            world.monsters.retain(|_, monster| !is_horde_monster(monster));
-            world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
+            world
+                .monsters
+                .retain(|_, monster| !is_horde_monster(monster));
+            world
+                .projectiles
+                .retain(|projectile| !is_horde_projectile(projectile));
         }
     }
 
@@ -924,11 +934,7 @@ fn tick_horde_director(state: &mut WorldState) {
     // A boss is a server-owned phase transition, not just another mob. The
     // client receives bossWarp in snapshots and applies the authoritative
     // transform even though both locations are inside Nullspace.
-    if let Some(boss_id) = state
-        .horde
-        .as_ref()
-        .and_then(|horde| horde.boss_id.clone())
-    {
+    if let Some(boss_id) = state.horde.as_ref().and_then(|horde| horde.boss_id.clone()) {
         let boss_is_alive = state
             .combat_world
             .as_ref()
@@ -969,8 +975,12 @@ fn tick_horde_director(state: &mut WorldState) {
             state.horde.as_mut().expect("run exists"),
             state.combat_world.as_mut().expect("world exists"),
         );
-        world.monsters.retain(|_, monster| !is_horde_monster(monster));
-        world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
+        world
+            .monsters
+            .retain(|_, monster| !is_horde_monster(monster));
+        world
+            .projectiles
+            .retain(|projectile| !is_horde_projectile(projectile));
         let mut boss = spawn_horde_monster(horde, &boss_targets, boss_kind);
         set_number(&mut boss, "x", arena_x + 170.0);
         set_number(&mut boss, "y", arena_y);
@@ -1195,9 +1205,16 @@ fn spawn_horde_monster(horde: &mut HordeRun, targets: &[(String, f64, f64)], kin
         ),
         _ => ("Null Shade", "forest_wolf", 38.0, 8.0, 2.7, false, "bat"),
     };
+    let elapsed_level = (1 + (horde.elapsed / 6.0).floor() as u8).min(NPC_LEVEL_COUNT);
+    let ai_level = if is_boss {
+        elapsed_level.max(33)
+    } else {
+        elapsed_level
+    };
     let id = format!("horde_{}", horde.sequence);
     json!({
         "id": id, "name": name, "type": monster_type, "zone": "horde_crucible", "hordeKind": kind,
+        "aiLevel": ai_level,
         "x": x, "y": y, "spawnX": x, "spawnY": y, "maxHp": (hp * scale).round(), "hp": (hp * scale).round(),
         "atk": (atk * scale).round(), "speed": (speed + horde.elapsed * 0.004).min(5.4), "def": 0,
         "expReward": 0, "goldReward": 0, "faction": "wild", "state": "chase", "targetPlayerId": target.0,
@@ -1251,6 +1268,158 @@ fn monster_move_delta() -> f64 {
     WORLD_TICK.as_secs_f64() * 40.0
 }
 
+#[derive(Clone)]
+struct CombatTarget {
+    id: String,
+    position: Vec2,
+    velocity: Vec2,
+    health_ratio: f64,
+    is_horde: bool,
+    cannot_be_hurt: bool,
+}
+
+#[derive(Clone)]
+struct MonsterAiSnapshot {
+    position: Vec2,
+    faction: String,
+    ai_level: u8,
+    target_index: Option<usize>,
+    distance_to_target: f64,
+    committed: bool,
+}
+
+fn ensure_monster_brains(world: &mut CombatWorld) {
+    let missing = world
+        .monsters
+        .iter()
+        .filter(|(id, _)| !world.brains.contains_key(*id))
+        .map(|(id, monster)| {
+            (
+                id.clone(),
+                Archetype::from_labels(
+                    monster.get("type").and_then(Value::as_str).unwrap_or(""),
+                    monster
+                        .get("weaponType")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    monster.get("isBoss").and_then(Value::as_bool) == Some(true),
+                ),
+                number(monster, "attackCooldown", 0.0).clamp(0.0, 10.0),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (id, archetype, initial_cooldown) in missing {
+        let mut brain = AgentBrain::new(archetype, stable_seed(&id));
+        brain.attack_cooldown = initial_cooldown;
+        world.brains.insert(id, brain);
+    }
+    world.brains.retain(|id, _| world.monsters.contains_key(id));
+}
+
+fn monster_ai_snapshots(
+    world: &CombatWorld,
+    players: &[CombatTarget],
+) -> HashMap<String, MonsterAiSnapshot> {
+    world
+        .monsters
+        .iter()
+        .filter(|(_, monster)| number(monster, "hp", 0.0) > 0.0)
+        .filter_map(|(id, monster)| {
+            let brain = world.brains.get(id)?;
+            let position = Vec2::new(
+                number(monster, "x", WORLD_MIN_X),
+                number(monster, "y", WORLD_MIN_Y),
+            );
+            let monster_is_horde = is_horde_monster(monster);
+            let ai_level = monster_ai_level(monster);
+            let perception_range = brain.archetype.profile().perception_range
+                * DifficultyProfile::from_level(ai_level).perception_scale;
+            let target = players
+                .iter()
+                .enumerate()
+                .filter(|(_, player)| player.is_horde == monster_is_horde)
+                .map(|(index, player)| (index, position.distance(player.position)))
+                .filter(|(_, distance)| *distance <= perception_range)
+                .min_by(|left, right| {
+                    left.1
+                        .partial_cmp(&right.1)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+            Some((
+                id.clone(),
+                MonsterAiSnapshot {
+                    position,
+                    faction: monster
+                        .get("faction")
+                        .and_then(Value::as_str)
+                        .unwrap_or("wild")
+                        .to_owned(),
+                    ai_level,
+                    target_index: target.map(|(index, _)| index),
+                    distance_to_target: target.map_or(f64::INFINITY, |(_, distance)| distance),
+                    committed: brain.is_committed(),
+                },
+            ))
+        })
+        .collect()
+}
+
+fn server_attack_tokens(snapshots: &HashMap<String, MonsterAiSnapshot>) -> HashSet<String> {
+    let mut grouped = HashMap::<usize, Vec<(&String, &MonsterAiSnapshot)>>::new();
+    for (id, snapshot) in snapshots {
+        if let Some(target_index) = snapshot.target_index {
+            grouped
+                .entry(target_index)
+                .or_default()
+                .push((id, snapshot));
+        }
+    }
+    let mut tokens = HashSet::new();
+    for candidates in grouped.values_mut() {
+        candidates.sort_by(|left, right| {
+            right
+                .1
+                .committed
+                .cmp(&left.1.committed)
+                .then_with(|| {
+                    left.1
+                        .distance_to_target
+                        .partial_cmp(&right.1.distance_to_target)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| left.0.cmp(right.0))
+        });
+        let average_level = candidates
+            .iter()
+            .map(|(_, snapshot)| usize::from(snapshot.ai_level))
+            .sum::<usize>()
+            / candidates.len().max(1);
+        let attack_budget = DifficultyProfile::from_level(
+            average_level.clamp(1, usize::from(NPC_LEVEL_COUNT)) as u8,
+        )
+        .attack_token_budget;
+        tokens.extend(
+            candidates
+                .iter()
+                .take(attack_budget)
+                .map(|(id, _)| (*id).clone()),
+        );
+    }
+    tokens
+}
+
+fn stable_seed(value: &str) -> u64 {
+    value.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3)
+    })
+}
+
+fn monster_ai_level(monster: &Value) -> u8 {
+    number(monster, "aiLevel", f64::from(DEFAULT_NPC_LEVEL))
+        .round()
+        .clamp(1.0, f64::from(NPC_LEVEL_COUNT)) as u8
+}
+
 fn tick_combat_world(state: &mut WorldState) {
     let now = Instant::now();
     let step = monster_move_delta();
@@ -1260,16 +1429,24 @@ fn tick_combat_world(state: &mut WorldState) {
         .iter()
         .filter(|(_, player)| number(&player.value, "hp", 0.0) > 0.0)
         .map(|(id, player)| {
-            (
-                id.clone(),
-                number(&player.value, "x", WORLD_MIN_X),
-                number(&player.value, "y", WORLD_MIN_Y),
-                state
+            let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+            CombatTarget {
+                id: id.clone(),
+                position: Vec2::new(
+                    number(&player.value, "x", WORLD_MIN_X),
+                    number(&player.value, "y", WORLD_MIN_Y),
+                ),
+                velocity: Vec2::new(
+                    number(&player.value, "vx", 0.0),
+                    number(&player.value, "vy", 0.0),
+                ),
+                health_ratio: (number(&player.value, "hp", 0.0) / max_hp).clamp(0.0, 1.0),
+                is_horde: state
                     .horde
                     .as_ref()
                     .is_some_and(|horde| horde.participants.contains_key(id)),
-                player_cannot_be_hurt(player, now),
-            )
+                cannot_be_hurt: player_cannot_be_hurt(player, now),
+            }
         })
         .collect::<Vec<_>>();
     let (player_records, world) = (
@@ -1279,81 +1456,151 @@ fn tick_combat_world(state: &mut WorldState) {
             .as_mut()
             .expect("combat world checked before tick"),
     );
+    ensure_monster_brains(world);
+    let snapshots = monster_ai_snapshots(world, &players);
+    let attack_tokens = server_attack_tokens(&snapshots);
+    let production_policy = PolicyParameters::production();
     let mut enemy_projectiles = Vec::new();
     let mut melee_hits = Vec::new();
-    for monster in world.monsters.values_mut() {
+    for (monster_id, monster) in &mut world.monsters {
         let hp = number(monster, "hp", 0.0);
         if hp <= 0.0 {
+            set_number(monster, "telegraphRemaining", 0.0);
+            set_bool(monster, "attackCommitted", false);
             continue;
         }
-        let x = number(monster, "x", WORLD_MIN_X);
-        let y = number(monster, "y", WORLD_MIN_Y);
-        let monster_is_horde = is_horde_monster(monster);
-        let Some((target_id, target_x, target_y, _, target_immune)) = players
-            .iter()
-            .filter(|player| player.3 == monster_is_horde)
-            .min_by(|left, right| {
-                let left_distance = (left.1 - x).hypot(left.2 - y);
-                let right_distance = (right.1 - x).hypot(right.2 - y);
-                left_distance
-                    .partial_cmp(&right_distance)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        else {
+        let Some(snapshot) = snapshots.get(monster_id) else {
             continue;
         };
-        let dx = target_x - x;
-        let dy = target_y - y;
-        let distance = dx.hypot(dy).max(1.0);
+        let Some(brain) = world.brains.get_mut(monster_id) else {
+            continue;
+        };
+        let position = snapshot.position;
+        let monster_is_horde = is_horde_monster(monster);
+        let target = snapshot
+            .target_index
+            .and_then(|target_index| players.get(target_index));
+        let visible_target = target.map(|target| TargetObservation {
+            id: target.id.clone(),
+            position: target.position,
+            velocity: target.velocity,
+            health_ratio: target.health_ratio,
+        });
+        let faction = snapshot.faction.as_str();
+        let nearby_allies = snapshots
+            .iter()
+            .filter(|(other_id, other)| {
+                other_id.as_str() != monster_id
+                    && other.faction == faction
+                    && position.distance(other.position) <= 280.0
+            })
+            .count();
+        let committed_allies = snapshots
+            .iter()
+            .filter(|(other_id, other)| {
+                other_id.as_str() != monster_id
+                    && other.faction == faction
+                    && other.committed
+                    && other.target_index == snapshot.target_index
+                    && position.distance(other.position) <= 380.0
+            })
+            .count();
         let speed = number(monster, "speed", 2.0).clamp(0.5, 6.0);
         let (min_x, max_x, min_y, max_y) = if monster_is_horde {
             (HORDE_MIN_X, HORDE_MAX_X, HORDE_MIN_Y, HORDE_MAX_Y)
         } else {
             (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
         };
-        if distance < 900.0 && distance > 92.0 {
-            set_number(
+        let bounds = WorldBounds {
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+        };
+        let has_attack_token = attack_tokens.contains(monster_id)
+            && target.is_some_and(|target| !target.cannot_be_hurt);
+        let difficulty = DifficultyProfile::from_level(snapshot.ai_level);
+        let policy = difficulty.apply_policy(production_policy);
+        let decision = brain.step(
+            &StepInput {
+                dt: WORLD_TICK.as_secs_f64(),
+                position,
+                health_ratio: (hp / number(monster, "maxHp", hp).max(1.0)).clamp(0.0, 1.0),
+                move_speed: speed * 40.0,
+                visible_target,
+                attack_token: has_attack_token,
+                nearby_allies,
+                committed_allies,
+                bounds,
+            },
+            policy,
+        );
+        let movement = decision
+            .move_direction
+            .scaled(speed * brain.archetype.profile().move_speed_scale * step);
+        let next_position = position.plus(movement).clamped(bounds);
+        set_number(monster, "x", next_position.x);
+        set_number(monster, "y", next_position.y);
+        set_string(
+            monster,
+            "state",
+            match decision.intent {
+                Intent::Telegraph | Intent::Attack => "attack",
+                Intent::Advance | Intent::Flank | Intent::Retreat | Intent::Investigate => "chase",
+                Intent::Idle | Intent::Hold => "idle",
+            },
+        );
+        let facing_point = decision
+            .aim_position
+            .or_else(|| (movement.x.abs() > f64::EPSILON).then(|| next_position.plus(movement)));
+        if let Some(point) = facing_point {
+            set_string(
                 monster,
-                "x",
-                (x + dx / distance * speed * step).clamp(min_x, max_x),
+                "facing",
+                if point.x < next_position.x {
+                    "left"
+                } else {
+                    "right"
+                },
             );
-            set_number(
-                monster,
-                "y",
-                (y + dy / distance * speed * step).clamp(min_y, max_y),
-            );
-            set_string(monster, "state", "chase");
-            set_string(monster, "facing", if dx < 0.0 { "left" } else { "right" });
-        } else if distance <= 92.0 {
-            set_string(monster, "state", "attack");
+        }
+        if let Some(target_id) = decision.target_id.as_deref() {
+            set_string(monster, "targetPlayerId", target_id);
         } else {
-            set_string(monster, "state", "idle");
+            set_null(monster, "targetPlayerId");
         }
-        set_string(monster, "targetPlayerId", target_id.as_str());
-        let cooldown = (number(monster, "attackCooldown", 0.0) - WORLD_TICK.as_secs_f64()).max(0.0);
-        let kind = monster
-            .get("hordeKind")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if *target_immune {
-            set_number(monster, "attackCooldown", cooldown.max(0.35));
-            continue;
+        set_string(monster, "aiArchetype", brain.archetype.as_str());
+        set_number(monster, "aiLevel", f64::from(snapshot.ai_level));
+        set_string(monster, "aiTier", difficulty.tier.as_str());
+        set_string(monster, "aiIntent", decision.intent.as_str());
+        set_number(monster, "attackCooldown", brain.attack_cooldown);
+        set_number(monster, "telegraphRemaining", decision.telegraph_remaining);
+        set_number(monster, "telegraphDuration", decision.telegraph_duration);
+        set_bool(monster, "attackCommitted", decision.attack_committed);
+        set_bool(monster, "attackToken", has_attack_token);
+        if let Some(aim) = decision.aim_position {
+            set_number(monster, "telegraphAimX", aim.x);
+            set_number(monster, "telegraphAimY", aim.y);
         }
-        if monster_is_horde && !is_ranged_horde_kind(kind) {
-            if distance <= 92.0 && cooldown <= 0.0 {
-                set_number(monster, "attackCooldown", 1.1);
-                melee_hits.push((
-                    target_id.clone(),
-                    number(monster, "atk", 12.0).clamp(4.0, 80.0),
-                ));
+        if decision.fire {
+            let horde_kind = monster
+                .get("hordeKind")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if monster_is_horde && !is_ranged_horde_kind(horde_kind) {
+                if let Some(target) = target
+                    && next_position.distance(target.position)
+                        <= brain.archetype.profile().attack_range + 20.0
+                {
+                    melee_hits.push((
+                        target.id.clone(),
+                        number(monster, "atk", 12.0).clamp(4.0, 80.0),
+                    ));
+                }
             } else {
-                set_number(monster, "attackCooldown", cooldown);
+                let aim = decision.aim_position.unwrap_or(next_position);
+                enemy_projectiles.push(make_enemy_projectile(monster, aim.x, aim.y));
             }
-        } else if distance < 520.0 && cooldown <= 0.0 {
-            set_number(monster, "attackCooldown", 1.6);
-            enemy_projectiles.push(make_enemy_projectile(monster, target_x, target_y));
-        } else {
-            set_number(monster, "attackCooldown", cooldown);
         }
     }
     for (player_id, damage) in melee_hits {
@@ -1456,24 +1703,32 @@ fn sanitize_world_monsters(values: &[Value]) -> Option<HashMap<String, Value>> {
         }
         let x = bounded_number(value, "x", WORLD_MIN_X, WORLD_MAX_X)?;
         let y = bounded_number(value, "y", WORLD_MIN_Y, WORLD_MAX_Y)?;
-        let max_hp = bounded_number(value, "maxHp", 1.0, 100_000.0)?;
+        let ai_level = bounded_number(value, "aiLevel", 1.0, f64::from(NPC_LEVEL_COUNT))
+            .unwrap_or(f64::from(DEFAULT_NPC_LEVEL))
+            .round() as u8;
+        let difficulty = DifficultyProfile::from_level(ai_level);
+        let authored_max_hp = bounded_number(value, "maxHp", 1.0, 100_000.0)?;
+        let authored_hp =
+            bounded_number(value, "hp", 0.0, authored_max_hp).unwrap_or(authored_max_hp);
+        let health_ratio = authored_hp / authored_max_hp;
+        let max_hp = (authored_max_hp * difficulty.health_scale)
+            .max(difficulty.minimum_health)
+            .min(100_000.0);
+        let speed = (bounded_number(value, "speed", 0.5, 6.0).unwrap_or(2.0)
+            * difficulty.speed_scale)
+            .clamp(0.5, 6.0);
+        let attack = (bounded_number(value, "atk", 1.0, 250.0).unwrap_or(12.0)
+            * difficulty.damage_scale)
+            .clamp(1.0, 250.0);
         monster.insert("x".into(), json!(x));
         monster.insert("y".into(), json!(y));
         monster.insert("spawnX".into(), json!(x));
         monster.insert("spawnY".into(), json!(y));
         monster.insert("maxHp".into(), json!(max_hp));
-        monster.insert(
-            "hp".into(),
-            json!(bounded_number(value, "hp", 0.0, max_hp).unwrap_or(max_hp)),
-        );
-        monster.insert(
-            "speed".into(),
-            json!(bounded_number(value, "speed", 0.5, 6.0).unwrap_or(2.0)),
-        );
-        monster.insert(
-            "atk".into(),
-            json!(bounded_number(value, "atk", 1.0, 250.0).unwrap_or(12.0)),
-        );
+        monster.insert("hp".into(), json!(max_hp * health_ratio));
+        monster.insert("speed".into(), json!(speed));
+        monster.insert("atk".into(), json!(attack));
+        monster.insert("aiLevel".into(), json!(ai_level));
         monster.insert("state".into(), json!("idle"));
         monster.insert("attackCooldown".into(), json!(0.0));
         monster.insert("specialCooldown".into(), json!(0.0));
@@ -1495,7 +1750,10 @@ fn sanitize_player_projectile(
     } else {
         (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
     };
-    let requested_type = value.get("type").and_then(Value::as_str).unwrap_or("bullet");
+    let requested_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("bullet");
     let x = bounded_number(&Value::Object(value.clone()), "x", min_x, max_x)?;
     let y = bounded_number(&Value::Object(value.clone()), "y", min_y, max_y)?;
     // Most projectiles originate at the caster. Targeted meteor and falling
@@ -1505,9 +1763,7 @@ fn sanitize_player_projectile(
         "meteor" | "falling_sword" => 1_000.0,
         _ => 100.0,
     };
-    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0))
-        > max_origin_distance
-    {
+    if (x - number(player, "x", 0.0)).hypot(y - number(player, "y", 0.0)) > max_origin_distance {
         return None;
     }
     let kind = match requested_type {
@@ -1535,7 +1791,7 @@ fn sanitize_player_projectile(
     }))
 }
 
-fn make_enemy_projectile(monster: &Value, target_x: &f64, target_y: &f64) -> Value {
+fn make_enemy_projectile(monster: &Value, target_x: f64, target_y: f64) -> Value {
     let x = number(monster, "x", 0.0);
     let y = number(monster, "y", 0.0);
     let distance = (target_x - x).hypot(target_y - y).max(1.0);
@@ -1598,6 +1854,18 @@ fn set_number(value: &mut Value, field: &str, number: f64) {
 fn set_string(value: &mut Value, field: &str, string: &str) {
     if let Some(object) = value.as_object_mut() {
         object.insert(field.to_owned(), json!(string));
+    }
+}
+
+fn set_bool(value: &mut Value, field: &str, boolean: bool) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(field.to_owned(), json!(boolean));
+    }
+}
+
+fn set_null(value: &mut Value, field: &str) {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(field.to_owned(), Value::Null);
     }
 }
 
@@ -1844,6 +2112,7 @@ mod tests {
             "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
         })])
         .expect("valid monster manifest");
+        let initial_monster_hp = number(&monsters["monster_one"], "hp", 0.0);
         let mut state = WorldState::default();
         state.players.insert(
             "player_one".into(),
@@ -1863,6 +2132,7 @@ mod tests {
                 "damage": 40.0, "range": 400.0, "distanceTraveled": 0.0,
                 "color": "#fff", "size": 4.0,
             })],
+            brains: HashMap::new(),
         });
 
         tick_combat_world(&mut state);
@@ -1874,9 +2144,168 @@ mod tests {
                 "hp",
                 0.0
             ),
-            60.0
+            initial_monster_hp - 40.0
         );
         assert!(world.projectiles.is_empty());
+    }
+
+    #[test]
+    fn server_npc_telegraphs_before_spawning_a_projectile() {
+        let (_, player_value) =
+            sanitize_player(&player("player_one", 400.0, 400.0)).expect("valid player");
+        let monsters = sanitize_world_monsters(&[json!({
+            "id": "shooter_one", "name": "Shooter", "type": "cadet_gunner",
+            "weaponType": "pistol", "x": 100.0, "y": 400.0,
+            "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
+        })])
+        .expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.players.insert(
+            "player_one".into(),
+            PlayerRecord {
+                session_id: 1,
+                value: player_value,
+                respawn_at: None,
+                immune_until: None,
+                resume_token: "test-token".into(),
+            },
+        );
+        state.combat_world = Some(CombatWorld {
+            monsters,
+            projectiles: Vec::new(),
+            brains: HashMap::new(),
+        });
+
+        tick_combat_world(&mut state);
+        let first_tick = state.combat_world.as_ref().expect("world");
+        let monster = first_tick.monsters.get("shooter_one").expect("shooter");
+        assert_eq!(monster["aiIntent"], "telegraph");
+        assert!(number(monster, "telegraphRemaining", 0.0) > 0.0);
+        assert!(first_tick.projectiles.is_empty());
+
+        let mut fired = false;
+        for _ in 0..30 {
+            tick_combat_world(&mut state);
+            fired = state
+                .combat_world
+                .as_ref()
+                .is_some_and(|world| !world.projectiles.is_empty());
+            if fired {
+                break;
+            }
+        }
+        assert!(fired, "telegraphed NPC should eventually fire");
+    }
+
+    #[test]
+    fn training_sparring_partner_does_not_aggro_camp_entry() {
+        let monsters = sanitize_world_monsters(&[json!({
+            "id": "sparring_partner", "type": "cadet_bat", "weaponType": "bat",
+            "x": 1_350.0, "y": 650.0, "hp": 180.0, "maxHp": 180.0,
+            "speed": 1.9, "atk": 10.0, "aiLevel": 1,
+        })])
+        .expect("valid monster manifest");
+        let mut world = CombatWorld {
+            monsters,
+            projectiles: Vec::new(),
+            brains: HashMap::new(),
+        };
+        ensure_monster_brains(&mut world);
+        let players = vec![CombatTarget {
+            id: "new_player".into(),
+            // The re-entry cinematic ends at x=880, closer to this first mob
+            // than the server respawn point. The whole training tier must
+            // still let a new player take control before combat begins.
+            position: Vec2::new(880.0, PLAYER_RESPAWN_Y),
+            velocity: Vec2::ZERO,
+            health_ratio: 1.0,
+            is_horde: false,
+            cannot_be_hurt: false,
+        }];
+
+        world.monsters.get_mut("sparring_partner").expect("monster")["aiLevel"] = json!(8);
+        let training = monster_ai_snapshots(&world, &players);
+        assert_eq!(training["sparring_partner"].target_index, None);
+
+        world.monsters.get_mut("sparring_partner").expect("monster")["aiLevel"] = json!(40);
+        let nemesis = monster_ai_snapshots(&world, &players);
+        assert_eq!(nemesis["sparring_partner"].target_index, Some(0));
+    }
+
+    #[test]
+    fn live_npc_stats_scale_with_ai_level_and_keep_level_one_durable() {
+        let monsters = sanitize_world_monsters(&[
+            json!({
+                "id": "level_one", "type": "cadet_bat", "weaponType": "bat",
+                "x": 1_350.0, "y": 650.0, "hp": 180.0, "maxHp": 180.0,
+                "speed": 1.9, "atk": 10.0, "aiLevel": 1,
+            }),
+            json!({
+                "id": "level_forty", "type": "cadet_bat", "weaponType": "bat",
+                "x": 1_450.0, "y": 650.0, "hp": 180.0, "maxHp": 180.0,
+                "speed": 1.9, "atk": 10.0, "aiLevel": 40,
+            }),
+        ])
+        .expect("valid monster manifest");
+        let level_one = &monsters["level_one"];
+        let level_forty = &monsters["level_forty"];
+
+        assert_eq!(number(level_one, "maxHp", 0.0), 450.0);
+        assert_eq!(number(level_one, "hp", 0.0), 450.0);
+        assert!(number(level_one, "atk", 0.0) > 8.0);
+        assert!(number(level_forty, "maxHp", 0.0) > number(level_one, "maxHp", 0.0));
+        assert!(number(level_forty, "atk", 0.0) > number(level_one, "atk", 0.0));
+        assert!(number(level_forty, "speed", 0.0) > number(level_one, "speed", 0.0));
+    }
+
+    #[test]
+    fn server_attack_tokens_bound_simultaneous_commitments() {
+        let (_, player_value) =
+            sanitize_player(&player("player_one", 500.0, 400.0)).expect("valid player");
+        let manifest = (0..6)
+            .map(|index| {
+                json!({
+                    "id": format!("shooter_{index}"), "name": "Shooter",
+                    "type": "cadet_gunner", "weaponType": "pistol",
+                    "x": 180.0 + index as f64 * 12.0, "y": 400.0,
+                    "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
+                    "aiLevel": 40,
+                })
+            })
+            .collect::<Vec<_>>();
+        let monsters = sanitize_world_monsters(&manifest).expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.players.insert(
+            "player_one".into(),
+            PlayerRecord {
+                session_id: 1,
+                value: player_value,
+                respawn_at: None,
+                immune_until: None,
+                resume_token: "test-token".into(),
+            },
+        );
+        state.combat_world = Some(CombatWorld {
+            monsters,
+            projectiles: Vec::new(),
+            brains: HashMap::new(),
+        });
+
+        tick_combat_world(&mut state);
+        let world = state.combat_world.expect("world");
+        let token_count = world
+            .monsters
+            .values()
+            .filter(|monster| monster["attackToken"] == true)
+            .count();
+        let commitment_count = world
+            .monsters
+            .values()
+            .filter(|monster| monster["attackCommitted"] == true)
+            .count();
+        let expected_budget = DifficultyProfile::from_level(40).attack_token_budget;
+        assert_eq!(token_count, expected_budget);
+        assert!(commitment_count <= expected_budget);
     }
 
     #[test]
@@ -1895,20 +2324,23 @@ mod tests {
         assert_eq!(projectile["type"], "magic_orb");
         assert_eq!(projectile["visualOffsetY"], -42.0);
 
-        assert!(sanitize_player_projectile(
-            Some(&json!({
-                "type": "meteor", "x": 1_700.0, "y": 750.0,
-                "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
-            })),
-            "caster",
-            &player,
-        )
-        .is_none());
+        assert!(
+            sanitize_player_projectile(
+                Some(&json!({
+                    "type": "meteor", "x": 1_700.0, "y": 750.0,
+                    "vx": 0.0, "vy": 18.0, "size": 18.0, "color": "#FB7185"
+                })),
+                "caster",
+                &player,
+            )
+            .is_none()
+        );
     }
 
     #[test]
     fn server_revives_dead_player_at_camp() {
-        let (_, mut value) = sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
+        let (_, mut value) =
+            sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
         value["hp"] = json!(0.0);
         value["state"] = json!("dead");
         let mut state = WorldState::default();
@@ -1925,7 +2357,10 @@ mod tests {
 
         tick_player_respawns(&mut state);
 
-        let revived = state.players.get("downed").expect("player remains connected");
+        let revived = state
+            .players
+            .get("downed")
+            .expect("player remains connected");
         assert_eq!(number(&revived.value, "hp", 0.0), 100.0);
         assert_eq!(number(&revived.value, "x", 0.0), PLAYER_RESPAWN_X);
         assert_eq!(number(&revived.value, "y", 0.0), PLAYER_RESPAWN_Y);
@@ -2179,8 +2614,10 @@ mod tests {
         // Repeated enter packets must only resync an existing participant.
         // They must not rewind the run, move the player, or refill HP.
         enter_horde(&server, 1).await;
-        let resumed = serde_json::from_str::<Value>(&recv_text(&mut first, "idempotent enter snapshot").await)
-            .expect("snapshot JSON");
+        let resumed = serde_json::from_str::<Value>(
+            &recv_text(&mut first, "idempotent enter snapshot").await,
+        )
+        .expect("snapshot JSON");
         let _ = recv_text(&mut second, "idempotent enter snapshot").await;
         let first_player = resumed["players"]
             .as_array()
@@ -2196,8 +2633,9 @@ mod tests {
         }
 
         enter_horde(&server, 2).await;
-        let rejection = serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
-            .expect("rejection JSON");
+        let rejection =
+            serde_json::from_str::<Value>(&recv_text(&mut second, "late join rejection").await)
+                .expect("rejection JSON");
         assert_eq!(rejection["type"], "horde_join_rejected");
         assert_eq!(rejection["reason"], "run_in_progress");
 
@@ -2288,17 +2726,14 @@ mod tests {
         let _ = receiver.recv().await.expect("world bootstrap");
         {
             let mut state = server.state.lock().await;
-            state
-                .players
-                .get_mut("pilot")
-                .expect("player")
-                .value["hp"] = json!(40.0);
+            state.players.get_mut("pilot").expect("player").value["hp"] = json!(40.0);
         }
 
         heal_player(&server, 1, json!({ "amount": 25.0 })).await;
 
-        let snapshot = serde_json::from_str::<Value>(&recv_text(&mut receiver, "heal snapshot").await)
-            .expect("snapshot JSON");
+        let snapshot =
+            serde_json::from_str::<Value>(&recv_text(&mut receiver, "heal snapshot").await)
+                .expect("snapshot JSON");
         assert_eq!(snapshot["type"], "world_snapshot");
         assert_eq!(snapshot["players"][0]["hp"], 65.0);
     }
@@ -2329,11 +2764,7 @@ mod tests {
         let _ = recv_text(&mut receiver, "world bootstrap").await;
         {
             let mut state = server.state.lock().await;
-            state
-                .players
-                .get_mut("pilot")
-                .expect("player")
-                .value["hp"] = json!(12.0);
+            state.players.get_mut("pilot").expect("player").value["hp"] = json!(12.0);
         }
 
         enter_horde(&server, 1).await;
@@ -2350,7 +2781,11 @@ mod tests {
         assert!(world.projectiles.is_empty());
         let player = state.players.get("pilot").expect("player");
         assert_eq!(number(&player.value, "hp", 0.0), 100.0);
-        for monster in world.monsters.values().filter(|monster| is_horde_monster(monster)) {
+        for monster in world
+            .monsters
+            .values()
+            .filter(|monster| is_horde_monster(monster))
+        {
             let dx = number(monster, "x", 0.0) - HORDE_CENTER_X;
             let dy = number(monster, "y", 0.0) - HORDE_CENTER_Y;
             assert!(dx.hypot(dy) >= 680.0);
@@ -2367,10 +2802,8 @@ mod tests {
             "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
         })])
         .expect("valid monster manifest");
-        monsters
-            .get_mut("monster_one")
-            .expect("monster")
-            ["attackCooldown"] = json!(1.0);
+        let initial_monster_hp = number(&monsters["monster_one"], "hp", 0.0);
+        monsters.get_mut("monster_one").expect("monster")["attackCooldown"] = json!(1.0);
         let mut state = WorldState::default();
         state.players.insert(
             "player_one".into(),
@@ -2390,6 +2823,7 @@ mod tests {
                 "damage": 40.0, "range": 400.0, "distanceTraveled": 0.0,
                 "color": "#fff", "size": 4.0,
             })],
+            brains: HashMap::new(),
         });
 
         tick_combat_world(&mut state);
@@ -2406,7 +2840,7 @@ mod tests {
                 "hp",
                 0.0
             ),
-            60.0
+            initial_monster_hp - 40.0
         );
     }
 
@@ -2452,6 +2886,7 @@ mod tests {
         state.combat_world = Some(CombatWorld {
             monsters,
             projectiles: Vec::new(),
+            brains: HashMap::new(),
         });
 
         tick_combat_world(&mut state);

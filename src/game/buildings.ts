@@ -281,6 +281,16 @@ function planFloor(
       : dy > 0
         ? { x: lift.x + Math.max(T + 8, (lift.width - 64) / 2), y: lift.y + T + 10, width: 64, height: 80 }
         : { x: lift.x + Math.max(T + 8, (lift.width - 64) / 2), y: lift.y + lift.height - T - 88, width: 64, height: 80 };
+  const elevatorLanding =
+    Math.abs(dx) > Math.abs(dy)
+      ? {
+          x: dx > 0 ? elevator.x + elevator.width + 48 : elevator.x - 48,
+          y: elevator.y + elevator.height / 2,
+        }
+      : {
+          x: elevator.x + elevator.width / 2,
+          y: dy > 0 ? elevator.y + elevator.height + 48 : elevator.y - 48,
+        };
   let exitPad: InteriorFloor['exitPad'];
   let spawn: { x: number; y: number };
   if (opt.exitFrom) {
@@ -320,6 +330,7 @@ function planFloor(
     props,
     exitPad,
     elevator,
+    elevatorLanding,
     spawn,
   };
 }

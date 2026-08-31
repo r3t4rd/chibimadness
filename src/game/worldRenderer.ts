@@ -4328,6 +4328,51 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   }
 }
 
+function drawMonsterAiTelegraph(
+  ctx: CanvasRenderingContext2D,
+  monster: Monster,
+  time: number
+) {
+  const remaining = monster.telegraphRemaining ?? 0;
+  const duration = monster.telegraphDuration ?? 0;
+  const aimX = monster.telegraphAimX;
+  const aimY = monster.telegraphAimY;
+  if (remaining <= 0 || duration <= 0 || !Number.isFinite(aimX) || !Number.isFinite(aimY)) return;
+
+  const dx = (aimX as number) - monster.x;
+  const dy = (aimY as number) - monster.y;
+  const distance = Math.max(1, Math.hypot(dx, dy));
+  const progress = Math.max(0, Math.min(1, 1 - remaining / duration));
+  const pulse = 0.72 + Math.sin(time * 14) * 0.18;
+  const color = monster.aiArchetype === 'sniper'
+    ? '168, 139, 250'
+    : monster.aiArchetype === 'controller'
+      ? '34, 211, 238'
+      : '248, 113, 113';
+
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  ctx.strokeStyle = `rgba(${color}, ${0.35 + progress * 0.55})`;
+  ctx.lineWidth = 1.5 + progress;
+  ctx.setLineDash([7, 5]);
+  ctx.lineDashOffset = -time * 24;
+  ctx.beginPath();
+  ctx.moveTo(dx / distance * 18, dy / distance * 18 - 6);
+  ctx.lineTo(dx, dy);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = `rgba(${color}, ${0.55 + progress * 0.4})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(0, -6, 24 + progress * 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * progress);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(dx, dy, 8 + progress * 6, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
@@ -4335,6 +4380,7 @@ function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: 
 
     ctx.save();
     ctx.translate(m.x, m.y);
+    drawMonsterAiTelegraph(ctx, m, time);
 
     if (m.hordeKind) {
       drawHordeMob(ctx, m, time);
@@ -4376,6 +4422,16 @@ function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: 
     } else {
       // Draw Humanoid Bandits, Outlaws, and "Iron Mask" Sledge Boss
       drawHumanoidEnemy(ctx, m, time);
+    }
+
+    if (m.hp > 0 && Number.isFinite(m.aiLevel)) {
+      const level = Math.max(1, Math.min(40, Math.round(m.aiLevel ?? 20)));
+      const tierColors = ['#72E6A5', '#54C8FF', '#F5BC61', '#F07A8F', '#D08BFF'];
+      ctx.fillStyle = tierColors[Math.min(4, Math.floor((level - 1) / 8))];
+      ctx.font = '700 8px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`AI ${level}`, 0, m.isBoss ? -78 : -54);
     }
 
     ctx.restore();
