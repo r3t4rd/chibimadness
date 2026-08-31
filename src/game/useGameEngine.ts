@@ -661,6 +661,9 @@ export function useGameEngine(initialPlayer: Player) {
     }
     const choices = rollLevelUpChoices(player, 3);
     if (choices.length === 0) {
+      if (net.hasSharedWorld()) {
+        net.healPlayer(30);
+      }
       setPlayer((prev) => ({
         ...prev,
         pendingEvolutionPicks: Math.max(0, (prev.pendingEvolutionPicks ?? 0) - 1),
@@ -1351,6 +1354,9 @@ export function useGameEngine(initialPlayer: Player) {
       if (leveledUp) {
         sound.playLevelUp();
         showToast('LEVEL UP! 🌟', `Уровень ${newLevel}! Выбери эволюцию`, '⬆️');
+        if (net.hasSharedWorld()) {
+          net.healPlayer(newMaxHp);
+        }
       }
 
       return {
@@ -1415,6 +1421,9 @@ export function useGameEngine(initialPlayer: Player) {
 
       const healAmt = mods.kissHeal + mods.harvestHeal;
       if (healAmt > 0) {
+        if (net.hasSharedWorld()) {
+          net.healPlayer(healAmt);
+        }
         setPlayer((prev) => ({
           ...prev,
           stats: { ...prev.stats, hp: Math.min(prev.stats.maxHp, prev.stats.hp + healAmt) },
@@ -4280,6 +4289,9 @@ export function useGameEngine(initialPlayer: Player) {
 
                 // LIFESTEAL VAMPIRISM ON HIT (Heal player for 8% on body, 18% on headshot)
                 const lifestealAmount = Math.max(1, Math.round(dmg * (isHeadshotHit ? 0.18 : 0.08)));
+                if (net.hasSharedWorld()) {
+                  net.healPlayer(lifestealAmount);
+                }
                 setPlayer((prev) => ({
                   ...prev,
                   stats: { ...prev.stats, hp: Math.min(prev.stats.maxHp, prev.stats.hp + lifestealAmount) },
@@ -5375,6 +5387,9 @@ export function useGameEngine(initialPlayer: Player) {
         ) {
           phoenixCdRef.current = evo.phoenixCd;
           const heal = Math.round(nextPlayer.stats.maxHp * evo.phoenixHealPct);
+          if (net.hasSharedWorld()) {
+            net.healPlayer(heal);
+          }
           setPlayer((prev) => ({
             ...prev,
             dodgeTimer: Math.max(prev.dodgeTimer || 0, 1.1),
@@ -5689,6 +5704,9 @@ export function useGameEngine(initialPlayer: Player) {
 
   const handleUseItem = useCallback((item: Item) => {
     if (item && item.healHp) {
+      if (net.hasSharedWorld()) {
+        net.healPlayer(item.healHp);
+      }
       setPlayer((prev) => {
         const newHp = Math.min(prev.stats.maxHp, prev.stats.hp + item.healHp);
         const inv = prev.inventory
