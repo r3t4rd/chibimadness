@@ -48,6 +48,9 @@ const MAX_WORLD_PROJECTILES: usize = 1_024;
 const MAX_TRAVEL_PER_SECOND: f64 = 600.0;
 const TRAVEL_BURST_ALLOWANCE: f64 = 60.0;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
+const PLAYER_RESPAWN_DELAY: Duration = Duration::from_secs(3);
+const PLAYER_RESPAWN_X: f64 = 650.0;
+const PLAYER_RESPAWN_Y: f64 = 750.0;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_CHAT_ID: AtomicU64 = AtomicU64::new(1);
@@ -94,6 +97,7 @@ struct Session {
 struct PlayerRecord {
     session_id: u64,
     value: Value,
+    respawn_at: Option<Instant>,
 }
 
 #[tokio::main]
@@ -273,6 +277,7 @@ async fn join(server: &Arc<Server>, session_id: u64, message: Value) {
             PlayerRecord {
                 session_id,
                 value: player,
+                respawn_at: None,
             },
         );
         let recipients = recipients_except(&state, session_id);
@@ -459,6 +464,7 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
     let (recipients, payload) = {
         let mut state = server.state.lock().await;
         if state.combat_world.is_none() {
+            println!("Nullspace rejected: combat world is not initialized yet");
             return;
         }
         let Some(player_id) = state
@@ -485,10 +491,11 @@ async fn enter_horde(server: &Arc<Server>, session_id: u64) {
             boss_index: 0,
             sequence: 1,
         });
-        horde
-            .participants
-            .entry(player_id.clone())
-            .or_insert(return_point);
+        let entering_for_first_time = !horde.participants.contains_key(&player_id);
+        horde.participants.entry(player_id.clone()).or_insert(return_point);
+        if entering_for_first_time {
+            println!("Nullspace: {player_id} entered");
+        }
         let player = state.players.get_mut(&player_id).expect("player exists");
         player.value["x"] = json!(HORDE_CENTER_X);
         player.value["y"] = json!(HORDE_CENTER_Y);
@@ -519,6 +526,7 @@ async fn extract_horde(server: &Arc<Server>, session_id: u64) {
         let Some((return_x, return_y)) = horde.participants.remove(&player_id) else {
             return;
         };
+        println!("Nullspace: {player_id} extracted");
         let should_close = horde.participants.is_empty();
         let player = state.players.get_mut(&player_id).expect("player exists");
         player.value["x"] = json!(return_x);
@@ -551,11 +559,77 @@ async fn world_tick_loop(server: Arc<Server>) {
             if state.combat_world.is_none() || state.players.is_empty() {
                 continue;
             }
+            tick_player_respawns(&mut state);
             tick_horde_director(&mut state);
             tick_combat_world(&mut state);
             (recipients_except(&state, 0), world_snapshot(&state))
         };
         send_to(recipients, payload);
+    }
+}
+
+/// Keeps death and respawn authoritative. A client may animate the countdown,
+/// but it cannot revive itself by sending a new HP value in a movement packet.
+fn tick_player_respawns(state: &mut WorldState) {
+    let now = Instant::now();
+    let newly_dead = state
+        .players
+        .iter_mut()
+        .filter_map(|(id, player)| {
+            if number(&player.value, "hp", 0.0) > 0.0 || player.respawn_at.is_some() {
+                return None;
+            }
+            player.respawn_at = Some(now + PLAYER_RESPAWN_DELAY);
+            set_string(&mut player.value, "state", "dead");
+            Some(id.clone())
+        })
+        .collect::<Vec<_>>();
+
+    // Death ends only the fallen player's run; other participants keep their
+    // shared Nullspace session. The player is returned to their entrance point
+    // while dead, then revived at the safe camp after the server timer.
+    let mut horde_returns = Vec::new();
+    let close_horde = if let Some(horde) = state.horde.as_mut() {
+        for player_id in &newly_dead {
+            if let Some(return_point) = horde.participants.remove(player_id) {
+                horde_returns.push((player_id.clone(), return_point));
+            }
+        }
+        horde.participants.is_empty()
+    } else {
+        false
+    };
+    for (player_id, (x, y)) in horde_returns {
+        if let Some(player) = state.players.get_mut(&player_id) {
+            set_number(&mut player.value, "x", x);
+            set_number(&mut player.value, "y", y);
+            set_number(&mut player.value, "vx", 0.0);
+            set_number(&mut player.value, "vy", 0.0);
+            player.value["currentZone"] = Value::Null;
+        }
+        println!("Nullspace: {player_id} died and left the run");
+    }
+    if close_horde {
+        state.horde = None;
+        if let Some(world) = state.combat_world.as_mut() {
+            world.monsters.retain(|_, monster| !is_horde_monster(monster));
+            world.projectiles.retain(|projectile| !is_horde_projectile(projectile));
+        }
+    }
+
+    for player in state.players.values_mut() {
+        if player.respawn_at.is_some_and(|at| at <= now) {
+            let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+            set_number(&mut player.value, "hp", max_hp);
+            set_number(&mut player.value, "x", PLAYER_RESPAWN_X);
+            set_number(&mut player.value, "y", PLAYER_RESPAWN_Y);
+            set_number(&mut player.value, "vx", 0.0);
+            set_number(&mut player.value, "vy", 0.0);
+            set_string(&mut player.value, "state", "idle");
+            player.value["currentZone"] = Value::Null;
+            player.respawn_at = None;
+            println!("Player respawned at camp");
+        }
     }
 }
 
@@ -821,6 +895,7 @@ fn tick_combat_world(state: &mut WorldState) {
     let players = state
         .players
         .iter()
+        .filter(|(_, player)| number(&player.value, "hp", 0.0) > 0.0)
         .map(|(id, player)| {
             (
                 id.clone(),
@@ -1328,6 +1403,7 @@ mod tests {
             PlayerRecord {
                 session_id: 1,
                 value: player_value,
+                respawn_at: None,
             },
         );
         state.combat_world = Some(CombatWorld {
@@ -1352,6 +1428,31 @@ mod tests {
             60.0
         );
         assert!(world.projectiles.is_empty());
+    }
+
+    #[test]
+    fn server_revives_dead_player_at_camp() {
+        let (_, mut value) = sanitize_player(&player("downed", 100.0, 100.0)).expect("valid player");
+        value["hp"] = json!(0.0);
+        value["state"] = json!("dead");
+        let mut state = WorldState::default();
+        state.players.insert(
+            "downed".into(),
+            PlayerRecord {
+                session_id: 1,
+                value,
+                respawn_at: Some(Instant::now() - Duration::from_millis(1)),
+            },
+        );
+
+        tick_player_respawns(&mut state);
+
+        let revived = state.players.get("downed").expect("player remains connected");
+        assert_eq!(number(&revived.value, "hp", 0.0), 100.0);
+        assert_eq!(number(&revived.value, "x", 0.0), PLAYER_RESPAWN_X);
+        assert_eq!(number(&revived.value, "y", 0.0), PLAYER_RESPAWN_Y);
+        assert_eq!(revived.value["state"], "idle");
+        assert!(revived.respawn_at.is_none());
     }
 
     #[tokio::test]

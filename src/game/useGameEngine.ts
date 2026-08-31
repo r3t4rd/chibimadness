@@ -727,6 +727,7 @@ export function useGameEngine(initialPlayer: Player) {
         && Array.isArray(data.horde.participants)
         && data.horde.participants.includes(initialPlayer.id);
       if (selfInServerHorde) {
+        hordeJoinPendingRef.current = false;
         const previous = hordeRunRef.current;
         const run: HordeRunState = {
           ...createEmptyHordeRun(),
@@ -760,13 +761,15 @@ export function useGameEngine(initialPlayer: Player) {
         if (self) {
           const current = playerRef.current;
           const stats = { ...current.stats, hp: self.stats.hp, maxHp: self.stats.maxHp };
+          const serverSaysDead = self.stats.hp <= 0;
+          const syncedState = self.state === 'dead' ? 'dead' : self.state;
           const serverMovedAcrossWorlds = isInHordeArena(self.x, self.y) || isInHordeArena(current.x, current.y);
           playerRef.current = serverMovedAcrossWorlds
-            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
-            : { ...current, stats };
+            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
+            : { ...current, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined };
           setPlayer((previous) => serverMovedAcrossWorlds
-            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
-            : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp } });
+            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: isInHordeArena(self.x, self.y) ? HORDE_ZONE_ID : undefined }
+            : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined });
         }
         const remote = Object.fromEntries(players
           .filter((player) => player.id !== initialPlayer.id)
@@ -847,6 +850,8 @@ export function useGameEngine(initialPlayer: Player) {
   hordeRunRef.current = hordeRun;
   const hordeUiTimerRef = useRef(0);
   const hordeHazardsRef = useRef<HordeHazard[]>([]);
+  const hordeJoinPendingRef = useRef(false);
+  const hordeJoinRequestedAtRef = useRef(0);
   const leakFireAccRef = useRef(0);
   const lastZoneIdRef = useRef<string>('forest_camp');
   const [worldFade, setWorldFade] = useState(0);
@@ -2782,6 +2787,17 @@ export function useGameEngine(initialPlayer: Player) {
           triggerShake(12, 0.4);
         } else {
           const nextTimer = (curPlayer.respawnTimer ?? 3.0) - dt;
+          if (net.hasSharedWorld()) {
+            // The server owns HP and the actual revive. Do not briefly revive
+            // locally only to be overwritten by the next world snapshot.
+            if (nextTimer > 0) {
+              const waitingPlayer: Player = { ...curPlayer, respawnTimer: nextTimer };
+              playerRef.current = waitingPlayer;
+              setPlayer(waitingPlayer);
+            }
+            animationFrameId = requestAnimationFrame(tick);
+            return;
+          }
           if (nextTimer <= 0) {
             // Revive at Campsite
             const revivedPlayer: Player = {
@@ -5635,6 +5651,10 @@ export function useGameEngine(initialPlayer: Player) {
     const p = playerRef.current;
     if (p.stats.hp <= 0) return;
     if (net.hasSharedWorld()) {
+      const now = performance.now();
+      if (hordeJoinPendingRef.current && now - hordeJoinRequestedAtRef.current < 6_000) return;
+      hordeJoinPendingRef.current = true;
+      hordeJoinRequestedAtRef.current = now;
       net.enterHorde();
       setActiveModal('none');
       setActiveNpc(null);
