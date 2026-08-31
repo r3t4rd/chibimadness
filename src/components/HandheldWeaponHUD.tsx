@@ -54,6 +54,7 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
 
   const FIREARM_GUNS: GunType[] = ['pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac'];
   const isFirearm = FIREARM_GUNS.includes(activeGunType);
+  const hasAmmo = ['pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac', 'throwing_knives'].includes(activeGunType);
 
   useEffect(() => {
     if (isShooting) {
@@ -652,6 +653,77 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
                   ))}
                 </g>
               )}
+
+              {/* ----------------- 2.8 MAGICAL WEAPONS (Staff / Wand / Grimoire / Totem) ----------------- */}
+              {activeGunType === 'staff' && (
+                <g id="wpn-staff" transform="translate(100, 20)">
+                  <line x1="-50" y1="110" x2="60" y2="-10" stroke="#78350F" strokeWidth="7" strokeLinecap="round" />
+                  <line x1="-50" y1="110" x2="60" y2="-10" stroke="#B45309" strokeWidth="2.5" />
+                  <rect x="0" y="38" width="14" height="8" fill="#94A3B8" stroke="#0F172A" strokeWidth="2" transform="rotate(-42 0 38)" />
+                  <rect x="30" y="8" width="14" height="8" fill="#94A3B8" stroke="#0F172A" strokeWidth="2" transform="rotate(-42 30 8)" />
+                  <path
+                    d="M 50 -20 C 45 -40 70 -50 85 -30 C 75 -25 70 -10 75 0 C 65 0 55 -10 50 -20 Z"
+                    fill="#FBBF24"
+                    stroke="#0F172A"
+                    strokeWidth="2.5"
+                  />
+                  <circle cx="70" cy="-22" r="11" fill="#EF4444" stroke="#7F1D1D" strokeWidth="2" />
+                  <circle cx="67" cy="-25" r="4" fill="#FCA5A5" />
+                  <path d="M 65 -38 Q 70 -48 72 -42 Q 74 -36 70 -34 Z" fill="#F97316" />
+                  <path d="M 72 -38 Q 75 -44 76 -40 Q 77 -36 74 -34 Z" fill="#FBBF24" />
+                </g>
+              )}
+
+              {activeGunType === 'wand' && (
+                <g id="wpn-wand" transform="translate(110, 35)">
+                  <rect x="-30" y="70" width="12" height="30" rx="3" fill="#1E293B" stroke="#0F172A" strokeWidth="2" transform="rotate(-35 -30 70)" />
+                  <line x1="-30" y1="70" x2="60" y2="-10" stroke="#E2E8F0" strokeWidth="4.5" strokeLinecap="round" />
+                  <line x1="-30" y1="70" x2="60" y2="-10" stroke="#FFFFFF" strokeWidth="1.5" />
+                  <polygon
+                    points="60,-15 64,-6 73,-6 66,0 69,9 60,3 51,9 54,0 47,-6 56,-6"
+                    fill="#FDE047"
+                    stroke="#CA8A04"
+                    strokeWidth="1.8"
+                  />
+                  <circle cx="78" cy="-18" r="2" fill="#38BDF8" />
+                  <circle cx="72" cy="-2" r="1.5" fill="#F472B6" />
+                  <circle cx="48" cy="-20" r="2.5" fill="#C084FC" />
+                </g>
+              )}
+
+              {activeGunType === 'grimoire' && (
+                <g id="wpn-grimoire" transform="translate(100, 45)">
+                  <path d="M -50 20 L -60 10 L 0 -25 L 60 10 L 50 20 L 0 -10 Z" fill="#78350F" stroke="#0F172A" strokeWidth="3" />
+                  <path d="M -44 14 L 0 -18 L 0 -6 L -44 26 Z" fill="#FEF08A" stroke="#0F172A" strokeWidth="2" />
+                  <path d="M 0 -18 L 44 14 L 44 26 L 0 -6 Z" fill="#FEF08A" stroke="#0F172A" strokeWidth="2" />
+                  <path d="M -30 15 Q -15 0 0 -11" stroke="#A855F7" strokeWidth="2.5" fill="none" />
+                  <path d="M 10 -9 Q 25 2 30 15" stroke="#A855F7" strokeWidth="2.5" fill="none" />
+                  <path
+                    d="M -15 -15 C -30 -35 0 -55 10 -40 C 20 -25 -5 -15 -10 -25"
+                    stroke="#C084FC"
+                    strokeWidth="3.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    opacity="0.8"
+                  />
+                  <circle cx="5" cy="-35" r="4.5" fill="#F472B6" />
+                </g>
+              )}
+
+              {activeGunType === 'totem' && (
+                <g id="wpn-totem" transform="translate(100, 30)">
+                  <ellipse cx="0" cy="85" rx="30" ry="12" fill="#334155" stroke="#0F172A" strokeWidth="2.5" />
+                  <rect x="-16" y="0" width="32" height="80" rx="4" fill="#475569" stroke="#0F172A" strokeWidth="3" />
+                  <rect x="-8" y="18" width="6" height="6" rx="1" fill="#38BDF8" stroke="#0284C7" strokeWidth="1.5" />
+                  <rect x="2" y="18" width="6" height="6" rx="1" fill="#38BDF8" stroke="#0284C7" strokeWidth="1.5" />
+                  <line x1="-8" y1="42" x2="8" y2="42" stroke="#0F172A" strokeWidth="2.5" />
+                  <line x1="-6" y1="38" x2="-6" y2="46" stroke="#0F172A" strokeWidth="2" />
+                  <line x1="0" y1="38" x2="0" y2="46" stroke="#0F172A" strokeWidth="2" />
+                  <line x1="6" y1="38" x2="6" y2="46" stroke="#0F172A" strokeWidth="2" />
+                  <path d="M -12 6 Q -6 12 -12 24" stroke="#0284C7" strokeWidth="1.5" fill="none" />
+                  <path d="M 12 50 Q 8 60 14 72" stroke="#0284C7" strokeWidth="1.5" fill="none" />
+                </g>
+              )}
             </svg>
           </div>
         </div>
@@ -670,65 +742,69 @@ export const HandheldWeaponHUD: React.FC<HandheldWeaponHUDProps> = ({
           </button>
         </div>
 
-        <div className="flex items-baseline gap-1 font-mono leading-none mt-0.5">
-          <span
-            className={`text-3xl font-black tracking-tighter drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] ${
-              isEmptyAmmo
-                ? 'text-red-500 animate-pulse'
-                : isLowAmmo
-                ? 'text-amber-400 animate-pulse'
-                : isReloading
-                ? 'text-yellow-300'
-                : 'text-white'
-            }`}
-          >
-            {isReloading ? '--' : ammo}
-          </span>
-          <span className="text-xs font-bold text-zinc-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">/ {maxAmmo}</span>
-        </div>
-
-        <div className="mt-1 flex flex-wrap items-center justify-center gap-0.5 max-w-[160px]">
-          {Array.from({ length: Math.min(24, maxAmmo) }).map((_, i) => {
-            const isFilled = i < ammo && !isReloading;
-            return (
-              <div
-                key={i}
-                className={`h-3 w-[5px] rounded-sm transition-all duration-100 ${
-                  isFilled
-                    ? activeGunType === 'shotgun'
-                      ? 'bg-rose-500'
-                      : activeGunType === 'cheytac'
-                      ? 'bg-sky-400'
-                      : 'bg-amber-400'
-                    : 'bg-zinc-700/70'
+        {hasAmmo && (
+          <>
+            <div className="flex items-baseline gap-1 font-mono leading-none mt-0.5">
+              <span
+                className={`text-3xl font-black tracking-tighter drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)] ${
+                  isEmptyAmmo
+                    ? 'text-red-500 animate-pulse'
+                    : isLowAmmo
+                    ? 'text-amber-400 animate-pulse'
+                    : isReloading
+                    ? 'text-yellow-300'
+                    : 'text-white'
                 }`}
-                title={`Round ${i + 1}`}
-              />
-            );
-          })}
-          {maxAmmo > 24 && (
-            <span className="text-[8px] font-mono text-zinc-400 font-bold">+{maxAmmo - 24}</span>
-          )}
-        </div>
+              >
+                {isReloading ? '--' : ammo}
+              </span>
+              <span className="text-xs font-bold text-zinc-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">/ {maxAmmo}</span>
+            </div>
 
-        <div className="mt-1">
-          {isReloading ? (
-            <span className="text-[9px] font-mono font-black text-amber-300 tracking-wider animate-pulse drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-              {reloadStatusText || 'RELOADING...'}
-            </span>
-          ) : (
-            <button
-              type="button"
-              onClick={onReload}
-              className={`text-[9px] font-mono font-black cursor-pointer ${
-                isEmptyAmmo ? 'text-red-400 animate-bounce' : isLowAmmo ? 'text-amber-300' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="Reload Weapon [R]"
-            >
-              [R] RELOAD
-            </button>
-          )}
-        </div>
+            <div className="mt-1 flex flex-wrap items-center justify-center gap-0.5 max-w-[160px]">
+              {Array.from({ length: Math.min(24, maxAmmo) }).map((_, i) => {
+                const isFilled = i < ammo && !isReloading;
+                return (
+                  <div
+                    key={i}
+                    className={`h-3 w-[5px] rounded-sm transition-all duration-100 ${
+                      isFilled
+                        ? activeGunType === 'shotgun'
+                          ? 'bg-rose-500'
+                          : activeGunType === 'cheytac'
+                          ? 'bg-sky-400'
+                          : 'bg-amber-400'
+                        : 'bg-zinc-700/70'
+                    }`}
+                    title={`Round ${i + 1}`}
+                  />
+                );
+              })}
+              {maxAmmo > 24 && (
+                <span className="text-[8px] font-mono text-zinc-400 font-bold">+{maxAmmo - 24}</span>
+              )}
+            </div>
+
+            <div className="mt-1">
+              {isReloading ? (
+                <span className="text-[9px] font-mono font-black text-amber-300 tracking-wider animate-pulse drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                  {reloadStatusText || 'RELOADING...'}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onReload}
+                  className={`text-[9px] font-mono font-black cursor-pointer ${
+                    isEmptyAmmo ? 'text-red-400 animate-bounce' : isLowAmmo ? 'text-amber-300' : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title="Reload Weapon [R]"
+                >
+                  [R] RELOAD
+                </button>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
