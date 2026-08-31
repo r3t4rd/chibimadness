@@ -19,6 +19,12 @@ git push origin v0.1.0
 .\chibimadness-desktop.exe --server wss://example.com/ws
 ```
 
+### Hot updates без замены `.exe`
+
+Начиная с desktop-клиента с updater, каждый GitHub Release содержит `web-patch.zip` и `patch-manifest.json`. При запуске клиент берёт последнюю проверенную web-версию: TS/JS-логику, карту, объекты, UI и ассеты можно менять последующими релизами без новой загрузки `.exe`.
+
+Patch cache находится в `%LOCALAPPDATA%\ChibiMadness\web-patches`. Bundle проверяется по списку файлов, размеру и SHA-256 перед запуском; неполная загрузка игнорируется, а после успешного обновления остаётся только активная версия cache. Изменения Rust desktop-host всё ещё требуют нового `.exe`.
+
 ## Production multiplayer
 
 Rust-сервер в [`server/`](server) — authoritative для общего мира: игроков, мобов, урона, снарядов и Nullspace. Инвентари, квесты и дропы намеренно остаются локальными. Инструкция для Linux, Nginx и PM2 находится в [`server/README.md`](server/README.md).

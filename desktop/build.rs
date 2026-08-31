@@ -20,10 +20,9 @@ fn main() {
     );
 
     let mut generated = String::from(
-        "/// Builds the fixed local page from the packaged production assets.\n\
-         pub fn local_page(csp: LocalCsp) -> Result<LocalPage, Box<dyn Error>> {\n",
+        "/// Builds an in-memory bundle from the production assets embedded in the executable.\n\
+         pub fn bundled_assets() -> Result<AssetBundle, Box<dyn Error>> {\n",
     );
-    generated.push_str("    let entry = AssetPath::parse(\"index.html\")?;\n");
     generated.push_str(
         "    let mut assets = AssetBundle::new(MimePolicy::strict(), AssetLimits::default());\n",
     );
@@ -32,9 +31,10 @@ fn main() {
             "    assets.insert(AssetPath::parse({logical_path:?})?, include_bytes!({absolute_path:?}).to_vec())?;\n"
         ));
     }
-    generated.push_str("    Ok(LocalPage::new(entry, assets, csp)?)\n}\n");
+    generated.push_str("    Ok(assets)\n}\n");
 
-    let output = Path::new(&env::var("OUT_DIR").expect("Cargo sets OUT_DIR")).join("embedded_assets.rs");
+    let output =
+        Path::new(&env::var("OUT_DIR").expect("Cargo sets OUT_DIR")).join("embedded_assets.rs");
     fs::write(output, generated).expect("write generated asset registry");
 }
 

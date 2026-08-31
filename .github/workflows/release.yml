@@ -37,12 +37,42 @@ jobs:
           npm ci
           npm run lint
           npm run build
+      - name: Package hot-update bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $distRoot = (Resolve-Path 'dist').Path
+          $staging = Join-Path $env:RUNNER_TEMP 'chibimadness-web-patch'
+          $release = Join-Path $env:GITHUB_WORKSPACE 'release'
+          $allowedExtensions = @('.css', '.gif', '.html', '.ico', '.jpeg', '.jpg', '.js', '.json', '.png', '.svg', '.webp', '.woff2')
+          Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $staging, $release | Out-Null
+          $entries = @()
+          Get-ChildItem -Path $distRoot -File -Recurse | ForEach-Object {
+            if ($allowedExtensions -notcontains $_.Extension.ToLowerInvariant()) { return }
+            $relative = [IO.Path]::GetRelativePath($distRoot, $_.FullName).Replace('\', '/')
+            $destination = Join-Path $staging $relative
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+            Copy-Item -LiteralPath $_.FullName -Destination $destination
+            $entries += [ordered]@{
+              path = $relative
+              sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              size = $_.Length
+            }
+          }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "main-$($env:GITHUB_SHA.Substring(0, 12))" }
+          $manifest = [ordered]@{ formatVersion = 1; version = $version; files = @($entries) }
+          [IO.File]::WriteAllText((Join-Path $release 'patch-manifest.json'), ($manifest | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
+          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath (Join-Path $release 'web-patch.zip') -Force
       - name: Build desktop binary
         run: cargo build --release --target x86_64-pc-windows-msvc --manifest-path desktop/Cargo.toml
+      - name: Stage desktop binary
+        shell: pwsh
+        run: Copy-Item desktop/target/x86_64-pc-windows-msvc/release/chibimadness-desktop.exe release/chibimadness-desktop.exe
       - uses: actions/upload-artifact@v4
         with:
           name: chibimadness-windows
-          path: desktop/target/x86_64-pc-windows-msvc/release/chibimadness-desktop.exe
+          path: release
           if-no-files-found: error
 
   publish-release:
@@ -62,4 +92,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/chibimadness-desktop.exe --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" artifacts/chibimadness-desktop.exe artifacts/web-patch.zip artifacts/patch-manifest.json --generate-notes
