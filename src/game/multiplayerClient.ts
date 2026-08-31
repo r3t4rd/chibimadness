@@ -87,6 +87,8 @@ class MultiplayerClient {
   private lastPositionSentAt = 0;
   private sharedWorldReady = false;
   private serverHordeActive = false;
+  private hordeTransition: 'enter' | 'extract' | null = null;
+  private hordeTransitionStartedAt = 0;
 
   constructor() {
     serverConfigurationListeners.add(() => {
@@ -201,6 +203,15 @@ class MultiplayerClient {
       this.serverHordeActive = data?.horde?.active === true
         && Array.isArray(data?.horde?.participants)
         && data.horde.participants.includes(this.localPlayer?.id);
+      if (
+        (this.hordeTransition === 'enter' && this.serverHordeActive)
+        || (this.hordeTransition === 'extract' && !this.serverHordeActive)
+      ) {
+        // The engine processes this same snapshot synchronously and adopts its
+        // authoritative transform before the next animation-frame movement.
+        this.hordeTransition = null;
+        this.lastPositionSentAt = performance.now();
+      }
     }
     this.listeners.forEach((fn) => fn(type, data));
   }
@@ -223,6 +234,13 @@ class MultiplayerClient {
 
   public updatePosition(player: Player) {
     const now = performance.now();
+    // Do not leak a pre-transition overworld transform after horde_enter (or
+    // a pre-extract horde transform). The server commits the transition and
+    // its snapshot supplies the next valid movement base.
+    if (this.hordeTransition) {
+      if (now - this.hordeTransitionStartedAt < 6_000) return;
+      this.hordeTransition = null;
+    }
     if (now - this.lastPositionSentAt < 1000 / 10) {
       return;
     }
@@ -256,10 +274,14 @@ class MultiplayerClient {
   }
 
   public enterHorde() {
+    this.hordeTransition = 'enter';
+    this.hordeTransitionStartedAt = performance.now();
     this.send({ type: 'horde_enter' });
   }
 
   public extractHorde() {
+    this.hordeTransition = 'extract';
+    this.hordeTransitionStartedAt = performance.now();
     this.send({ type: 'horde_extract' });
   }
 
@@ -327,6 +349,7 @@ class MultiplayerClient {
     this.isConnected = false;
     this.sharedWorldReady = false;
     this.serverHordeActive = false;
+    this.hordeTransition = null;
     this.localPlayer = null;
   }
 }

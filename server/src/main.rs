@@ -321,32 +321,16 @@ async fn update_position(server: &Arc<Server>, session_id: u64, message: Value) 
         };
         let old_x = record.value["x"].as_f64().unwrap_or(WORLD_MIN_X);
         let old_y = record.value["y"].as_f64().unwrap_or(WORLD_MIN_Y);
-        let mut in_horde = state
+        let in_horde = state
             .horde
             .as_ref()
             .is_some_and(|horde| horde.participants.contains_key(&player_id));
-        if in_horde {
-            if let (Some(mx), Some(my)) = (message.get("x").and_then(Value::as_f64), message.get("y").and_then(Value::as_f64)) {
-                if !is_horde_coordinate(mx, my) {
-                    if let Some(horde) = state.horde.as_mut() {
-                        horde.participants.remove(&player_id);
-                        let should_close = horde.participants.is_empty();
-                        if should_close {
-                            state.horde = None;
-                            if let Some(world) = state.combat_world.as_mut() {
-                                world
-                                    .monsters
-                                    .retain(|_, monster| !is_horde_monster(monster));
-                                world
-                                    .projectiles
-                                    .retain(|projectile| !is_horde_projectile(projectile));
-                            }
-                        }
-                    }
-                    in_horde = false;
-                }
-            }
-        }
+        // A transform is never a world-transition command. Right after a
+        // horde_enter request a client can still have one coalesced overworld
+        // movement packet in flight; treating it as an exit used to remove the
+        // player (and often destroy a single-player run) immediately.
+        // Explicit extract, death, disconnect, or a server-owned teleport are
+        // the only valid ways to leave Nullspace.
         let (min_x, max_x, min_y, max_y) = if in_horde {
             (HORDE_MIN_X, HORDE_MAX_X, HORDE_MIN_Y, HORDE_MAX_Y)
         } else {
@@ -600,20 +584,29 @@ async fn heal_player(server: &Arc<Server>, session_id: u64, message: Value) {
     if amount <= 0.0 || amount > 100_000.0 {
         return;
     }
-    let mut state = server.state.lock().await;
-    let Some(player_id) = state
-        .sessions
-        .get(&session_id)
-        .and_then(|session| session.player_id.clone())
-    else {
-        return;
-    };
-    if let Some(player) = state.players.get_mut(&player_id) {
+    let snapshot = {
+        let mut state = server.state.lock().await;
+        let Some(player_id) = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.player_id.clone())
+        else {
+            return;
+        };
+        let Some(player) = state.players.get_mut(&player_id) else {
+            return;
+        };
         let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
         let hp = number(&player.value, "hp", 100.0);
         let next_hp = (hp + amount).min(max_hp);
         set_number(&mut player.value, "hp", next_hp);
-    }
+
+        // Health is authoritative once combat starts. Confirm a successful
+        // heal immediately instead of making the UI wait for the next periodic
+        // world snapshot and appear to roll the heal back.
+        (recipients_except(&state, 0), world_snapshot(&state))
+    };
+    send_to(snapshot.0, snapshot.1);
 }
 
 async fn teleport(server: &Arc<Server>, session_id: u64, message: Value) {
@@ -1684,5 +1677,100 @@ mod tests {
         tick_horde_director(&mut state);
         let world = state.combat_world.as_ref().expect("world");
         assert!(world.monsters.values().any(is_horde_monster));
+    }
+
+    #[tokio::test]
+    async fn stale_overworld_movement_cannot_cancel_nullspace_entry() {
+        let server = Arc::new(Server {
+            state: Mutex::new(WorldState::default()),
+            max_players: 4,
+        });
+        let mut receiver = session(&server, 1).await;
+        join(
+            &server,
+            1,
+            json!({ "player": player("pilot", 650.0, 750.0) }),
+        )
+        .await;
+        let _ = receiver.recv().await.expect("join init");
+        world_bootstrap(
+            &server,
+            1,
+            json!({ "monsters": [{
+                "id": "overworld_mob", "x": 700.0, "y": 750.0,
+                "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0
+            }]}),
+        )
+        .await;
+        let _ = receiver.recv().await.expect("world bootstrap");
+
+        enter_horde(&server, 1).await;
+        let _ = receiver.recv().await.expect("horde snapshot");
+        update_position(
+            &server,
+            1,
+            json!({
+                "x": 650.0, "y": 750.0, "vx": 0.0, "vy": 0.0,
+                "facing": "right", "state": "idle", "hp": 100,
+                "maxHp": 100, "level": 1, "isRiding": false,
+                "activeVehicleId": null,
+            }),
+        )
+        .await;
+
+        let state = server.state.lock().await;
+        assert!(
+            state
+                .horde
+                .as_ref()
+                .is_some_and(|horde| horde.participants.contains_key("pilot"))
+        );
+        let player = state
+            .players
+            .get("pilot")
+            .expect("player remains connected");
+        assert_eq!(number(&player.value, "x", 0.0), HORDE_CENTER_X);
+        assert_eq!(number(&player.value, "y", 0.0), HORDE_CENTER_Y);
+    }
+
+    #[tokio::test]
+    async fn heal_is_confirmed_by_an_immediate_authoritative_snapshot() {
+        let server = Arc::new(Server {
+            state: Mutex::new(WorldState::default()),
+            max_players: 4,
+        });
+        let mut receiver = session(&server, 1).await;
+        join(
+            &server,
+            1,
+            json!({ "player": player("pilot", 650.0, 750.0) }),
+        )
+        .await;
+        let _ = receiver.recv().await.expect("join init");
+        world_bootstrap(
+            &server,
+            1,
+            json!({ "monsters": [{
+                "id": "overworld_mob", "x": 700.0, "y": 750.0,
+                "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0
+            }]}),
+        )
+        .await;
+        let _ = receiver.recv().await.expect("world bootstrap");
+        {
+            let mut state = server.state.lock().await;
+            state
+                .players
+                .get_mut("pilot")
+                .expect("player")
+                .value["hp"] = json!(40.0);
+        }
+
+        heal_player(&server, 1, json!({ "amount": 25.0 })).await;
+
+        let snapshot = serde_json::from_str::<Value>(&receiver.recv().await.expect("heal snapshot"))
+            .expect("snapshot JSON");
+        assert_eq!(snapshot["type"], "world_snapshot");
+        assert_eq!(snapshot["players"][0]["hp"], 65.0);
     }
 }
