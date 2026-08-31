@@ -10,6 +10,28 @@ declare global {
 
 let configuredServerUrl: string | null = null;
 const serverConfigurationListeners = new Set<() => void>();
+let configurationRetryTimer: number | null = null;
+let nextBridgeMessageId = 1;
+
+function requestDesktopServerConfiguration() {
+  if (typeof window === 'undefined' || configuredServerUrl) return;
+  const isEmbeddedDesktop =
+    window.location.protocol === 'app:' || window.location.hostname === 'app.localhost';
+  if (!isEmbeddedDesktop || !window.yuyib?.post) return;
+
+  let attemptsRemaining = 20;
+  const request = () => {
+    if (configuredServerUrl || attemptsRemaining-- <= 0) return;
+    window.yuyib?.post({
+      version: 1,
+      id: nextBridgeMessageId++,
+      endpoint: 'game.ready',
+      payload: {},
+    });
+    configurationRetryTimer = window.setTimeout(request, 250);
+  };
+  request();
+}
 
 if (typeof window !== 'undefined') {
   window.addEventListener('yuyib:event', (event: Event) => {
@@ -19,16 +41,15 @@ if (typeof window !== 'undefined') {
       configuredServerUrl = typeof candidate === 'string' && candidate.startsWith('wss://')
         ? candidate
         : null;
+      if (configuredServerUrl && configurationRetryTimer !== null) {
+        window.clearTimeout(configurationRetryTimer);
+        configurationRetryTimer = null;
+      }
       serverConfigurationListeners.forEach((listener) => listener());
     }
   });
 
-  window.yuyib?.post({
-    version: 1,
-    id: 1,
-    endpoint: 'game.ready',
-    payload: {},
-  });
+  requestDesktopServerConfiguration();
 }
 
 class MultiplayerClient {
