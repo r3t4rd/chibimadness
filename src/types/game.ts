@@ -717,6 +717,15 @@ export interface Player {
   omnislashTargetX?: number;
   omnislashTargetY?: number;
   omnislashStrikesLeft?: number;
+
+  // Mage Class Skills transient state variables
+  iceDashTimer?: number;
+  iceDashDuration?: number;
+  iceDashStartX?: number;
+  iceDashStartY?: number;
+  iceDashTargetX?: number;
+  iceDashTargetY?: number;
+  iceDashHitIds?: string[];
 }
 
 export type IntroCinematicPhase = 'black_fade_in' | 'dive' | 'impact' | 'skid' | 'dazed' | 'brush' | 'gun_fall_bonk' | 'pickup_ready' | 'complete' | 'none';
@@ -873,7 +882,7 @@ export interface GroundDecal {
   alpha: number;
   life: number;
   maxLife: number;
-  type?: 'blood' | 'scorch' | 'fire_pool' | 'smoke';
+  type?: 'blood' | 'scorch' | 'fire_pool' | 'smoke' | 'ice_trail';
   dps?: number;
   splatterCount?: number;
 }
@@ -1011,7 +1020,9 @@ export interface Projectile {
     | 'thrown_knife'
     | 'spinning_blade'
     | 'fireball'
-    | 'meteor';
+    | 'meteor'
+    | 'lightning_bolt'
+    | 'void_singularity';
   bulletShape?: 'sphere' | 'needle' | 'diamond' | 'flame' | 'star' | 'ring' | 'missile' | 'laser';
   x: number;
   y: number;
@@ -1041,7 +1052,7 @@ export interface Projectile {
 
 export interface SummonedAlly {
   id: string;
-  kind: 'hellhound' | 'golem';
+  kind: 'hellhound' | 'golem' | 'totem';
   ownerId: string;
   x: number;
   y: number;

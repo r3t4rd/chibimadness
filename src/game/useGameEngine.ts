@@ -2448,44 +2448,46 @@ export function useGameEngine(initialPlayer: Player) {
       });
     } else if (gunType === 'grimoire') {
       sound.playSkillCast('ultimate');
-      triggerShake(8, 0.25);
+      triggerShake(6, 0.18);
       pushProj({
-        id: `p_meteor_${now}`,
+        id: `p_void_${now}`,
         ownerId: curPlayer.id,
-        type: 'meteor',
-        x: targetX - 18,
-        y: targetY - 160,
-        vx: 2.2,
-        vy: 18,
-        damage: Math.round(curPlayer.stats.atk * 3.2 * dmgMult),
-        range: 240,
+        type: 'void_singularity',
+        x: curPlayer.x + aimDirX * 20,
+        y: curPlayer.y + aimDirY * 20,
+        vx: aimDirX * 6,
+        vy: aimDirY * 6,
+        damage: Math.round(curPlayer.stats.atk * 2.8 * dmgMult),
+        range: 380,
         distanceTraveled: 0,
-        color: '#FB7185',
-        size: 22,
-        explosionRadius: 95,
+        color: '#A855F7',
+        size: 20,
+        explosionRadius: 130,
         glow: true,
       });
     } else if (gunType === 'totem') {
       sound.playSkillCast('aoe');
-      triggerShake(4, 0.1);
-      const living = monstersRef.current
-        .filter((m) => m.hp > 0 && m.state !== 'dead')
-        .map((m) => ({ m, d: Math.hypot(m.x - curPlayer.x, m.y - curPlayer.y) }))
-        .filter((e) => e.d < 420)
-        .sort((a, b) => a.d - b.d)
-        .slice(0, 4);
-      living.forEach((e, i) => {
-        const dmg = Math.round(curPlayer.stats.atk * (1.4 - i * 0.15) * dmgMult);
-        e.m.hp = Math.max(0, e.m.hp - dmg);
-        e.m.hitFlash = 0.25;
-        e.m.damagedByPlayer = true;
-        e.m.retaliatePlayer = true;
-        e.m.state = 'chase';
-        e.m.targetPlayerId = curPlayer.id;
-        addDamagePopup(e.m.x, e.m.y - 10, `-${dmg}`, '#A855F7', true);
-        spawnParticles(e.m.x, e.m.y, '#C084FC', 12, 'spark');
-        if (e.m.hp <= 0) handleMonsterDefeated(e.m, true);
-      });
+      triggerShake(6, 0.15);
+      spawnParticles(targetX, targetY, '#A855F7', 15, 'spark');
+
+      const totem: SummonedAlly = {
+        id: `wpn_totem_${now}_${Math.random()}`,
+        kind: 'totem',
+        ownerId: curPlayer.id,
+        x: targetX,
+        y: targetY,
+        facing: curPlayer.facing,
+        hp: 300,
+        maxHp: 300,
+        atk: Math.round(curPlayer.stats.atk * 1.3),
+        speed: 0,
+        attackTimer: 0.1,
+        life: 6.0,
+        maxLife: 6.0,
+        scale: 1.15,
+      };
+      summonsRef.current = [...summonsRef.current, totem];
+      setSummons([...summonsRef.current]);
     }
     // ==========================================
     // 6. DEFAULT PISTOL / STARTER
@@ -2730,74 +2732,111 @@ export function useGameEngine(initialPlayer: Player) {
       playerRef.current = modifiedPlayer;
       setPlayer(modifiedPlayer);
     } else if (skill.id === 'skill_meteor_rain') {
-      showToast('Meteor Rain! ☄️', 'Fire from the sky', '☄️');
-      triggerShake(8, 0.4);
-      for (let i = 0; i < 6; i++) {
+      showToast('Meteor Cataclysm! ☄️', 'Devastating meteor shower!', '☄️');
+      triggerShake(14, 0.85);
+      const count = 24;
+      for (let i = 0; i < count; i++) {
         setTimeout(() => {
           if (playerRef.current.stats.hp <= 0) return;
-          const ox = (Math.random() - 0.5) * 160;
-          const oy = (Math.random() - 0.5) * 90;
+          const isGiant = i === count - 1;
+          const ox = isGiant ? 0 : (Math.random() - 0.5) * 360;
+          const oy = isGiant ? 0 : (Math.random() - 0.5) * 220;
           pushSkillProj({
             id: `p_mrain_${Date.now()}_${i}`,
             ownerId: playerRef.current.id,
             type: 'meteor',
-            x: targetX + ox - 20,
-            y: targetY + oy - 200,
-            vx: 1.5 + Math.random() * 2,
-            vy: 17,
-            damage: Math.round(playerRef.current.stats.atk * 2.1),
-            range: 260,
+            x: targetX + ox - (isGiant ? 30 : 15),
+            y: targetY + oy - (isGiant ? 240 : 180),
+            vx: isGiant ? 1.0 : 1.0 + (Math.random() - 0.5) * 3,
+            vy: isGiant ? 16 : 15 + Math.random() * 5,
+            damage: Math.round(playerRef.current.stats.atk * (isGiant ? 5.2 : 1.8)),
+            range: isGiant ? 300 : 220 + Math.random() * 60,
             distanceTraveled: 0,
-            color: '#FB7185',
-            size: 18,
-            explosionRadius: 80,
+            color: isGiant ? '#EF4444' : '#FB7185',
+            size: isGiant ? 48 : 12 + Math.random() * 12,
+            explosionRadius: isGiant ? 160 : 60 + Math.random() * 40,
             glow: true,
           });
-        }, i * 90);
+        }, i * 65);
       }
     } else if (skill.id === 'skill_hellhounds') {
-      showToast('Hellhound Pack! 🐺', 'Demon dogs hunt for you', '🐺');
-      triggerShake(5, 0.2);
-      const pack: SummonedAlly[] = [0, 1, 2].map((i) => ({
-        id: `hound_${now}_${i}`,
-        kind: 'hellhound' as const,
-        ownerId: curPlayer.id,
-        x: curPlayer.x + (i - 1) * 28,
-        y: curPlayer.y + 18,
-        facing: curPlayer.facing,
-        hp: 140,
-        maxHp: 140,
-        atk: Math.round(curPlayer.stats.atk * 0.85),
-        speed: 7.2,
-        attackTimer: 0.2 * i,
-        life: 16,
-        maxLife: 16,
-        scale: 0.85,
-      }));
-      summonsRef.current = [...summonsRef.current.filter((s) => s.kind !== 'hellhound'), ...pack];
-      setSummons([...summonsRef.current]);
+      showToast('Storm Call! ⚡', 'Thunder and lightning strikes!', '⚡');
+      triggerShake(12, 0.7);
+      const living = monstersRef.current.filter((m) => m.hp > 0 && m.state !== 'dead');
+      const targets = living
+        .map((m) => ({ m, d: Math.hypot(m.x - curPlayer.x, m.y - curPlayer.y) }))
+        .filter((e) => e.d <= 600)
+        .sort((a, b) => a.d - b.d)
+        .map((e) => e.m)
+        .slice(0, 25);
+
+      if (targets.length === 0) {
+        for (let i = 0; i < 8; i++) {
+          targets.push({
+            id: `fake_${i}`,
+            x: curPlayer.x + (Math.random() - 0.5) * 400,
+            y: curPlayer.y + (Math.random() - 0.5) * 300,
+            hp: 999999,
+            maxHp: 999999,
+            atk: 0,
+            speed: 0,
+            attackTimer: 0,
+            state: 'idle',
+            facing: 'left',
+            type: 'fake',
+            damagedByPlayer: false,
+            hitFlash: 0,
+          } as any);
+        }
+      }
+
+      targets.forEach((tgt, idx) => {
+        setTimeout(() => {
+          if (playerRef.current.stats.hp <= 0) return;
+          pushSkillProj({
+            id: `p_lt_${Date.now()}_${idx}`,
+            ownerId: playerRef.current.id,
+            type: 'lightning_bolt',
+            x: tgt.x,
+            y: tgt.y - 300,
+            vx: 0,
+            vy: 30,
+            damage: Math.round(playerRef.current.stats.atk * 1.9),
+            range: 300,
+            distanceTraveled: 0,
+            color: '#22D3EE',
+            size: 4.5,
+            explosionRadius: 45,
+            glow: true,
+          });
+        }, idx * 75);
+      });
     } else if (skill.id === 'skill_titan_golem') {
-      showToast('Titan Golem! 🗿', 'A giant rips out of the earth', '🗿');
-      triggerShake(14, 0.7);
-      spawnParticles(curPlayer.x + aimDirX * 60, curPlayer.y, '#78716C', 28, 'spark');
-      const golem: SummonedAlly = {
-        id: `golem_${now}`,
-        kind: 'golem',
-        ownerId: curPlayer.id,
-        x: curPlayer.x + aimDirX * 70,
-        y: curPlayer.y + aimDirY * 70,
-        facing: curPlayer.facing,
-        hp: 900,
-        maxHp: 900,
-        atk: Math.round(curPlayer.stats.atk * 2.4),
-        speed: 2.4,
-        attackTimer: 0.4,
-        life: 28,
-        maxLife: 28,
-        scale: 2.65,
+      showToast('Glacial Slide! ❄️', 'Frozen dash forward!', '❄️');
+      sound.playSkillCast('buff');
+      
+      const dx = targetX - curPlayer.x;
+      const dy = targetY - curPlayer.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const maxRange = 450;
+      const clampDist = Math.min(dist, maxRange);
+      const angle = Math.atan2(dy, dx);
+      const tx = curPlayer.x + Math.cos(angle) * clampDist;
+      const ty = curPlayer.y + Math.sin(angle) * clampDist;
+
+      const modifiedPlayer: Player = {
+        ...skillCastPlayer,
+        iceDashTimer: 0.35,
+        iceDashDuration: 0.35,
+        iceDashStartX: curPlayer.x,
+        iceDashStartY: curPlayer.y,
+        iceDashTargetX: tx,
+        iceDashTargetY: ty,
+        iceDashHitIds: [],
+        dodgeTimer: 0.45,
       };
-      summonsRef.current = [...summonsRef.current.filter((s) => s.kind !== 'golem'), golem];
-      setSummons([...summonsRef.current]);
+      playerRef.current = modifiedPlayer;
+      setPlayer(modifiedPlayer);
     }
   }, [showToast, triggerShake, handleJump, spawnParticles]);
 
@@ -3371,7 +3410,7 @@ export function useGameEngine(initialPlayer: Player) {
         spawnParticles(curPlayer.x, curPlayer.y + 12, '#F59E0B', 2, 'spark');
       }
 
-      // Base Speed calculation (including Spirit Shrine speed buffs)
+      // Base Speed calculation (including Spirit Shrine and Glacial Ice Trail speed buffs)
       let speedBuffMult = 1.0;
       if (curPlayer.activeBuffs && curPlayer.activeBuffs.length > 0) {
         const now = Date.now();
@@ -3380,6 +3419,12 @@ export function useGameEngine(initialPlayer: Player) {
             speedBuffMult += b.value;
           }
         });
+      }
+      const onIce = groundDecalsRef.current.some(
+        (d) => d.type === 'ice_trail' && Math.hypot(curPlayer.x - d.x, curPlayer.y - d.y) <= d.radius + 15
+      );
+      if (onIce) {
+        speedBuffMult += 0.65;
       }
 
       let baseSpeed = curPlayer.stats.speed * 48 * speedBuffMult * getEvolutionMods(curPlayer, hordeRunRef.current.active).moveMult;
@@ -3394,8 +3439,9 @@ export function useGameEngine(initialPlayer: Player) {
       let nextX = curPlayer.x;
       let nextY = curPlayer.y;
 
-      // --- BLADE CLASS SKILLS OVERRIDES ---
+      // --- BLADE & MAGE CLASS SKILLS OVERRIDES ---
       const isLeaping = (curPlayer.leapSlamTimer ?? 0) > 0;
+      const isIceDashing = (curPlayer.iceDashTimer ?? 0) > 0;
       const isDashingSlash = (curPlayer.dashSlashTimer ?? 0) > 0;
       const isOmnislashing = (curPlayer.omnislashStrikesLeft ?? 0) > 0;
 
@@ -3470,6 +3516,56 @@ export function useGameEngine(initialPlayer: Player) {
               if (m.hp <= 0) m.state = 'dead';
             }
           });
+        }
+      } else if (isIceDashing) {
+        const iTimer = Math.max(0, (curPlayer.iceDashTimer ?? 0) - dt);
+        const iDur = curPlayer.iceDashDuration ?? 0.35;
+        const iStartX = curPlayer.iceDashStartX ?? curPlayer.x;
+        const iStartY = curPlayer.iceDashStartY ?? curPlayer.y;
+        const iTargetX = curPlayer.iceDashTargetX ?? curPlayer.x;
+        const iTargetY = curPlayer.iceDashTargetY ?? curPlayer.y;
+        const hitIds = curPlayer.iceDashHitIds ?? [];
+
+        const t = iDur > 0 ? 1 - (iTimer / iDur) : 1;
+        nextX = iStartX + (iTargetX - iStartX) * t;
+        nextY = iStartY + (iTargetY - iStartY) * t;
+
+        addGroundDecal(nextX, nextY + 12, '#BAE6FD', 45, 'ice_trail', 5.0, 0);
+
+        if (Math.random() < 0.75) {
+          spawnParticles(nextX, nextY + 10, '#38BDF8', 3, 'spark');
+        }
+
+        const dmg = Math.round(curPlayer.stats.atk * 1.6);
+        monstersRef.current.forEach((m) => {
+          if (m.hp <= 0 || m.state === 'dead' || hitIds.includes(m.id)) return;
+          const mdx = m.x - nextX;
+          const mdy = m.y - nextY;
+          const mdist = Math.sqrt(mdx * mdx + mdy * mdy);
+          if (mdist < 75) {
+            hitIds.push(m.id);
+            m.hp = Math.max(0, m.hp - dmg);
+            m.slowTimer = Math.max(m.slowTimer || 0, 4.0);
+            m.hitFlash = 0.3;
+            m.damagedByPlayer = true;
+            spawnParticles(m.x, m.y, '#38BDF8', 12, 'spark');
+            sound.playHit();
+            addDamagePopup(m.x, m.y - 12, `${dmg} FREEZE!`, '#38BDF8', true, false, 'manga');
+            if (m.hp <= 0) handleMonsterDefeated(m, true);
+          }
+        });
+
+        curPlayer.iceDashTimer = iTimer;
+        curPlayer.iceDashHitIds = hitIds;
+
+        if (iTimer <= 0) {
+          curPlayer.iceDashTimer = undefined;
+          curPlayer.iceDashDuration = undefined;
+          curPlayer.iceDashStartX = undefined;
+          curPlayer.iceDashStartY = undefined;
+          curPlayer.iceDashTargetX = undefined;
+          curPlayer.iceDashTargetY = undefined;
+          curPlayer.iceDashHitIds = undefined;
         }
       } else if (isDashingSlash) {
         const dTimer = Math.max(0, (curPlayer.dashSlashTimer ?? 0) - dt);
@@ -4521,6 +4617,24 @@ export function useGameEngine(initialPlayer: Player) {
         p.y += p.vy;
         p.distanceTraveled += Math.sqrt(p.vx * p.vx + p.vy * p.vy);
 
+        // Void Singularity gravity pulling effect
+        if (p.type === 'void_singularity') {
+          livingMonsters.forEach((m) => {
+            if (m.hp <= 0 || m.state === 'dead' || m.isBoss) return;
+            const dx = p.x - m.x;
+            const dy = p.y - m.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            if (dist < 220) {
+              const pullForce = (1 - dist / 220) * 160 * dt;
+              m.x += (dx / dist) * pullForce;
+              m.y += (dy / dist) * pullForce;
+              if (Math.random() < 0.12) {
+                spawnParticles(m.x, m.y, '#C084FC', 1, 'spark');
+              }
+            }
+          });
+        }
+
         let consumed = false;
 
         // Hit on Interactive Objects (Explosive Barrels)
@@ -4773,7 +4887,9 @@ export function useGameEngine(initialPlayer: Player) {
         if (!consumed && p.distanceTraveled < p.range) {
           remainingProjectiles.push(p);
         } else if (p.explosionRadius) {
+          sound.playExplosion();
           spawnParticles(p.x, p.y, p.color || '#FB923C', 18, 'spark');
+          spawnParticles(p.x, p.y, '#78716C', 10, 'smoke');
           addGroundDecal(p.x, p.y, '#7C2D12', p.explosionRadius, 'scorch', 4.5, 0);
           livingMonsters.forEach((m) => {
             if (m.hp <= 0 || m.state === 'dead') return;
@@ -4792,11 +4908,62 @@ export function useGameEngine(initialPlayer: Player) {
       projectilesRef.current = remainingProjectiles;
       setProjectiles(remainingProjectiles);
 
-      // Summoned pets (hellhounds / golem)
+      // Summoned pets (hellhounds / golem / totem)
       summonsRef.current = summonsRef.current
         .map((ally) => {
           const nextLife = ally.life - dt;
           if (nextLife <= 0 || ally.hp <= 0) return { ...ally, life: 0 };
+
+          if (ally.kind === 'totem') {
+            let attackTimer = Math.max(0, ally.attackTimer - dt);
+            if (attackTimer <= 0) {
+              attackTimer = 0.6; // fire every 0.6 seconds
+              
+              const nearby = livingMonsters
+                .filter((m) => Math.hypot(m.x - ally.x, m.y - ally.y) <= 350)
+                .sort((a, b) => Math.hypot(a.x - ally.x, a.y - ally.y) - Math.hypot(b.x - ally.x, b.y - ally.y))
+                .slice(0, 6);
+
+              if (nearby.length > 0) {
+                sound.playSkillCast('aoe');
+                nearby.forEach((m, idx) => {
+                  const dmg = ally.atk;
+                  m.hp = Math.max(0, m.hp - dmg);
+                  m.hitFlash = 0.25;
+                  m.damagedByPlayer = true;
+                  addDamagePopup(m.x, m.y - 12, `-${dmg}`, '#C084FC', true);
+                  spawnParticles(m.x, m.y, '#C084FC', 8, 'spark');
+                  if (m.hp <= 0) handleMonsterDefeated(m, true);
+
+                  const startX = idx === 0 ? ally.x : nearby[idx - 1].x;
+                  const startY = idx === 0 ? ally.y : nearby[idx - 1].y;
+                  const targetX = m.x;
+                  const targetY = m.y;
+                  const dist = Math.hypot(targetX - startX, targetY - startY) || 1;
+                  const angle = Math.atan2(targetY - startY, targetX - startX);
+
+                  const visualProj: Projectile = {
+                    id: `chain_lt_${Date.now()}_${idx}_${Math.random()}`,
+                    ownerId: ally.ownerId,
+                    type: 'lightning_bolt',
+                    x: startX,
+                    y: startY,
+                    vx: Math.cos(angle) * 20,
+                    vy: Math.sin(angle) * 20,
+                    damage: 0,
+                    range: dist,
+                    distanceTraveled: 0,
+                    color: '#A855F7',
+                    size: 3.5,
+                  };
+                  projectilesRef.current = [...projectilesRef.current, visualProj];
+                  setProjectiles([...projectilesRef.current]);
+                });
+              }
+            }
+            return { ...ally, attackTimer, life: nextLife };
+          }
+
           const prey = livingMonsters
             .map((m) => ({ m, d: Math.hypot(m.x - ally.x, m.y - ally.y) }))
             .sort((a, b) => a.d - b.d)[0];

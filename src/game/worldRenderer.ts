@@ -616,6 +616,21 @@ function drawGroundDecals(ctx: CanvasRenderingContext2D, decals: GroundDecal[], 
       ctx.beginPath();
       ctx.arc(0, 0, 8, 0, Math.PI * 2);
       ctx.fill();
+    } else if (d.type === 'ice_trail') {
+      ctx.fillStyle = 'rgba(186, 230, 253, 0.42)';
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rad, Math.max(0.5, rad * 0.65), 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(-rad * 0.3, -rad * 0.1, 3.2, 0, Math.PI * 2);
+      ctx.arc(rad * 0.25, rad * 0.15, 2.2, 0, Math.PI * 2);
+      ctx.arc(-rad * 0.05, rad * 0.25, 2.8, 0, Math.PI * 2);
+      ctx.fill();
     } else {
       // Blood splatters and scorch marks
       ctx.fillStyle = d.color || '#991B1B';
@@ -4393,6 +4408,38 @@ function drawSummons(ctx: CanvasRenderingContext2D, summons: SummonedAlly[], tim
       ctx.arc(-7, -34, 3, 0, Math.PI * 2);
       ctx.arc(7, -34, 3, 0, Math.PI * 2);
       ctx.fill();
+    } else if (ally.kind === 'totem') {
+      ctx.fillStyle = '#4C1D95';
+      ctx.strokeStyle = '#8B5CF6';
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(-10, 16);
+      ctx.lineTo(-6, -42);
+      ctx.lineTo(6, -42);
+      ctx.lineTo(10, 16);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#C084FC';
+      ctx.shadowColor = '#C084FC';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.moveTo(-6, -42);
+      ctx.lineTo(0, -56);
+      ctx.lineTo(6, -42);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.strokeStyle = '#D8B4FE';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-3, -24);
+      ctx.lineTo(3, -24);
+      ctx.moveTo(0, -32);
+      ctx.lineTo(0, -16);
+      ctx.stroke();
     } else {
       ctx.fillStyle = '#7F1D1D';
       ctx.strokeStyle = '#450A0A';
@@ -4529,6 +4576,66 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[
       ctx.strokeRect(-2.5, -18, 5, 28);
       ctx.fillStyle = '#F59E0B';
       ctx.fillRect(-6, 8, 12, 3);
+    } else if (p.type === 'lightning_bolt') {
+      ctx.strokeStyle = p.color || '#22D3EE';
+      ctx.lineWidth = p.size || 4.5;
+      ctx.shadowColor = p.color || '#22D3EE';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      let curX = 0;
+      let curY = -300;
+      ctx.moveTo(curX, curY);
+      const segments = 6;
+      const stepY = 300 / segments;
+      for (let i = 1; i < segments; i++) {
+        curX += (Math.random() - 0.5) * 24;
+        curY += stepY;
+        ctx.lineTo(curX, curY);
+      }
+      ctx.lineTo(0, 0);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = (p.size || 4.5) * 0.45;
+      ctx.beginPath();
+      curX = 0;
+      curY = -300;
+      ctx.moveTo(curX, curY);
+      for (let i = 1; i < segments; i++) {
+        curX += (Math.random() - 0.5) * 24;
+        curY += stepY;
+        ctx.lineTo(curX, curY);
+      }
+      ctx.lineTo(0, 0);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else if (p.type === 'void_singularity') {
+      const r = p.size || 24;
+      const animTime = Date.now() / 1000;
+      ctx.strokeStyle = '#7C3AED';
+      ctx.lineWidth = 3.0;
+      ctx.shadowColor = '#C084FC';
+      ctx.shadowBlur = 16;
+      ctx.beginPath();
+      ctx.arc(0, 0, r + Math.sin(animTime * 10) * 4, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(124, 58, 237, 0.4)';
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#0F172A';
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#F472B6';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.45, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
     } else {
       const trailLength = p.tracerLength ?? 18;
       const width = p.tracerWidth ?? 2.0;

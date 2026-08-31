@@ -321,7 +321,7 @@ export const HUD: React.FC<HUDProps> = ({
       )}
 
       {/* 5. FIRST-PERSON PAPER HANDS HOLDING WEAPON & AMMO VIEWPORT (BOTTOM-RIGHT) */}
-      {player.characterClass === 'gunslinger' && (
+      {(player.characterClass === 'gunslinger' || player.characterClass === 'cybermage') && (
       <HandheldWeaponHUD
         player={player}
         onReload={onReload}
