@@ -1278,8 +1278,9 @@ fn tick_combat_world(state: &mut WorldState) {
                         set_string(monster, "state", "dead");
                     }
                     if let Some(player) = player_records.get_mut(&owner) {
-                        if number(&player.value, "hp", 0.0) > 0.0 {
-                            let max_hp = number(&player.value, "maxHp", 100.0).max(1.0);
+                        let clone = player.value.clone();
+                        if number(&clone, "hp", 0.0) > 0.0 {
+                            let max_hp = number(&clone, "maxHp", 100.0).max(1.0);
                             let heal = (damage * LIFESTEAL_RATIO).max(1.0);
                             set_number(
                                 &mut player.value,
