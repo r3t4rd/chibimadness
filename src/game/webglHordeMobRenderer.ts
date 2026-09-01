@@ -431,6 +431,7 @@ export class WebglHordeMobRenderer {
     projectiles: Projectile[],
     particles: VisualParticle[],
     staticWorld?: WebglStaticWorldView,
+    drawActors = true,
   ) {
     this.drawnMobCount = 0;
     if (this.lost) return 0;
@@ -440,6 +441,7 @@ export class WebglHordeMobRenderer {
     const gl = this.gl;
     this.clear();
     if (staticWorld) this.renderStaticWorld(staticWorld);
+    if (!drawActors) return 0;
 
     const viewBounds = getViewBounds(camera.x, camera.y, width, height, camera.zoom);
     const blindness = getHordeBlindness();

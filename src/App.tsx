@@ -580,7 +580,8 @@ export function App() {
           webglHordeMobRenderer = null;
           return false;
         }
-        if (webglHordeMobBodiesRef.current) {
+        const drawActors = webglHordeMobBodiesRef.current;
+        if (drawActors || webglStaticWorldView) {
           webglHordeMobRenderer.render(
             input.monsters,
             input.localPlayer,
@@ -589,8 +590,9 @@ export function App() {
             input.projectiles,
             input.particles,
             webglStaticWorldView,
+            drawActors,
           );
-          return true;
+          return drawActors;
         }
         webglHordeMobRenderer.clear();
         return false;
@@ -655,9 +657,7 @@ export function App() {
         + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
       const sourceX = Math.max(0, Math.min(staticCache.width - sourceWidth, rawSourceX));
       const sourceY = Math.max(0, Math.min(staticCache.height - sourceHeight, rawSourceY));
-      const canUseWebgl = !forceStaticCanvasRef.current
-        && webglHordeMobBodiesRef.current
-        && webglHordeMobRenderer?.isAvailable;
+      const canUseWebgl = !forceStaticCanvasRef.current && webglHordeMobRenderer?.isAvailable;
       if (canUseWebgl && webglHordeMobRenderer) {
         if (uploadedStaticCache !== staticCache) {
           uploadedStaticCache = webglHordeMobRenderer.uploadStaticWorld(staticCache.image) ? staticCache : null;
