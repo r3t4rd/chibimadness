@@ -311,13 +311,15 @@ export function App() {
         gameTimePhase: curEngine.gameTimePhase,
       });
       if (nativeWorldRendererRequested) {
-        // Dense Canvas-equivalent command lists are the remaining JS -> native
-        // choke point. The WGPU surface keeps interpolating its retained world
-        // buffers, so back off publication before it can starve UI/input.
+        // The retained static layer can be composited at the presentation rate,
+        // but dynamic display-list vertices cannot: until a new scene reaches
+        // WGPU, every present repeats the previous positions. Keep the dynamic
+        // cadence high enough for motion to remain smooth, while the one-slot
+        // hand-off below still bounds worker and bridge pressure.
         const denseNativeScene = curEngine.monsters.length >= 20
           || curEngine.particles.length >= 48
           || curEngine.projectiles.length >= 16;
-        const nativeSceneTargetHz = denseNativeScene ? 12 : 20;
+        const nativeSceneTargetHz = denseNativeScene ? 60 : 120;
         const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
         perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
         if (time - lastNativeFrameAt.current >= nativeSceneIntervalMs) {
