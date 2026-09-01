@@ -343,6 +343,7 @@ pub struct NativeWorldState {
     received_at: Option<Instant>,
     scene: Option<NativeRenderScene>,
     scene_received_at: Option<Instant>,
+    scene_revision: u64,
 }
 
 impl NativeWorldState {
@@ -466,10 +467,11 @@ impl NativeWorldState {
         }
         self.scene = Some(scene);
         self.scene_received_at = Some(Instant::now());
+        self.scene_revision = self.scene_revision.wrapping_add(1);
     }
 
-    pub fn scene(&self) -> Option<&NativeRenderScene> {
-        self.scene.as_ref()
+    pub fn scene_with_revision(&self) -> Option<(&NativeRenderScene, u64)> {
+        self.scene.as_ref().map(|scene| (scene, self.scene_revision))
     }
 
     #[cfg(test)]
@@ -505,6 +507,8 @@ pub struct NativeWorldRenderer {
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
+    vertices_dirty: bool,
+    last_scene_revision: Option<u64>,
     text_font: Option<FontArc>,
     last_presented_at: Option<Instant>,
     metrics_started_at: Instant,
@@ -545,6 +549,8 @@ impl Default for NativeWorldRenderer {
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
+            vertices_dirty: false,
+            last_scene_revision: None,
             text_font: load_native_text_font(),
             last_presented_at: None,
             metrics_started_at: Instant::now(),
@@ -583,13 +589,22 @@ impl NativeWorldRenderer {
     /// Returns true only after the frame reached the native surface. The
     /// WebView uses this acknowledgement to hide its Canvas fallback safely.
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
-        let rendered_scene = if let Some(scene) = state.scene() {
-            self.build_scene_vertices(scene)
+        let rendered_scene = if let Some((scene, revision)) = state.scene_with_revision() {
+            if self.last_scene_revision != Some(revision) {
+                if !self.build_scene_vertices(scene) {
+                    return false;
+                }
+                self.last_scene_revision = Some(revision);
+                self.vertices_dirty = true;
+            }
+            true
         } else if let Some((world, prediction_seconds)) = state.frame_with_prediction() {
             // Kept only during an upgrade from an older JS bundle. New clients
             // always submit `world.scene`; the source display list is the
             // presentable native path.
             self.build_vertices(world, prediction_seconds);
+            self.last_scene_revision = None;
+            self.vertices_dirty = true;
             true
         } else {
             false
@@ -601,7 +616,10 @@ impl NativeWorldRenderer {
             return false;
         }
         self.ensure_pipeline(frame);
-        self.upload_vertices(frame);
+        if self.vertices_dirty {
+            self.upload_vertices(frame);
+            self.vertices_dirty = false;
+        }
         let (Some(pipeline), Some(vertex_buffer)) = (&self.pipeline, &self.vertex_buffer) else {
             return false;
         };
