@@ -723,7 +723,7 @@ export function App() {
                 onExtractHorde={engine.handleExtractHorde}
               />
 
-              <DebugOverlay />
+              <DebugOverlay nativeWorldActive={nativeWorldRenderer} />
 
               {/* 6. In-Game Chat & Emote Wheel */}
               <ChatAndEmotes

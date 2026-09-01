@@ -351,7 +351,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let page = local_page(csp, launch_assets.assets)?;
 
     let session = PageSessionId::parse("b9c9f5bbfae14dbdb3f5e2356b74d0aa")?;
-    let limits = BridgeLimits::default();
+    // The default bridge payload is 48 KiB, appropriate for ordinary UI
+    // events but below one retained world display-list. This page is a fixed
+    // local asset origin and NativeWorldState still validates command count,
+    // depth, strings and values before allocation/tessellation. Keep a hard
+    // bound rather than falling back silently to Canvas on every map.
+    let default_limits = BridgeLimits::default();
+    let limits = BridgeLimits::new(
+        1,
+        4 * 1024 * 1024,
+        3 * 1024 * 1024,
+        default_limits.max_endpoint_bytes(),
+    )?;
     let outbound = Rc::new(RefCell::new(None::<WebViewHost>));
     let outbound_for_endpoint = Rc::clone(&outbound);
     let native_world = Rc::new(RefCell::new(NativeWorldState::default()));

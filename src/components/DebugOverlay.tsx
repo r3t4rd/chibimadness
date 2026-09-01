@@ -3,9 +3,10 @@ import { perfMonitor, PerfSnapshot } from '../game/performanceMonitor';
 
 interface DebugOverlayProps {
   visible?: boolean;
+  nativeWorldActive?: boolean;
 }
 
-export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) => {
+export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nativeWorldActive = false }) => {
   const [stats, setStats] = useState<PerfSnapshot>(() => perfMonitor.getSnapshot());
 
   useEffect(() => {
@@ -39,6 +40,9 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) =>
               native {stats.nativeFps} FPS {stats.nativeFrameMs.toFixed(1)} ms
             </div>
           )}
+          <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
+            world {nativeWorldActive ? 'native active' : 'canvas fallback'}
+          </div>
           <div>zoom {stats.zoom.toFixed(2)}x</div>
           <div>
             {stats.canvasW}×{stats.canvasH}
