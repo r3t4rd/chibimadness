@@ -3,8 +3,8 @@ use std::{
     collections::HashMap,
     env, fs,
     sync::{
-        mpsc::{self, Receiver, TryRecvError},
         Arc, Condvar, Mutex,
+        mpsc::{self, Receiver, TryRecvError},
     },
     thread,
     time::Instant,
@@ -13,10 +13,13 @@ use std::{
 use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
-use yuyib::render::{wgpu, RenderFrame};
+use yuyib::render::{RenderFrame, wgpu};
 
-use crate::chibi_assets::{self, Paint, PathCommand, Primitive};
 use crate::scene_executor;
+use crate::{
+    chibi_assets::{self, Paint, PathCommand, Primitive},
+    native_sprites::{self, SpriteAtlasDefinition, SpriteFrame},
+};
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
 // The display list crosses the WebView bridge, so it is untrusted input even
@@ -160,6 +163,33 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
+// Atlas pixels are authored in sRGB PNGs and uploaded as `Rgba8UnormSrgb`,
+// therefore textureSample returns linear values suitable for the native
+// surface. Keeping this distinct from WORLD_SHADER avoids putting UVs on the
+// large retained terrain vertex format.
+const SPRITE_SHADER: &str = r#"
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec2<f32>, @location(1) uv: vec2<f32>) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = vec4<f32>(position, 0.0, 1.0);
+    output.uv = uv;
+    return output;
+}
+
+@group(0) @binding(0) var sprite_atlas: texture_2d<f32>;
+@group(0) @binding(1) var sprite_sampler: sampler;
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(sprite_atlas, sprite_sampler, input.uv);
+}
+"#;
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeChibiRecipe {
@@ -256,6 +286,10 @@ pub struct NativeRenderEntity {
     pub has_shield: bool,
     #[serde(default)]
     pub effect_type: String,
+    /// Stable generated-atlas frame name (for example `horde_mite`). The
+    /// bridge sends state, never image bytes or Canvas commands.
+    #[serde(default)]
+    pub sprite_key: String,
     #[serde(default)]
     pub projectile_range: f32,
     #[serde(default)]
@@ -488,6 +522,7 @@ impl NativeWorldState {
                 && entity.projectile_type.len() <= 32
                 && entity.weapon_type.len() <= 32
                 && entity.effect_type.len() <= 32
+                && entity.sprite_key.len() <= 96
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
                     .animation
@@ -660,6 +695,43 @@ struct Vertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct SpriteVertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+}
+
+struct NativeSpriteAtlas {
+    id: &'static str,
+    png: &'static [u8],
+    width: u32,
+    height: u32,
+    frames: HashMap<String, SpriteFrame>,
+    texture: Option<wgpu::Texture>,
+    bind_group: Option<wgpu::BindGroup>,
+    vertex_buffer: Option<wgpu::Buffer>,
+    vertex_capacity: usize,
+    vertices: Vec<SpriteVertex>,
+}
+
+impl From<SpriteAtlasDefinition> for NativeSpriteAtlas {
+    fn from(definition: SpriteAtlasDefinition) -> Self {
+        Self {
+            id: definition.id,
+            png: definition.png,
+            width: definition.width,
+            height: definition.height,
+            frames: definition.frames,
+            texture: None,
+            bind_group: None,
+            vertex_buffer: None,
+            vertex_capacity: 0,
+            vertices: Vec::new(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     viewport: [f32; 2],
     position: [f32; 2],
@@ -743,40 +815,42 @@ fn start_dynamic_scene_compiler(
     let (result_tx, result_rx) = mpsc::channel();
     thread::Builder::new()
         .name("native-world-scene-compiler".to_owned())
-        .spawn(move || loop {
-            let job = {
-                let (lock, ready) = &*worker_pending;
-                let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                while slot.is_none() {
-                    slot = ready
-                        .wait(slot)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .spawn(move || {
+            loop {
+                let job = {
+                    let (lock, ready) = &*worker_pending;
+                    let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while slot.is_none() {
+                        slot = ready
+                            .wait(slot)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    slot.take().expect("scene compiler notified without a job")
+                };
+                let Some(vertices) = scene_vertices_for(
+                    &job.scene,
+                    SceneVertexSelection::Dynamic,
+                    text_font.as_ref(),
+                ) else {
+                    continue;
+                };
+                let Some(overlay_vertices) = scene_vertices_for(
+                    &job.scene,
+                    SceneVertexSelection::DynamicOverlay,
+                    text_font.as_ref(),
+                ) else {
+                    continue;
+                };
+                if result_tx
+                    .send(DynamicSceneCompileResult {
+                        revision: job.revision,
+                        vertices,
+                        overlay_vertices,
+                    })
+                    .is_err()
+                {
+                    break;
                 }
-                slot.take().expect("scene compiler notified without a job")
-            };
-            let Some(vertices) = scene_vertices_for(
-                &job.scene,
-                SceneVertexSelection::Dynamic,
-                text_font.as_ref(),
-            ) else {
-                continue;
-            };
-            let Some(overlay_vertices) = scene_vertices_for(
-                &job.scene,
-                SceneVertexSelection::DynamicOverlay,
-                text_font.as_ref(),
-            ) else {
-                continue;
-            };
-            if result_tx
-                .send(DynamicSceneCompileResult {
-                    revision: job.revision,
-                    vertices,
-                    overlay_vertices,
-                })
-                .is_err()
-            {
-                break;
             }
         })
         .expect("native dynamic scene compiler thread must start");
@@ -793,33 +867,37 @@ fn start_static_scene_compiler(
     let (result_tx, result_rx) = mpsc::channel();
     thread::Builder::new()
         .name("native-world-static-compiler".to_owned())
-        .spawn(move || loop {
-            let job = {
-                let (lock, ready) = &*worker_pending;
-                let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                while slot.is_none() {
-                    slot = ready
-                        .wait(slot)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .spawn(move || {
+            loop {
+                let job = {
+                    let (lock, ready) = &*worker_pending;
+                    let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while slot.is_none() {
+                        slot = ready
+                            .wait(slot)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    slot.take()
+                        .expect("static scene compiler notified without a job")
+                };
+                let view = StaticSceneView::from(&job.scene);
+                let Some(vertices) = scene_vertices_for(
+                    &job.scene,
+                    SceneVertexSelection::Static,
+                    text_font.as_ref(),
+                ) else {
+                    continue;
+                };
+                if result_tx
+                    .send(StaticSceneCompileResult {
+                        revision: job.revision,
+                        vertices,
+                        view,
+                    })
+                    .is_err()
+                {
+                    break;
                 }
-                slot.take()
-                    .expect("static scene compiler notified without a job")
-            };
-            let view = StaticSceneView::from(&job.scene);
-            let Some(vertices) =
-                scene_vertices_for(&job.scene, SceneVertexSelection::Static, text_font.as_ref())
-            else {
-                continue;
-            };
-            if result_tx
-                .send(StaticSceneCompileResult {
-                    revision: job.revision,
-                    vertices,
-                    view,
-                })
-                .is_err()
-            {
-                break;
             }
         })
         .expect("native static scene compiler thread must start");
@@ -851,6 +929,10 @@ pub struct NativeWorldRenderer {
     composite_bind_group: Option<wgpu::BindGroup>,
     composite_uniform_buffer: Option<wgpu::Buffer>,
     static_sampler: Option<wgpu::Sampler>,
+    sprite_pipeline: Option<wgpu::RenderPipeline>,
+    sprite_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    sprite_sampler: Option<wgpu::Sampler>,
+    sprite_atlases: Vec<NativeSpriteAtlas>,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
@@ -935,6 +1017,13 @@ impl Default for NativeWorldRenderer {
             composite_bind_group: None,
             composite_uniform_buffer: None,
             static_sampler: None,
+            sprite_pipeline: None,
+            sprite_bind_group_layout: None,
+            sprite_sampler: None,
+            sprite_atlases: native_sprites::load_definitions()
+                .into_iter()
+                .map(NativeSpriteAtlas::from)
+                .collect(),
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
@@ -1124,10 +1213,18 @@ impl NativeWorldRenderer {
         if rendering_retained_scene && self.static_scene_view.is_none() {
             return false;
         }
-        if self.vertices.is_empty() && self.static_vertices.is_empty() {
+        if self.vertices.is_empty()
+            && self.static_vertices.is_empty()
+            && self
+                .sprite_atlases
+                .iter()
+                .all(|atlas| atlas.vertices.is_empty())
+        {
             return false;
         }
         self.ensure_pipeline(frame);
+        self.ensure_sprite_pipeline(frame);
+        self.ensure_sprite_atlas_textures(frame);
         let static_scene_view = self.static_scene_view;
         if let Some(static_view) = static_scene_view {
             self.ensure_static_cache(frame, static_view);
@@ -1147,6 +1244,7 @@ impl NativeWorldRenderer {
             self.upload_overlay_vertices(frame);
             self.overlay_vertices_dirty = false;
         }
+        self.upload_sprite_vertices(frame);
         let static_vertex_count = self.static_vertices.len() as u32;
         let dynamic_vertex_count = self.vertices.len() as u32;
         let overlay_vertex_count = self.overlay_vertices.len() as u32;
@@ -1181,6 +1279,8 @@ impl NativeWorldRenderer {
         let static_vertex_buffer = self.static_vertex_buffer.as_ref();
         let dynamic_vertex_buffer = self.vertex_buffer.as_ref();
         let overlay_vertex_buffer = self.overlay_vertex_buffer.as_ref();
+        let sprite_pipeline = self.sprite_pipeline.as_ref();
+        let sprite_atlases = &self.sprite_atlases;
         frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
             if let Some((composite_pipeline, composite_bind_group)) = composite {
                 pass.set_pipeline(composite_pipeline);
@@ -1210,6 +1310,23 @@ impl NativeWorldRenderer {
                     pass.draw(0..overlay_vertex_count, 0..1);
                 }
             }
+            if let Some(sprite_pipeline) = sprite_pipeline {
+                pass.set_pipeline(sprite_pipeline);
+                for atlas in sprite_atlases {
+                    let vertex_count = atlas.vertices.len() as u32;
+                    let (Some(bind_group), Some(vertex_buffer)) =
+                        (&atlas.bind_group, &atlas.vertex_buffer)
+                    else {
+                        continue;
+                    };
+                    if vertex_count == 0 {
+                        continue;
+                    }
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(0..vertex_count, 0..1);
+                }
+            }
         });
         true
     }
@@ -1231,6 +1348,13 @@ impl NativeWorldRenderer {
         self.composite_bind_group = None;
         self.composite_uniform_buffer = None;
         self.static_sampler = None;
+        self.sprite_pipeline = None;
+        self.sprite_bind_group_layout = None;
+        self.sprite_sampler = None;
+        for atlas in &mut self.sprite_atlases {
+            atlas.texture = None;
+            atlas.bind_group = None;
+        }
         let device = frame.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chibimadness native world shader"),
@@ -1655,6 +1779,200 @@ impl NativeWorldRenderer {
         true
     }
 
+    fn ensure_sprite_pipeline(&mut self, frame: &RenderFrame<'_>) {
+        if self.sprite_pipeline.is_some() && self.sprite_bind_group_layout.is_some() {
+            return;
+        }
+        let device = frame.device();
+        let format = frame.surface_format();
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("chibimadness native sprite atlas layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("chibimadness native sprite atlas sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("chibimadness native sprite atlas shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SPRITE_SHADER)),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("chibimadness native sprite atlas pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        let attributes = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: std::mem::size_of::<[f32; 2]>() as u64,
+                shader_location: 1,
+            },
+        ];
+        self.sprite_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("chibimadness native sprite atlas pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<SpriteVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &attributes,
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            },
+        ));
+        self.sprite_bind_group_layout = Some(bind_group_layout);
+        self.sprite_sampler = Some(sampler);
+    }
+
+    fn ensure_sprite_atlas_textures(&mut self, frame: &RenderFrame<'_>) {
+        let (Some(layout), Some(sampler)) = (
+            self.sprite_bind_group_layout.as_ref(),
+            self.sprite_sampler.as_ref(),
+        ) else {
+            return;
+        };
+        let device = frame.device();
+        let queue = frame.queue();
+        for atlas in &mut self.sprite_atlases {
+            if atlas.bind_group.is_some() {
+                continue;
+            }
+            let Ok(decoded) = image::load_from_memory(atlas.png) else {
+                continue;
+            };
+            let rgba = decoded.to_rgba8();
+            if rgba.width() != atlas.width || rgba.height() != atlas.height {
+                continue;
+            }
+            let row_bytes = atlas.width.saturating_mul(4) as usize;
+            let padded_row_bytes = (row_bytes + 255) & !255;
+            let mut upload = vec![0; padded_row_bytes * atlas.height as usize];
+            for (row, source) in rgba.as_raw().chunks_exact(row_bytes).enumerate() {
+                let start = row * padded_row_bytes;
+                upload[start..start + row_bytes].copy_from_slice(source);
+            }
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("chibimadness generated sprite atlas"),
+                size: wgpu::Extent3d {
+                    width: atlas.width,
+                    height: atlas.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &upload,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row_bytes as u32),
+                    rows_per_image: Some(atlas.height),
+                },
+                wgpu::Extent3d {
+                    width: atlas.width,
+                    height: atlas.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            atlas.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("chibimadness native sprite atlas bindings"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            }));
+            atlas.texture = Some(texture);
+        }
+    }
+
+    fn upload_sprite_vertices(&mut self, frame: &RenderFrame<'_>) {
+        use wgpu::util::DeviceExt;
+
+        for atlas in &mut self.sprite_atlases {
+            let bytes = bytemuck::cast_slice(&atlas.vertices);
+            if bytes.is_empty() {
+                continue;
+            }
+            if atlas.vertex_capacity < bytes.len() {
+                atlas.vertex_buffer = Some(frame.device().create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("chibimadness native sprite vertices"),
+                        contents: bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    },
+                ));
+                atlas.vertex_capacity = bytes.len();
+            } else if let Some(buffer) = &atlas.vertex_buffer {
+                frame.queue().write_buffer(buffer, 0, bytes);
+            }
+        }
+    }
+
     fn upload_vertices(&mut self, frame: &RenderFrame<'_>) {
         use wgpu::util::DeviceExt;
 
@@ -1717,6 +2035,7 @@ impl NativeWorldRenderer {
 
     fn build_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
         self.vertices.clear();
+        self.clear_sprite_vertices();
         // The native pass intentionally owns the world surface. The WebView
         // stays transparent and therefore cannot force WebView2 to composite
         // a full-screen Canvas2D texture every gameplay frame.
@@ -1731,6 +2050,7 @@ impl NativeWorldRenderer {
     fn build_dynamic_frame_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
         self.vertices.clear();
         self.overlay_vertices.clear();
+        self.clear_sprite_vertices();
         for entity in &world.entities {
             let x = entity.x + entity.velocity_x * prediction_seconds;
             let y = entity.y + entity.velocity_y * prediction_seconds;
@@ -1744,6 +2064,12 @@ impl NativeWorldRenderer {
         selection: SceneVertexSelection,
     ) -> Option<Vec<Vertex>> {
         scene_vertices_for(scene, selection, self.text_font.as_ref())
+    }
+
+    fn clear_sprite_vertices(&mut self) {
+        for atlas in &mut self.sprite_atlases {
+            atlas.vertices.clear();
+        }
     }
 
     /// Faithful fixed-layout base layer mirrored from `worldRenderer.ts`.
@@ -2434,6 +2760,10 @@ impl NativeWorldRenderer {
                 world,
             );
         }
+        if self.add_generated_sprite(entity, x, y, world) {
+            self.add_sprite_health_bar(entity, x, y, world);
+            return;
+        }
         match entity.kind.as_str() {
             "projectile" => self.add_projectile(entity, x, y, world),
             "particle" => self.add_particle(entity, x, y, world),
@@ -2442,6 +2772,131 @@ impl NativeWorldRenderer {
             "pickup" | "poi" => self.add_pickup(entity, x, y, world),
             _ => self.add_humanoid(entity, x, y, world),
         }
+    }
+
+    fn add_generated_sprite(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) -> bool {
+        if entity.sprite_key.is_empty() {
+            return false;
+        }
+        let Some(atlas_id) = native_sprites::atlas_for_frame(&entity.sprite_key) else {
+            return false;
+        };
+        let world_to_ndc = |world_x: f32, world_y: f32| {
+            [
+                ((world_x - world.camera_x) * world.zoom + world.viewport_width * 0.5)
+                    / world.viewport_width
+                    * 2.0
+                    - 1.0,
+                1.0 - ((world_y - world.camera_y) * world.zoom + world.viewport_height * 0.5)
+                    / world.viewport_height
+                    * 2.0,
+            ]
+        };
+        let Some(atlas) = self
+            .sprite_atlases
+            .iter_mut()
+            .find(|atlas| atlas.id == atlas_id)
+        else {
+            return false;
+        };
+        let Some(frame) = atlas.frames.get(&entity.sprite_key).copied() else {
+            return false;
+        };
+        if frame.w == 0 || frame.h == 0 {
+            return false;
+        }
+        // The generated cells preserve the source renderer's full canvas
+        // bounds. Map those bounds to the native entity footprint rather than
+        // cropping artwork per frame; this keeps wing/weapon silhouettes and
+        // avoids a per-entity texture allocation.
+        let scale = if atlas_id == "horde" { 2.05 } else { 2.55 };
+        let height = entity.size * scale;
+        let width = height * frame.w as f32 / frame.h as f32;
+        let center_x = x;
+        let center_y = y - entity.size * 0.08;
+        let left = center_x - width * frame.pivot_x.clamp(0.0, 1.0);
+        let top = center_y - height * frame.pivot_y.clamp(0.0, 1.0);
+        let right = left + width;
+        let bottom = top + height;
+        let inset_u = 0.5 / atlas.width as f32;
+        let inset_v = 0.5 / atlas.height as f32;
+        let mut u0 = frame.x as f32 / atlas.width as f32 + inset_u;
+        let mut u1 = (frame.x + frame.w) as f32 / atlas.width as f32 - inset_u;
+        let v0 = frame.y as f32 / atlas.height as f32 + inset_v;
+        let v1 = (frame.y + frame.h) as f32 / atlas.height as f32 - inset_v;
+        if entity.facing_left {
+            std::mem::swap(&mut u0, &mut u1);
+        }
+        let top_left = world_to_ndc(left, top);
+        let top_right = world_to_ndc(right, top);
+        let bottom_right = world_to_ndc(right, bottom);
+        let bottom_left = world_to_ndc(left, bottom);
+        atlas.vertices.extend_from_slice(&[
+            SpriteVertex {
+                position: top_left,
+                uv: [u0, v0],
+            },
+            SpriteVertex {
+                position: bottom_left,
+                uv: [u0, v1],
+            },
+            SpriteVertex {
+                position: bottom_right,
+                uv: [u1, v1],
+            },
+            SpriteVertex {
+                position: top_left,
+                uv: [u0, v0],
+            },
+            SpriteVertex {
+                position: bottom_right,
+                uv: [u1, v1],
+            },
+            SpriteVertex {
+                position: top_right,
+                uv: [u1, v0],
+            },
+        ]);
+        true
+    }
+
+    fn add_sprite_health_bar(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        if entity.kind != "monster" {
+            return;
+        }
+        let bar_width = entity.size * 1.28;
+        self.add_world_rect(
+            x,
+            y - entity.size * 0.86,
+            bar_width,
+            entity.size * 0.11,
+            [0.008, 0.014, 0.035, 0.94],
+            world,
+        );
+        self.add_world_rect(
+            x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
+            y - entity.size * 0.86,
+            bar_width * entity.hp_ratio,
+            entity.size * 0.065,
+            if entity.faction == "police" {
+                hex("#22D3EE")
+            } else {
+                hex("#FB2C4A")
+            },
+            world,
+        );
     }
 
     fn add_humanoid(
@@ -2504,10 +2959,7 @@ impl NativeWorldRenderer {
             .map(|state| (state.dodge_timer / 0.24).clamp(0.0, 1.0))
             .unwrap_or_default();
         if dodge_progress > 0.0 {
-            x += if entity.facing_left { -1.0 } else { 1.0 }
-                * size
-                * 0.34
-                * dodge_progress;
+            x += if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34 * dodge_progress;
         }
         y -= animation.map_or(0.0, |state| state.jump_z) + bob + spawn_lift;
 
@@ -2567,8 +3019,22 @@ impl NativeWorldRenderer {
                 );
                 match style.halo_type.as_str() {
                     "cross" => {
-                        self.add_world_rect(x, y - size * 0.83, size * 0.055, size * 0.30, halo, world);
-                        self.add_world_rect(x, y - size * 0.83, size * 0.22, size * 0.055, halo, world);
+                        self.add_world_rect(
+                            x,
+                            y - size * 0.83,
+                            size * 0.055,
+                            size * 0.30,
+                            halo,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x,
+                            y - size * 0.83,
+                            size * 0.22,
+                            size * 0.055,
+                            halo,
+                            world,
+                        );
                     }
                     "star" | "floral" => {
                         for point in 0..5 {
@@ -2686,8 +3152,7 @@ impl NativeWorldRenderer {
                         );
                     }
                 }
-                "twintails" | "low_twintails" | "twin_bubble_tails"
-                | "twin_drill_tails" => {
+                "twintails" | "low_twintails" | "twin_bubble_tails" | "twin_drill_tails" => {
                     self.add_world_circle(
                         x - size * 0.36,
                         y - size * 0.35,
@@ -2978,7 +3443,14 @@ impl NativeWorldRenderer {
             }
         } else {
             for eye_x in [-0.11_f32, 0.11] {
-                self.add_world_circle(x + size * eye_x, y - size * 0.30, size * 0.090, face_ink, 10, world);
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.30,
+                    size * 0.090,
+                    face_ink,
+                    10,
+                    world,
+                );
                 self.add_world_circle(
                     x + size * eye_x,
                     y - size * 0.295,
@@ -2987,7 +3459,14 @@ impl NativeWorldRenderer {
                     10,
                     world,
                 );
-                self.add_world_circle(x + size * eye_x, y - size * 0.292, size * 0.060, eye, 10, world);
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.292,
+                    size * 0.060,
+                    eye,
+                    10,
+                    world,
+                );
                 self.add_world_circle(
                     x + size * eye_x,
                     y - size * 0.287,
@@ -3138,15 +3617,28 @@ impl NativeWorldRenderer {
         }
         self.add_weapon_asset(entity, x, y, size, outline, world);
         if entity.has_shield {
-            let shield_x = x
-                + if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34;
+            let shield_x = x + if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34;
             let shield = if entity.faction == "police" {
                 [0.06, 0.18, 0.42, 0.94]
             } else {
                 [0.12, 0.10, 0.13, 0.94]
             };
-            self.add_world_rect(shield_x, y + size * 0.02, size * 0.28, size * 0.64, outline, world);
-            self.add_world_rect(shield_x, y + size * 0.02, size * 0.22, size * 0.56, shield, world);
+            self.add_world_rect(
+                shield_x,
+                y + size * 0.02,
+                size * 0.28,
+                size * 0.64,
+                outline,
+                world,
+            );
+            self.add_world_rect(
+                shield_x,
+                y + size * 0.02,
+                size * 0.22,
+                size * 0.56,
+                shield,
+                world,
+            );
             self.add_world_rect(
                 shield_x,
                 y - size * 0.10,
@@ -3232,7 +3724,14 @@ impl NativeWorldRenderer {
                             world,
                         );
                     }
-                    self.add_world_rect(center_x, center_y, width * scale, height * scale, fill, world);
+                    self.add_world_rect(
+                        center_x,
+                        center_y,
+                        width * scale,
+                        height * scale,
+                        fill,
+                        world,
+                    );
                 }
                 Primitive::Ellipse {
                     x: local_x,
@@ -3377,7 +3876,15 @@ impl NativeWorldRenderer {
             if closed {
                 let first = world_points[0];
                 let last = world_points[world_points.len() - 1];
-                self.add_world_line(last[0], last[1], first[0], first[1], stroke_width, stroke, world);
+                self.add_world_line(
+                    last[0],
+                    last[1],
+                    first[0],
+                    first[1],
+                    stroke_width,
+                    stroke,
+                    world,
+                );
             }
         }
     }
@@ -3446,20 +3953,47 @@ impl NativeWorldRenderer {
                 self.add_world_circle(x, y - size * 0.10, size * 0.07, accent, 8, world);
             }
             "magic_robe" | "kimono_yukata" | "shrine_miko" => {
-                self.add_world_ellipse(x, y + size * 0.23, size * 0.43, size * 0.30, coat, 14, world);
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.23,
+                    size * 0.43,
+                    size * 0.30,
+                    coat,
+                    14,
+                    world,
+                );
                 self.add_world_rect(x, y + size * 0.08, size * 0.62, size * 0.07, accent, world);
                 if style.outfit_type == "magic_robe" {
-                    self.add_world_circle(x, y - size * 0.03, size * 0.07, hex("#FDE047"), 8, world);
+                    self.add_world_circle(
+                        x,
+                        y - size * 0.03,
+                        size * 0.07,
+                        hex("#FDE047"),
+                        8,
+                        world,
+                    );
                 }
             }
             "goth_lolita" | "magical_girl" | "idol_stage" | "sailor_uniform" => {
-                self.add_world_ellipse(x, y + size * 0.30, size * 0.40, size * 0.22, skirt, 14, world);
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.30,
+                    size * 0.40,
+                    size * 0.22,
+                    skirt,
+                    14,
+                    world,
+                );
                 for offset in [-0.22_f32, -0.07, 0.07, 0.22] {
                     self.add_world_circle(
                         x + size * offset,
                         y + size * 0.46,
                         size * 0.052,
-                        if style.outfit_type == "goth_lolita" { [1.0, 1.0, 1.0, 0.96] } else { accent },
+                        if style.outfit_type == "goth_lolita" {
+                            [1.0, 1.0, 1.0, 0.96]
+                        } else {
+                            accent
+                        },
                         7,
                         world,
                     );
@@ -3511,15 +4045,44 @@ impl NativeWorldRenderer {
                 self.add_world_rect(x, y + size * 0.22, size * 0.54, size * 0.20, outline, world);
                 self.add_world_rect(x, y + size * 0.18, size * 0.47, size * 0.13, skirt, world);
                 self.add_world_rect(x, y + size * 0.05, size * 0.54, size * 0.052, accent, world);
-                self.add_world_rect(x - size * 0.16, y + size * 0.25, size * 0.10, size * 0.07, accent, world);
-                self.add_world_rect(x + size * 0.16, y + size * 0.25, size * 0.10, size * 0.07, accent, world);
+                self.add_world_rect(
+                    x - size * 0.16,
+                    y + size * 0.25,
+                    size * 0.10,
+                    size * 0.07,
+                    accent,
+                    world,
+                );
+                self.add_world_rect(
+                    x + size * 0.16,
+                    y + size * 0.25,
+                    size * 0.10,
+                    size * 0.07,
+                    accent,
+                    world,
+                );
             }
             "bunny_suit" => {
                 self.add_world_rect(x, y + size * 0.08, size * 0.46, size * 0.43, coat, world);
-                self.add_world_circle(x, y + size * 0.38, size * 0.10, [1.0, 1.0, 1.0, 1.0], 8, world);
+                self.add_world_circle(
+                    x,
+                    y + size * 0.38,
+                    size * 0.10,
+                    [1.0, 1.0, 1.0, 1.0],
+                    8,
+                    world,
+                );
             }
             "vampire_noble" | "detective_coat" | "winter_coat" | "sukeban_trench" => {
-                self.add_world_ellipse(x, y + size * 0.23, size * 0.42, size * 0.32, coat, 14, world);
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.23,
+                    size * 0.42,
+                    size * 0.32,
+                    coat,
+                    14,
+                    world,
+                );
                 self.add_world_line(
                     x,
                     y - size * 0.12,
@@ -3566,7 +4129,11 @@ impl NativeWorldRenderer {
                     origin_x + direction * size * 0.48,
                     y - size * 0.26,
                     size * 0.052,
-                    if entity.weapon_type == "baton" { metal } else { hex("#7C3F1D") },
+                    if entity.weapon_type == "baton" {
+                        metal
+                    } else {
+                        hex("#7C3F1D")
+                    },
                     world,
                 );
             }
@@ -3691,8 +4258,22 @@ impl NativeWorldRenderer {
                 }
             }
             _ => {
-                self.add_world_rect(origin_x, y + size * 0.04, size * 0.46, size * 0.12, outline, world);
-                self.add_world_rect(origin_x, y + size * 0.01, size * 0.34, size * 0.06, metal, world);
+                self.add_world_rect(
+                    origin_x,
+                    y + size * 0.04,
+                    size * 0.46,
+                    size * 0.12,
+                    outline,
+                    world,
+                );
+                self.add_world_rect(
+                    origin_x,
+                    y + size * 0.01,
+                    size * 0.34,
+                    size * 0.06,
+                    metal,
+                    world,
+                );
             }
         }
     }
@@ -3817,9 +4398,30 @@ impl NativeWorldRenderer {
                 }
             }
             "falling_sword" => {
-                self.add_world_rect(x, y - radius * 0.45, radius * 0.34, radius * 2.2, hex("#0F172A"), world);
-                self.add_world_rect(x, y - radius * 0.45, radius * 0.22, radius * 1.95, hex("#E0F2FE"), world);
-                self.add_world_rect(x, y + radius * 0.60, radius * 0.78, radius * 0.20, hex("#F59E0B"), world);
+                self.add_world_rect(
+                    x,
+                    y - radius * 0.45,
+                    radius * 0.34,
+                    radius * 2.2,
+                    hex("#0F172A"),
+                    world,
+                );
+                self.add_world_rect(
+                    x,
+                    y - radius * 0.45,
+                    radius * 0.22,
+                    radius * 1.95,
+                    hex("#E0F2FE"),
+                    world,
+                );
+                self.add_world_rect(
+                    x,
+                    y + radius * 0.60,
+                    radius * 0.78,
+                    radius * 0.20,
+                    hex("#F59E0B"),
+                    world,
+                );
             }
             "lightning_bolt" => {
                 let mut previous = [x, y - radius * 18.0];
@@ -3953,17 +4555,14 @@ impl NativeWorldRenderer {
             }
             "star" => {
                 for point in 0..5 {
-                    let a0 = std::f32::consts::TAU * point as f32 / 5.0
-                        - std::f32::consts::FRAC_PI_2;
+                    let a0 =
+                        std::f32::consts::TAU * point as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
                     let a1 = std::f32::consts::TAU * (point + 1) as f32 / 5.0
                         - std::f32::consts::FRAC_PI_2;
                     self.add_world_triangle(
                         [x, y],
                         [x + a0.cos() * size, y + a0.sin() * size],
-                        [
-                            x + a1.cos() * size * 0.52,
-                            y + a1.sin() * size * 0.52,
-                        ],
+                        [x + a1.cos() * size * 0.52, y + a1.sin() * size * 0.52],
                         color,
                         world,
                     );
@@ -3991,7 +4590,14 @@ impl NativeWorldRenderer {
                 self.add_world_rect(x, y - size * 0.35, size * 0.60, size * 0.48, color, world);
             }
             "smoke" => {
-                self.add_world_circle(x, y, size * 1.22, [color[0], color[1], color[2], color[3] * 0.42], 14, world);
+                self.add_world_circle(
+                    x,
+                    y,
+                    size * 1.22,
+                    [color[0], color[1], color[2], color[3] * 0.42],
+                    14,
+                    world,
+                );
                 self.add_world_circle(
                     x + size * 0.44,
                     y - size * 0.28,
@@ -4459,10 +5065,12 @@ mod tests {
         assert_eq!(entity.projectile_type, "magic_orb");
         assert_eq!(entity.weapon_type, "cheytac");
         assert!(entity.has_shield);
-        assert!(entity
-            .animation
-            .as_ref()
-            .is_some_and(|animation| animation.is_sprinting));
+        assert!(
+            entity
+                .animation
+                .as_ref()
+                .is_some_and(|animation| animation.is_sprinting)
+        );
     }
 
     #[test]

@@ -2,7 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { advanceCanvasCamera, drawWorldInput, screenToWorld, type WorldRenderInput } from './game/worldRenderer';
+import {
+  advanceCanvasCamera,
+  drawWorldInput,
+  getNativeMonsterSpriteFrame,
+  getNativePlayerSpriteFrame,
+  screenToWorld,
+  type WorldRenderInput,
+} from './game/worldRenderer';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
 import {
   createWebglHordeMobRenderer,
@@ -353,6 +360,7 @@ export function App() {
       input: WorldRenderInput;
       camera: { x: number; y: number; zoom: number };
       webglHordeMobBodies: boolean;
+      nativeSpriteBodies: boolean;
     };
     let dynamicRenderInFlight = false;
     let pendingDynamicRender: DynamicRender | null = null;
@@ -364,6 +372,7 @@ export function App() {
       height: number;
       camera: { x: number; y: number; zoom: number };
       webglHordeMobBodies: boolean;
+      nativeSpriteBodies: boolean;
     } | null = null;
     let lastProbeMode = canvasProbeModeRef.current;
     let lastLayerConfiguration = '';
@@ -379,9 +388,10 @@ export function App() {
       height: number,
       camera: { x: number; y: number; zoom: number },
       webglHordeMobBodies: boolean,
+      nativeSpriteBodies: boolean,
     ) => {
       if (dynamicFrame && dynamicFrame.image !== nextFrame) dynamicFrame.image.close();
-      dynamicFrame = { image: nextFrame, width, height, camera, webglHordeMobBodies };
+      dynamicFrame = { image: nextFrame, width, height, camera, webglHordeMobBodies, nativeSpriteBodies };
     };
     const clearDynamicFrame = () => {
       if (dynamicFrame) dynamicFrame.image.close();
@@ -466,6 +476,7 @@ export function App() {
         height?: number;
         camera?: { x: number; y: number; zoom: number };
         webglHordeMobBodies?: boolean;
+        nativeSpriteBodies?: boolean;
       }>) => {
         if (event.data.error) {
           dynamicRenderInFlight = false;
@@ -483,6 +494,7 @@ export function App() {
             event.data.height,
             event.data.camera,
             event.data.webglHordeMobBodies === true,
+            event.data.nativeSpriteBodies === true,
           );
         }
         if (dynamicRenderStartedAt !== null) {
@@ -766,6 +778,60 @@ export function App() {
           }
         }
         if (nativeWorldRenderer) {
+          const nativeMonsterSprites = curEngine.monsters.flatMap((monster) => {
+            const spriteKey = getNativeMonsterSpriteFrame(monster);
+            if (!spriteKey) return [];
+            return [{
+              id: monster.id,
+              kind: 'monster',
+              faction: monster.faction ?? '',
+              x: monster.x,
+              y: monster.y,
+              size: monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+              color: [1, 1, 1, 1] as [number, number, number, number],
+              velocityX: 0,
+              velocityY: 0,
+              hasVelocity: false,
+              hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
+              facingLeft: monster.facing === 'left',
+              layer: Math.round(monster.y),
+              weaponType: monster.weaponType,
+              hasShield: monster.hasShield,
+              spriteKey,
+            }];
+          });
+          const nativePlayerSprites = (Object.values(curEngine.remotePlayers) as Player[])
+            .concat(curEngine.remotePlayers[curEngine.player.id] ? [] : [curEngine.player])
+            .flatMap((player) => {
+              const spriteKey = getNativePlayerSpriteFrame(player);
+              if (!spriteKey) return [];
+              return [{
+                id: player.id,
+                kind: 'player',
+                faction: '',
+                x: player.x,
+                y: player.y,
+                size: 48,
+                color: [1, 1, 1, 1] as [number, number, number, number],
+                velocityX: player.vx ?? 0,
+                velocityY: player.vy ?? 0,
+                hasVelocity: true,
+                hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 0,
+                facingLeft: player.facing === 'left',
+                layer: Math.round(player.y),
+                weaponType: player.equipment.weapon?.gunType,
+                chibi: player.chibi,
+                animation: {
+                  state: player.state,
+                  isSprinting: player.isSprinting,
+                  jumpZ: player.jumpZ,
+                  spawnBounce: player.spawnBounce,
+                  attackTimer: player.attackTimer,
+                  dodgeTimer: player.dodgeTimer,
+                },
+                spriteKey,
+              }];
+            });
           sendNativeWorldRenderFrame({
             cameraX: camera.x,
             cameraY: camera.y,
@@ -774,7 +840,7 @@ export function App() {
             viewportHeight,
             timeSeconds: timeInSeconds,
             theme: curEngine.player.currentZone,
-            entities: [],
+            entities: [...nativeMonsterSprites, ...nativePlayerSprites],
           });
         }
       }
@@ -808,7 +874,13 @@ export function App() {
         webglHordeMobRenderer?.clear();
       }
       const presentDynamicOverlay = (worldInput: WorldRenderInput) => {
-        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
+        // Native owns its generated atlas bodies. Do not leave a WebGL canvas
+        // sandwiched between WGPU and the UI: it would duplicate work and
+        // produce two independently paced actor layers.
+        const nativeSpriteBodies = nativeWorldRenderer;
+        const webglBodiesActive = nativeSpriteBodies
+          ? false
+          : renderWebglHordeMobBodies(worldInput, camera);
         if (!dynamicCanvasLayerEnabledRef.current) return webglBodiesActive;
         const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
         const workerInput = rasterScale === 1
@@ -823,9 +895,14 @@ export function App() {
           input: workerInput,
           camera: workerCamera,
           webglHordeMobBodies: webglBodiesActive,
+          nativeSpriteBodies,
         });
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        if (dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
+        if (
+          dynamicFrame
+          && dynamicFrame.webglHordeMobBodies === webglBodiesActive
+          && dynamicFrame.nativeSpriteBodies === nativeSpriteBodies
+        ) {
           // A worker frame was painted against its own camera. Reproject it
           // while the next frame is in flight, otherwise actors visibly lag
           // behind the camera at the worker cadence.
@@ -853,6 +930,7 @@ export function App() {
             skipWebglPlayerBodies: webglBodiesActive,
             skipWebglProjectiles: webglBodiesActive,
             skipWebglParticles: webglBodiesActive,
+            skipNativeSpriteBodies: nativeSpriteBodies,
           });
         }
       };

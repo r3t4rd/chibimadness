@@ -8,6 +8,7 @@
 mod world_renderer;
 mod scene_executor;
 mod chibi_assets;
+mod native_sprites;
 
 use std::{
     cell::RefCell,

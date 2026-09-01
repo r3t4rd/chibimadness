@@ -526,7 +526,43 @@ function generateHatsAtlas() {
 // 8. CHARACTERS & OPERATORS ATLAS
 // =========================================================
 function generateCharactersAtlas() {
+  const mikuChibi: ChibiConfig = {
+    frontHairStyle: 'miku_fringe',
+    backHairStyle: 'miku_twintails',
+    hairStyle: 'miku_twintails',
+    hairColor: '#06B6D4',
+    eyesOverHair: true,
+    hatType: 'headphones',
+    hatColor: '#06B6D4',
+    wingType: 'pixel_wings',
+    wingColor: '#67E8F9',
+    earType: 'none',
+    earColor: '#2B272C',
+    haloType: 'music_notes',
+    haloColor: '#06B6D4',
+    coatColor: '#0F172A',
+    accentColor: '#06B6D4',
+    skirtColor: '#0F172A',
+    eyeType: 'wink_star',
+    eyeColor: '#0EA5E9',
+    skinTone: '#FFF1E0',
+    outfitType: 'idol_stage',
+    ribbonColor: '#06B6D4',
+  };
+  const mikuWeapons: GunType[] = [
+    'pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac', 'katana',
+    'sledgehammer', 'throwing_knives', 'scythe', 'greatsword', 'staff',
+    'wand', 'grimoire', 'totem',
+  ];
   const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
+    // Full frames come from the exact creator recipe and weapon source call.
+    // There is no native vector approximation or runtime Canvas composition.
+    ...mikuWeapons.map((weapon) => ({
+      id: `hatsune_miku_${weapon}`,
+      name: 'Hatsune Miku',
+      chibi: mikuChibi,
+      weapon,
+    })),
     {
       id: 'millennium_student',
       name: 'Millennium Student',

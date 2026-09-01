@@ -63,6 +63,8 @@ type WorldDrawOptions = {
   skipWebglProjectiles?: boolean;
   /** WebView-only hybrid path: WebGL owns basic particle geometry. */
   skipWebglParticles?: boolean;
+  /** Native WGPU owns the generated atlas bodies for this frame. */
+  skipNativeSpriteBodies?: boolean;
 };
 
 export function getCameraState() {
@@ -272,6 +274,7 @@ export function drawWorld(
     options.skipWebglPlayerBodies ?? false,
     options.skipWebglProjectiles ?? false,
     options.skipWebglParticles ?? false,
+    options.skipNativeSpriteBodies ?? false,
   );
 }
 
@@ -425,6 +428,7 @@ export function renderWorld(
   skipWebglPlayerBodies = false,
   skipWebglProjectiles = false,
   skipWebglParticles = false,
+  skipNativeSpriteBodies = false,
 ) {
   const renderStatic = layer !== 'dynamic';
   const renderDynamic = layer !== 'static';
@@ -584,7 +588,7 @@ export function renderWorld(
       drawMonsterTelegraphs(ctx, visibleMonsters, time);
     }
     drawHordeHazards(ctx, getHordeHazards().filter((h) => inView(h.x, h.y)), time);
-    drawMonsters(ctx, visibleMonsters, time, skipWebglHordeMobBodies);
+    drawMonsters(ctx, visibleMonsters, time, skipWebglHordeMobBodies, skipNativeSpriteBodies);
     if (blinded) {
       drawBlindScreams(ctx, monsters.filter((m) => m.battleBark && m.battleBark.timer > 0 && inView(m.x, m.y)), time);
     }
@@ -608,7 +612,8 @@ export function renderWorld(
       const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
 
       const useWebglPlayerBody = skipWebglPlayerBodies && getWebglPlayerAtlasKey(p) !== null;
-      if (useWebglPlayerBody) continue;
+      const useNativeSpriteBody = skipNativeSpriteBodies && getNativePlayerSpriteFrame(p) !== null;
+      if (useWebglPlayerBody || useNativeSpriteBody) continue;
       if (isOmni) {
         ctx.save();
         ctx.globalAlpha = 0.25;
@@ -4503,6 +4508,90 @@ export function getWebglMonsterAtlasKey(monster: Monster): string | null {
   return `humanoid:${monster.type}:${monster.weaponType ?? 'pistol'}:${monster.isBoss ? 1 : 0}:${monster.faction ?? 'none'}`;
 }
 
+const NATIVE_FACTION_SPRITES = new Set([
+  'police_cop_officer', 'police_cop_swat', 'police_cop_enforcer', 'police_cop_marksman',
+  'punk_punk_grunt', 'punk_punk_anarchist', 'punk_punk_molotov',
+  'bandit_bandit_grunt', 'bandit_bandit_scout', 'bandit_bandit_gunner',
+  'bandit_bandit_shotgunner', 'bandit_bandit_sniper', 'bandit_bandit_brawler',
+  'cadet_cadet_bat', 'cadet_cadet_gunner', 'cadet_cadet_mage', 'cadet_human_target',
+]);
+
+const NATIVE_BOSS_SPRITES: Record<string, string> = {
+  boss_welder: 'boss_boss_welder',
+  boss_outlaw_viktor: 'boss_boss_outlaw_viktor',
+  cop_juggernaut: 'boss_boss_police_juggernaut',
+  punk_juggernaut: 'boss_boss_punk_juggernaut',
+};
+
+/**
+ * A native atlas frame is selected only for a pose that is already static in
+ * the source renderer. Transient combat states intentionally keep Canvas as
+ * a correctness fallback until they have dedicated animation frames.
+ */
+export function getNativeMonsterSpriteFrame(monster: Monster): string | null {
+  const horde = getWebglHordeMobAtlasKey(monster);
+  if (horde) {
+    const [kind, boss] = horde.split(':');
+    return `horde_${kind}${boss === '1' ? '_boss' : ''}`;
+  }
+  const bossFrame = NATIVE_BOSS_SPRITES[monster.type];
+  if (
+    bossFrame
+    && monster.hp > 0
+    && (monster.hitFlash || 0) <= 0
+    && (monster.jumpZ || 0) <= 0
+    && (monster.dodgeTimer || 0) <= 0
+    && !monster.isCharging
+    && !monster.isPinned
+    && (monster.attackCooldown || 0) <= 1
+  ) return bossFrame;
+  if (
+    monster.hordeKind
+    || monster.type === 'forest_wolf'
+    || monster.hp <= 0
+    || (monster.hitFlash || 0) > 0
+    || (monster.jumpZ || 0) > 0
+    || (monster.dodgeTimer || 0) > 0
+    || monster.isCharging
+    || monster.isPinned
+    || monster.isJuggernaut
+    || monster.humanChibi
+    || (monster.attackCooldown || 0) > 1
+  ) return null;
+  const faction = monster.faction === 'punk_demon' ? 'punk' : monster.faction;
+  const frame = `${faction}_${monster.type}`;
+  return NATIVE_FACTION_SPRITES.has(frame) ? frame : null;
+}
+
+/** Full-frame Miku is generated from the exact character-creator recipe. */
+export function getNativePlayerSpriteFrame(player: Player): string | null {
+  const chibi = player.chibi;
+  if (
+    player.state === 'dead'
+    || player.isRiding
+    || player.activeVehicleId
+    || player.emote
+    || (player.chatTimer ?? 0) > 0
+    || player.isReloading
+    || (player.dodgeTimer ?? 0) > 0
+    || (player.jumpZ ?? 0) > 0
+    || (player.omnislashStrikesLeft ?? 0) > 0
+    || (player.dashSlashTimer ?? 0) > 0
+    || (player.bhopStreak ?? 0) >= 2
+    || (player.coolStreak ?? 0) >= 2
+    || player.attackTimer > 0
+    || !chibi
+  ) return null;
+  const isMiku = chibi.frontHairStyle === 'miku_fringe'
+    && chibi.backHairStyle === 'miku_twintails'
+    && chibi.hairColor.toUpperCase() === '#06B6D4'
+    && chibi.hatType === 'headphones'
+    && chibi.outfitType === 'idol_stage';
+  if (!isMiku) return null;
+  const weapon = player.equipment.weapon?.gunType ?? 'pistol';
+  return `character_hatsune_miku_${weapon}`;
+}
+
 /**
  * Runtime visual key for procedural players. Position and combat state are
  * intentionally excluded: moving a player must never allocate a new raster.
@@ -4852,13 +4941,17 @@ function drawMonsters(
   monsters: Monster[],
   time: number,
   skipWebglHordeMobBodies = false,
+  skipNativeSpriteBodies = false,
 ) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
     if (m.hp <= 0 && (m.deathProgress === undefined || m.deathProgress >= 1.0)) return;
     // Stable bodies and their HP bars are emitted by the WebGL actor pass.
     // Transient states deliberately fall through to Canvas for visual parity.
-    if (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null) return;
+    if (
+      (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null)
+      || (skipNativeSpriteBodies && getNativeMonsterSpriteFrame(m) !== null)
+    ) return;
 
     ctx.save();
     ctx.translate(m.x, m.y);

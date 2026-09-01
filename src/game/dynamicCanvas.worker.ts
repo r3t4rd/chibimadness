@@ -7,6 +7,7 @@ type WorkerMessage =
     input: WorldRenderInput;
     camera: { x: number; y: number; zoom: number };
     webglHordeMobBodies?: boolean;
+    nativeSpriteBodies?: boolean;
   }
   | { type: 'clear' };
 
@@ -38,6 +39,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
       skipWebglPlayerBodies: message.webglHordeMobBodies === true,
       skipWebglProjectiles: message.webglHordeMobBodies === true,
       skipWebglParticles: message.webglHordeMobBodies === true,
+      skipNativeSpriteBodies: message.nativeSpriteBodies === true,
     });
     const image = canvas.transferToImageBitmap();
     postToMain({
@@ -46,6 +48,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
       height: canvas.height,
       camera: message.camera,
       webglHordeMobBodies: message.webglHordeMobBodies === true,
+      nativeSpriteBodies: message.nativeSpriteBodies === true,
       image,
     }, [image]);
   } catch (error) {
