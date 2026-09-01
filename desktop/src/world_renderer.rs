@@ -662,6 +662,8 @@ enum SceneVertexSelection {
     Static,
     /// Actors, projectiles, decals and effects layered above the background.
     Dynamic,
+    /// Viewport-relative effects that must not inherit the world camera.
+    DynamicOverlay,
 }
 
 struct DynamicSceneCompileJob {
@@ -672,6 +674,7 @@ struct DynamicSceneCompileJob {
 struct DynamicSceneCompileResult {
     revision: u64,
     vertices: Vec<Vertex>,
+    overlay_vertices: Vec<Vertex>,
 }
 
 type LatestDynamicScene = Arc<(Mutex<Option<DynamicSceneCompileJob>>, Condvar)>;
@@ -696,10 +699,18 @@ fn start_dynamic_scene_compiler(
             let Some(vertices) = scene_vertices_for(&job.scene, SceneVertexSelection::Dynamic, text_font.as_ref()) else {
                 continue;
             };
+            let Some(overlay_vertices) = scene_vertices_for(
+                &job.scene,
+                SceneVertexSelection::DynamicOverlay,
+                text_font.as_ref(),
+            ) else {
+                continue;
+            };
             if result_tx
                 .send(DynamicSceneCompileResult {
                     revision: job.revision,
                     vertices,
+                    overlay_vertices,
                 })
                 .is_err()
             {
@@ -737,6 +748,10 @@ pub struct NativeWorldRenderer {
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
     vertices_dirty: bool,
+    overlay_vertex_buffer: Option<wgpu::Buffer>,
+    overlay_vertex_capacity: usize,
+    overlay_vertices: Vec<Vertex>,
+    overlay_vertices_dirty: bool,
     last_scene_revision: Option<u64>,
     last_dynamic_scene_submitted_revision: Option<u64>,
     last_dynamic_scene_applied_revision: Option<u64>,
@@ -810,6 +825,10 @@ impl Default for NativeWorldRenderer {
             vertex_capacity: 0,
             vertices: Vec::new(),
             vertices_dirty: false,
+            overlay_vertex_buffer: None,
+            overlay_vertex_capacity: 0,
+            overlay_vertices: Vec::new(),
+            overlay_vertices_dirty: false,
             last_scene_revision: None,
             last_dynamic_scene_submitted_revision: None,
             last_dynamic_scene_applied_revision: None,
@@ -844,12 +863,15 @@ fn scene_vertices_for(
             SceneVertexSelection::All => true,
             SceneVertexSelection::Static => triangle.layer != scene_executor::SceneLayer::Dynamic,
             SceneVertexSelection::Dynamic => triangle.layer == scene_executor::SceneLayer::Dynamic,
+            SceneVertexSelection::DynamicOverlay => triangle.layer == scene_executor::SceneLayer::Screen,
         };
         if !include {
             continue;
         }
         let is_world_space = matches!(selection, SceneVertexSelection::Static)
-            && triangle.layer == scene_executor::SceneLayer::Static;
+            && triangle.layer == scene_executor::SceneLayer::Static
+            || matches!(selection, SceneVertexSelection::Dynamic)
+                && triangle.layer == scene_executor::SceneLayer::Dynamic;
         for index in 0..3 {
             let position = if is_world_space {
                 [
@@ -897,7 +919,7 @@ impl NativeWorldRenderer {
             frame_ms: self.metrics_total_ms / self.metrics_frame_count as f32,
             static_cache_redraws: self.static_cache_redraws,
             static_triangles: (self.static_vertices.len() / 3) as u32,
-            dynamic_triangles: (self.vertices.len() / 3) as u32,
+            dynamic_triangles: ((self.vertices.len() + self.overlay_vertices.len()) / 3) as u32,
         };
         self.metrics_started_at = now;
         self.metrics_frame_count = 0;
@@ -977,8 +999,13 @@ impl NativeWorldRenderer {
             self.upload_vertices(frame);
             self.vertices_dirty = false;
         }
+        if self.overlay_vertices_dirty {
+            self.upload_overlay_vertices(frame);
+            self.overlay_vertices_dirty = false;
+        }
         let static_vertex_count = self.static_vertices.len() as u32;
         let dynamic_vertex_count = self.vertices.len() as u32;
+        let overlay_vertex_count = self.overlay_vertices.len() as u32;
         let static_cached = if let Some(static_scene) = retained_static_scene {
             self.rasterize_static_cache(frame, static_scene, static_vertex_count)
         } else {
@@ -1014,6 +1041,16 @@ impl NativeWorldRenderer {
                         pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                         pass.draw(0..dynamic_vertex_count, 0..1);
                     }
+                }
+            });
+        }
+        if overlay_vertex_count > 0 {
+            frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, camera_bind_group, &[]);
+                if let Some(overlay_vertex_buffer) = &self.overlay_vertex_buffer {
+                    pass.set_vertex_buffer(0, overlay_vertex_buffer.slice(..));
+                    pass.draw(0..overlay_vertex_count, 0..1);
                 }
             });
         }
@@ -1200,6 +1237,8 @@ impl NativeWorldRenderer {
                     {
                         self.vertices = result.vertices;
                         self.vertices_dirty = true;
+                        self.overlay_vertices = result.overlay_vertices;
+                        self.overlay_vertices_dirty = true;
                         self.last_dynamic_scene_applied_revision = Some(result.revision);
                     }
                 }
@@ -1443,6 +1482,24 @@ impl NativeWorldRenderer {
             ));
             self.vertex_capacity = bytes.len();
         } else if let Some(buffer) = &self.vertex_buffer {
+            frame.queue().write_buffer(buffer, 0, bytes);
+        }
+    }
+
+    fn upload_overlay_vertices(&mut self, frame: &RenderFrame<'_>) {
+        use wgpu::util::DeviceExt;
+
+        let bytes = bytemuck::cast_slice(&self.overlay_vertices);
+        if self.overlay_vertex_capacity < bytes.len() {
+            self.overlay_vertex_buffer = Some(frame.device().create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("chibimadness native world screen overlays"),
+                    contents: bytes,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                },
+            ));
+            self.overlay_vertex_capacity = bytes.len();
+        } else if let Some(buffer) = &self.overlay_vertex_buffer {
             frame.queue().write_buffer(buffer, 0, bytes);
         }
     }

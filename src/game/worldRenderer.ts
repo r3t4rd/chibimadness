@@ -783,6 +783,11 @@ export function renderWorld(
 
   ctx.restore(); // restore camera & zoom
 
+  // The remaining effects are viewport-relative. Native keeps them separate
+  // from the camera-relative combat mesh so a delayed mesh build cannot make
+  // the entire world appear frozen.
+  markRenderSceneLayer(ctx, 'screen');
+
   // 12. Day/night ambient tint
   if (!inHorde) {
     drawDayNightOverlay(ctx, canvasWidth, canvasHeight, gameTimePhase);
