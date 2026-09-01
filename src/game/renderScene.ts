@@ -143,6 +143,7 @@ export function recordRenderScene<T>(
       if (property === '__renderSceneLayer') {
         return (name: 'screen' | 'static' | 'dynamic') => commands.push({ op: 'layer', name });
       }
+      if (property === '__disableSpriteCache') return true;
       const value = Reflect.get(target, property, target);
       if (typeof value !== 'function') return Reflect.get(target, property, receiver);
       return (...args: unknown[]) => {
@@ -358,6 +359,7 @@ export function compileRenderScene<T>(
       if (method === '__renderSceneLayer') {
         return (name: 'screen' | 'static' | 'dynamic') => commands.push({ op: 'layer', name });
       }
+      if (method === '__disableSpriteCache') return true;
       // Canvas state is occasionally read and combined (for example
       // `ctx.globalAlpha *= fade`). Preserve it in the compiler instead of
       // accidentally treating a state property as a drawing method.
