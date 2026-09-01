@@ -6,6 +6,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod world_renderer;
+mod scene_executor;
 
 use std::{
     cell::RefCell,
