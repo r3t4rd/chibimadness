@@ -48,6 +48,13 @@ export type WorldRenderInput = {
   gameTimePhase?: number;
 };
 
+type WorldPaintLayer = 'full' | 'static' | 'dynamic';
+type WorldDrawOptions = {
+  layer?: WorldPaintLayer;
+  /** Reuses the dynamic pass camera while compiling static invalidations. */
+  camera?: { x: number; y: number; zoom: number };
+};
+
 export function getCameraState() {
   return {
     x: smoothedCameraX,
@@ -128,8 +135,13 @@ export function drawWorld(
   worldPois: WorldPOI[] = WORLD_POIS,
   cars: CarEntity[] = [],
   summons: SummonedAlly[] = [],
-  gameTimePhase: number = 0.35
+  gameTimePhase: number = 0.35,
+  options: WorldDrawOptions = {}
 ) {
+  let camera: { x: number; y: number };
+  if (options.camera) {
+    camera = { x: options.camera.x, y: options.camera.y };
+  } else {
   // Screen shake offset calculation with smooth decay
   let shakeX = 0;
   let shakeY = 0;
@@ -189,10 +201,11 @@ export function drawWorld(
     smoothedCameraY += (targetCamY - smoothedCameraY) * (1 - Math.exp(-dt * camLerpSpeed));
   }
 
-  const camera = {
+  camera = {
     x: Math.round(smoothedCameraX),
     y: Math.round(smoothedCameraY),
   };
+  }
 
   const npcs = Object.values(NPCS_DATABASE);
 
@@ -217,11 +230,17 @@ export function drawWorld(
     worldPois,
     cars,
     summons,
-    gameTimePhase
+    gameTimePhase,
+    options.layer ?? 'full',
+    options.camera?.zoom
   );
 }
 
-export function drawWorldInput(ctx: CanvasRenderingContext2D, input: WorldRenderInput) {
+export function drawWorldInput(
+  ctx: CanvasRenderingContext2D,
+  input: WorldRenderInput,
+  options: WorldDrawOptions = {}
+) {
   drawWorld(
     ctx,
     input.canvasWidth,
@@ -241,7 +260,8 @@ export function drawWorldInput(ctx: CanvasRenderingContext2D, input: WorldRender
     input.worldPois,
     input.cars,
     input.summons,
-    input.gameTimePhase
+    input.gameTimePhase,
+    options
   );
 }
 
@@ -292,6 +312,51 @@ export function compileWorldScene(
   return compiled.scene;
 }
 
+/**
+ * Realtime compiler: skips terrain, buildings and all retained world props.
+ * This is the only source renderer work done at the dynamic cadence.
+ */
+export function compileDynamicWorldScene(
+  measurementContext: Pick<CanvasRenderingContext2D, 'font' | 'measureText'>,
+  input: WorldRenderInput
+): RenderScene {
+  const compiled = compileRenderScene(
+    measurementContext,
+    {
+      viewport: { width: input.canvasWidth, height: input.canvasHeight },
+      camera: getCameraState(),
+      timeSeconds: input.time ?? 0,
+    },
+    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'dynamic' })
+  );
+  compiled.scene.camera = getCameraState();
+  return compiled.scene;
+}
+
+/**
+ * Static compilation runs only when the camera crosses a retained-world tile
+ * or the viewport/POIs change. It reuses the already-smoothed camera from the
+ * dynamic pass and therefore never advances gameplay camera state a second
+ * time.
+ */
+export function compileStaticWorldScene(
+  measurementContext: Pick<CanvasRenderingContext2D, 'font' | 'measureText'>,
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number }
+): RenderScene {
+  const compiled = compileRenderScene(
+    measurementContext,
+    {
+      viewport: { width: input.canvasWidth, height: input.canvasHeight },
+      camera,
+      timeSeconds: input.time ?? 0,
+    },
+    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'static', camera })
+  );
+  compiled.scene.camera = camera;
+  return compiled.scene;
+}
+
 export function renderWorld(
   ctx: CanvasRenderingContext2D,
   canvasWidth: number,
@@ -313,13 +378,19 @@ export function renderWorld(
   worldPois: WorldPOI[] = WORLD_POIS,
   cars: CarEntity[] = [],
   summons: SummonedAlly[] = [],
-  gameTimePhase: number = 0.35
+  gameTimePhase: number = 0.35,
+  layer: WorldPaintLayer = 'full',
+  fixedZoom?: number
 ) {
+  const renderStatic = layer !== 'dynamic';
+  const renderDynamic = layer !== 'static';
   ctx.save();
   // Clear screen — tinted by time of day
-  markRenderSceneLayer(ctx, 'screen');
-  ctx.fillStyle = getSkyClearColor(gameTimePhase);
-  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  if (renderStatic) {
+    markRenderSceneLayer(ctx, 'screen');
+    ctx.fillStyle = getSkyClearColor(gameTimePhase);
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
 
   // Buttery-Smooth Dynamic Camera Zoom
   const dt = 0.016;
@@ -328,49 +399,45 @@ export function renderWorld(
   const currentSpeed = Math.sqrt(vx * vx + vy * vy) || 0;
   
   const activeGunType = localPlayer?.equipment?.weapon?.gunType || 'pistol';
-  // CheyTac sniper zooms out the farthest for massive battlefield awareness!
-  const aimZoomFactor = localPlayer?.isAiming ? (activeGunType === 'cheytac' ? 0.46 : 0.68) : 1.0;
-  let targetZoom = Math.max(0.40, (1.0 - Math.min(0.20, (currentSpeed / 650) * 0.16)) * aimZoomFactor);
-  if (localPlayer?.isInspectingWeapon) {
-    targetZoom = 5.2;
-  }
-  if (isInHordeArena(localPlayer?.x ?? 0, localPlayer?.y ?? 0) && !localPlayer?.isInspectingWeapon) {
-    targetZoom = Math.min(targetZoom, 0.72);
-  }
-
-  // Cinematic Camera Zoom Targeting
-  if (introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete') {
-    const phase = introCinematic.phase;
-    if (phase === 'dive') {
-      targetZoom = 0.85;
-    } else if (phase === 'impact' || phase === 'skid') {
-      targetZoom = 0.80;
-    } else if (phase === 'dazed' || phase === 'brush' || phase === 'gun_fall_bonk') {
-      targetZoom = 1.30;
-    } else if (phase === 'pickup_ready') {
-      targetZoom = 1.15;
+  let safeZoom = fixedZoom;
+  if (safeZoom === undefined) {
+    // CheyTac sniper zooms out the farthest for massive battlefield awareness!
+    const aimZoomFactor = localPlayer?.isAiming ? (activeGunType === 'cheytac' ? 0.46 : 0.68) : 1.0;
+    let targetZoom = Math.max(0.40, (1.0 - Math.min(0.20, (currentSpeed / 650) * 0.16)) * aimZoomFactor);
+    if (localPlayer?.isInspectingWeapon) {
+      targetZoom = 5.2;
     }
+    if (isInHordeArena(localPlayer?.x ?? 0, localPlayer?.y ?? 0) && !localPlayer?.isInspectingWeapon) {
+      targetZoom = Math.min(targetZoom, 0.72);
+    }
+    if (introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete') {
+      const phase = introCinematic.phase;
+      if (phase === 'dive') targetZoom = 0.85;
+      else if (phase === 'impact' || phase === 'skid') targetZoom = 0.80;
+      else if (phase === 'dazed' || phase === 'brush' || phase === 'gun_fall_bonk') targetZoom = 1.30;
+      else if (phase === 'pickup_ready') targetZoom = 1.15;
+    }
+    const zoomLerpSpeed = (introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete') ? 7.0 : localPlayer?.isInspectingWeapon ? 8.0 : localPlayer?.isAiming ? 5.5 : 6.0;
+    if (isNaN(smoothedZoom) || typeof smoothedZoom !== 'number' || smoothedZoom <= 0.1 || smoothedZoom > 8) {
+      smoothedZoom = 1.0;
+    } else {
+      smoothedZoom += (targetZoom - smoothedZoom) * (1 - Math.exp(-dt * zoomLerpSpeed));
+    }
+    safeZoom = (!isNaN(smoothedZoom) && smoothedZoom > 0.2 && smoothedZoom < 8.0) ? smoothedZoom : 1.0;
   }
 
-  const zoomLerpSpeed = (introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete') ? 7.0 : localPlayer?.isInspectingWeapon ? 8.0 : localPlayer?.isAiming ? 5.5 : 6.0;
-
-  if (isNaN(smoothedZoom) || typeof smoothedZoom !== 'number' || smoothedZoom <= 0.1 || smoothedZoom > 8) {
-    smoothedZoom = 1.0;
-  } else {
-    smoothedZoom += (targetZoom - smoothedZoom) * (1 - Math.exp(-dt * zoomLerpSpeed));
-  }
-  const safeZoom = (!isNaN(smoothedZoom) && smoothedZoom > 0.2 && smoothedZoom < 8.0) ? smoothedZoom : 1.0;
+  const resolvedZoom = safeZoom ?? 1.0;
 
   // Apply Camera translation & dynamic smooth zoom (centered on canvas)
   ctx.save();
   ctx.translate(canvasWidth / 2, canvasHeight / 2);
-  ctx.scale(safeZoom, safeZoom);
+  ctx.scale(resolvedZoom, resolvedZoom);
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
   ctx.translate(Math.round(canvasWidth / 2 - camera.x), Math.round(canvasHeight / 2 - camera.y));
   // Everything before the next marker is level geometry. It can be retained
   // by WGPU and moved through a camera uniform instead of crossing the
   // WebView bridge every simulation update.
-  markRenderSceneLayer(ctx, 'static');
+  if (renderStatic) markRenderSceneLayer(ctx, 'static');
 
   const playerX = localPlayer?.x ?? 0;
   const playerY = localPlayer?.y ?? 0;
@@ -383,7 +450,7 @@ export function renderWorld(
   const inHorde = isInHordeArena(playerX, playerY);
   const blindness = getHordeBlindness();
   const blinded = inHorde && blindness.active && blindness.remaining > 0;
-  const viewBounds = getViewBounds(camera.x, camera.y, canvasWidth, canvasHeight, safeZoom);
+  const viewBounds = getViewBounds(camera.x, camera.y, canvasWidth, canvasHeight, resolvedZoom);
   const skipViewCull = indoors;
   const inView = (x: number, y: number) => skipViewCull || isInViewBounds(x, y, viewBounds);
 
@@ -392,7 +459,7 @@ export function renderWorld(
     clipToViewBounds(ctx, viewBounds);
   }
 
-  if (!indoors) {
+  if (renderStatic && !indoors) {
     if (inHorde) {
       if (blinded) {
         ctx.fillStyle = '#000000';
@@ -406,13 +473,21 @@ export function renderWorld(
     }
   }
 
-  if (!inHorde) {
+  if (renderStatic && !inHorde) {
     drawWorldBuildings(ctx, localPlayer, occupancy, time);
   }
 
-  if (!indoors && !inHorde) {
+  if (renderStatic && !indoors && !inHorde) {
     drawWorldPois(ctx, worldPois.filter((p) => inView(p.x, p.y)), localPlayer, time);
     drawEnvironmentDecor(ctx, camera, canvasWidth, canvasHeight, time);
+  }
+
+  if (!renderDynamic) {
+    // Static-only compilation stops before every mutable/animated object.
+    ctx.restore(); // view clip
+    ctx.restore(); // world transform
+    ctx.restore(); // canvas state
+    return;
   }
 
   // From here on objects can be destroyed, animated or change with combat.

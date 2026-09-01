@@ -1,5 +1,8 @@
-import { splitRenderScene } from './renderScene';
-import { compileWorldScene, type WorldRenderInput } from './worldRenderer';
+import {
+  compileDynamicWorldScene,
+  compileStaticWorldScene,
+  type WorldRenderInput,
+} from './worldRenderer';
 
 type SceneCompileRequest = {
   id: number;
@@ -26,12 +29,13 @@ self.addEventListener('message', (event: MessageEvent<SceneCompileRequest>) => {
     return;
   }
   try {
-    const scene = compileWorldScene(measurementContext, event.data.input);
-    const layers = splitRenderScene(scene);
-    const staticKey = staticSceneKey(event.data.input, scene.camera);
-    const staticScene = staticKey === lastStaticKey ? undefined : layers.staticScene;
+    const dynamicScene = compileDynamicWorldScene(measurementContext, event.data.input);
+    const staticKey = staticSceneKey(event.data.input, dynamicScene.camera);
+    const staticScene = staticKey === lastStaticKey
+      ? undefined
+      : compileStaticWorldScene(measurementContext, event.data.input, dynamicScene.camera);
     lastStaticKey = staticKey;
-    self.postMessage({ id: event.data.id, staticScene, dynamicScene: layers.dynamicScene });
+    self.postMessage({ id: event.data.id, staticScene, dynamicScene });
   } catch (error) {
     self.postMessage({
       id: event.data.id,
