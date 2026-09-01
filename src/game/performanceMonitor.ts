@@ -1,4 +1,10 @@
-export type CanvasProbeMode = 'normal' | 'static-only' | 'dynamic-only' | 'present-only' | 'raf-only';
+export type CanvasProbeMode =
+  | 'normal'
+  | 'static-only'
+  | 'dynamic-only'
+  | 'webgl-atlas-only'
+  | 'present-only'
+  | 'raf-only';
 
 export type PerfSnapshot = {
   fps: number;

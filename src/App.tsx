@@ -234,7 +234,8 @@ export function App() {
     const nextMode: Record<CanvasProbeMode, CanvasProbeMode> = {
       normal: 'static-only',
       'static-only': 'dynamic-only',
-      'dynamic-only': 'present-only',
+      'dynamic-only': 'webgl-atlas-only',
+      'webgl-atlas-only': 'present-only',
       'present-only': 'raf-only',
       'raf-only': 'normal',
     };
@@ -645,7 +646,8 @@ export function App() {
 
       const drawStart = performance.now();
       const activeCanvasProbeMode = canvasProbeModeRef.current;
-      if (activeCanvasProbeMode !== lastProbeMode) {
+      const probeModeChanged = activeCanvasProbeMode !== lastProbeMode;
+      if (probeModeChanged) {
         if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
           dynamicCanvasWorker?.postMessage({ type: 'clear' });
         }
@@ -793,6 +795,20 @@ export function App() {
             skipWebglHordeMobBodies: webglBodiesActive,
           });
         }
+      } else if (activeCanvasProbeMode === 'webgl-atlas-only') {
+        // This deliberately avoids both Canvas2D presentation and the
+        // worker/ImageBitmap round trip. It answers whether a continuously
+        // changing WebGL surface can escape the WebView pacing ceiling before
+        // we invest in moving more dynamic primitives to GPU.
+        if (probeModeChanged) ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        const worldInput = buildWorldRenderInput();
+        const camera = advanceCanvasCamera(
+          curEngine.player,
+          timeInSeconds,
+          curEngine.screenShake,
+          curEngine.introCinematic,
+        );
+        renderWebglHordeMobBodies(worldInput, camera);
       } else if (activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.
