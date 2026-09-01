@@ -116,6 +116,93 @@ export function worldToScreen(
   };
 }
 
+/**
+ * Advances the Canvas camera once and returns the exact transform required by
+ * a renderer running outside the page's main thread. Keeping this state here
+ * makes the Canvas, OffscreenCanvas and native paths share one camera model.
+ */
+export function advanceCanvasCamera(
+  localPlayer: Player,
+  time: number,
+  screenShake: { intensity: number; duration: number } = { intensity: 0, duration: 0 },
+  introCinematic?: IntroCinematicState,
+) {
+  let shakeX = 0;
+  let shakeY = 0;
+  if (screenShake.duration > 0 && screenShake.intensity > 0) {
+    const factor = Math.min(1, screenShake.duration * 5);
+    shakeX = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
+    shakeY = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
+  }
+
+  const activeGunType = localPlayer?.equipment?.weapon?.gunType || 'pistol';
+  const maxLookAhead =
+    activeGunType === 'cheytac' ? 880 :
+    activeGunType === 'ak47' ? 500 :
+    activeGunType === 'revolver' ? 440 :
+    activeGunType === 'pistol' ? 380 :
+    activeGunType === 'shotgun' ? 360 :
+    activeGunType === 'mac10' ? 360 : 280;
+  const isInspecting = Boolean(localPlayer?.isInspectingWeapon);
+  const aimAngle = localPlayer?.aimAngle || 0;
+  let targetCamX = (localPlayer?.x ?? 650) + shakeX
+    + (!isInspecting && localPlayer?.isAiming ? Math.cos(aimAngle) * maxLookAhead : isInspecting ? (localPlayer?.facing === 'left' ? -14 : 14) : 0);
+  let targetCamY = (localPlayer?.y ?? 750) + shakeY
+    + (isInspecting ? -3 : !isInspecting && localPlayer?.isAiming ? Math.sin(aimAngle) * maxLookAhead : 0);
+
+  const isCinematicActive = introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete';
+  if (isCinematicActive) {
+    if (introCinematic.phase === 'dive') {
+      targetCamX = 650 + shakeX;
+      targetCamY = Math.max(350, (localPlayer?.y ?? 0) + 120) + shakeY;
+    } else if (introCinematic.phase === 'impact' || introCinematic.phase === 'skid') {
+      targetCamX = (localPlayer?.x ?? 650) + shakeX;
+      targetCamY = 750 + shakeY;
+    } else {
+      targetCamX = 880 + shakeX;
+      targetCamY = 745 + shakeY;
+    }
+  }
+
+  const dt = (lastRenderTimestamp > 0 && time > lastRenderTimestamp) ? Math.min(0.1, time - lastRenderTimestamp) : 0.016;
+  lastRenderTimestamp = time;
+  const camLerpSpeed = isCinematicActive ? 12 : isInspecting ? 9 : localPlayer?.isAiming ? 6.5 : 8;
+  if (isNaN(smoothedCameraX) || Math.abs(smoothedCameraX - targetCamX) > 4000) {
+    smoothedCameraX = targetCamX;
+    smoothedCameraY = targetCamY;
+  } else {
+    const factor = 1 - Math.exp(-dt * camLerpSpeed);
+    smoothedCameraX += (targetCamX - smoothedCameraX) * factor;
+    smoothedCameraY += (targetCamY - smoothedCameraY) * factor;
+  }
+
+  const speed = Math.hypot(localPlayer?.vx || 0, localPlayer?.vy || 0);
+  let targetZoom = Math.max(0.4, (1 - Math.min(0.2, (speed / 650) * 0.16))
+    * (localPlayer?.isAiming ? (activeGunType === 'cheytac' ? 0.46 : 0.68) : 1));
+  if (localPlayer?.isInspectingWeapon) targetZoom = 5.2;
+  if (isInHordeArena(localPlayer?.x ?? 0, localPlayer?.y ?? 0) && !localPlayer?.isInspectingWeapon) {
+    targetZoom = Math.min(targetZoom, 0.72);
+  }
+  if (isCinematicActive) {
+    if (introCinematic.phase === 'dive') targetZoom = 0.85;
+    else if (introCinematic.phase === 'impact' || introCinematic.phase === 'skid') targetZoom = 0.8;
+    else if (introCinematic.phase === 'dazed' || introCinematic.phase === 'brush' || introCinematic.phase === 'gun_fall_bonk') targetZoom = 1.3;
+    else if (introCinematic.phase === 'pickup_ready') targetZoom = 1.15;
+  }
+  const zoomLerpSpeed = isCinematicActive ? 7 : localPlayer?.isInspectingWeapon ? 8 : localPlayer?.isAiming ? 5.5 : 6;
+  if (isNaN(smoothedZoom) || smoothedZoom <= 0.1 || smoothedZoom > 8) {
+    smoothedZoom = 1;
+  } else {
+    smoothedZoom += (targetZoom - smoothedZoom) * (1 - Math.exp(-0.016 * zoomLerpSpeed));
+  }
+
+  return {
+    x: Math.round(smoothedCameraX),
+    y: Math.round(smoothedCameraY),
+    zoom: (!isNaN(smoothedZoom) && smoothedZoom > 0.2 && smoothedZoom < 8) ? smoothedZoom : 1,
+  };
+}
+
 export function drawWorld(
   ctx: CanvasRenderingContext2D,
   canvasWidth: number,
@@ -138,73 +225,11 @@ export function drawWorld(
   gameTimePhase: number = 0.35,
   options: WorldDrawOptions = {}
 ) {
-  let camera: { x: number; y: number };
+  let camera: { x: number; y: number; zoom?: number };
   if (options.camera) {
     camera = { x: options.camera.x, y: options.camera.y };
   } else {
-  // Screen shake offset calculation with smooth decay
-  let shakeX = 0;
-  let shakeY = 0;
-  if (screenShake.duration > 0 && screenShake.intensity > 0) {
-    const factor = Math.min(1, screenShake.duration * 5);
-    shakeX = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
-    shakeY = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
-  }
-
-  // Calculate Weapon-Specific Look-Ahead offset
-  const activeGunType = localPlayer?.equipment?.weapon?.gunType || 'pistol';
-  const maxLookAhead =
-    activeGunType === 'cheytac' ? 880 :
-    activeGunType === 'ak47' ? 500 :
-    activeGunType === 'revolver' ? 440 :
-    activeGunType === 'pistol' ? 380 :
-    activeGunType === 'shotgun' ? 360 :
-    activeGunType === 'mac10' ? 360 : 280;
-
-  const aimAngle = localPlayer?.aimAngle || 0;
-  const isInspecting = !!localPlayer?.isInspectingWeapon;
-  const targetLookAheadX = (!isInspecting && localPlayer?.isAiming) ? Math.cos(aimAngle) * maxLookAhead : 0;
-  const targetLookAheadY = (!isInspecting && localPlayer?.isAiming) ? Math.sin(aimAngle) * maxLookAhead : 0;
-
-  const inspectOffsetX = (localPlayer?.facing === 'left' ? -14 : 14);
-  const inspectOffsetY = -3;
-
-  let targetCamX = (localPlayer?.x ?? 650) + shakeX + (isInspecting ? inspectOffsetX : targetLookAheadX);
-  let targetCamY = (localPlayer?.y ?? 750) + shakeY + (isInspecting ? inspectOffsetY : targetLookAheadY);
-
-  // Cinematic Camera Target Overrides
-  const isCinematicActive = introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete';
-  if (isCinematicActive) {
-    const phase = introCinematic.phase;
-    if (phase === 'dive') {
-      targetCamX = 650 + shakeX;
-      targetCamY = Math.max(350, (localPlayer?.y ?? 0) + 120) + shakeY;
-    } else if (phase === 'impact' || phase === 'skid') {
-      targetCamX = (localPlayer?.x ?? 650) + shakeX;
-      targetCamY = 750 + shakeY;
-    } else {
-      targetCamX = 880 + shakeX;
-      targetCamY = 745 + shakeY;
-    }
-  }
-
-  const dt = (lastRenderTimestamp > 0 && time > lastRenderTimestamp) ? Math.min(0.1, (time - lastRenderTimestamp)) : 0.016;
-  lastRenderTimestamp = time;
-
-  // Exponential framerate-independent lerp for smooth camera look-ahead
-  const camLerpSpeed = isCinematicActive ? 12.0 : isInspecting ? 9.0 : localPlayer?.isAiming ? 6.5 : 8.0;
-  if (isNaN(smoothedCameraX) || Math.abs(smoothedCameraX - targetCamX) > 4000) {
-    smoothedCameraX = targetCamX;
-    smoothedCameraY = targetCamY;
-  } else {
-    smoothedCameraX += (targetCamX - smoothedCameraX) * (1 - Math.exp(-dt * camLerpSpeed));
-    smoothedCameraY += (targetCamY - smoothedCameraY) * (1 - Math.exp(-dt * camLerpSpeed));
-  }
-
-  camera = {
-    x: Math.round(smoothedCameraX),
-    y: Math.round(smoothedCameraY),
-  };
+    camera = advanceCanvasCamera(localPlayer, time, screenShake, introCinematic);
   }
 
   const npcs = Object.values(NPCS_DATABASE);
@@ -232,7 +257,7 @@ export function drawWorld(
     summons,
     gameTimePhase,
     options.layer ?? 'full',
-    options.camera?.zoom
+    options.camera?.zoom ?? camera.zoom
   );
 }
 

@@ -32,6 +32,9 @@ export type PerfSnapshot = {
   nativeBridgeMs: number | null;
   nativeDynamicCommands: number | null;
   nativeSceneTargetHz: number | null;
+  /** Completed visible OffscreenCanvas dynamic paints, not main-thread rAF. */
+  offscreenDynamicFps: number | null;
+  offscreenDynamicRoundTripMs: number | null;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -72,6 +75,9 @@ class PerformanceMonitor {
   private nativeBridgeMs: number | null = null;
   private nativeDynamicCommands: number | null = null;
   private nativeSceneTargetHz: number | null = null;
+  private offscreenDynamicFrameTimes: number[] = [];
+  private offscreenDynamicRoundTripMs: number | null = null;
+  private lastOffscreenDynamicCompletedAt: number | null = null;
   private fogMs = 0;
   private extras: Partial<PerfSnapshot> = {};
 
@@ -234,6 +240,15 @@ class PerformanceMonitor {
     this.nativeSceneTargetHz = Number.isFinite(hz) ? Math.max(0, Math.round(hz)) : null;
   }
 
+  recordOffscreenDynamicFrame(roundTripMs: number) {
+    const now = performance.now();
+    this.offscreenDynamicRoundTripMs = Number.isFinite(roundTripMs) ? Math.max(0, roundTripMs) : null;
+    if (this.lastOffscreenDynamicCompletedAt !== null) {
+      this.pushRolling(this.offscreenDynamicFrameTimes, now - this.lastOffscreenDynamicCompletedAt);
+    }
+    this.lastOffscreenDynamicCompletedAt = now;
+  }
+
   recordFog(ms: number) {
     this.fogMs = ms;
   }
@@ -276,6 +291,10 @@ class PerformanceMonitor {
       nativeBridgeMs: this.nativeBridgeMs,
       nativeDynamicCommands: this.nativeDynamicCommands,
       nativeSceneTargetHz: this.nativeSceneTargetHz,
+      offscreenDynamicFps: this.offscreenDynamicFrameTimes.length > 0
+        ? Math.round(1000 / Math.max(1, average(this.offscreenDynamicFrameTimes)))
+        : null,
+      offscreenDynamicRoundTripMs: this.offscreenDynamicRoundTripMs,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
