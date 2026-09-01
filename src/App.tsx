@@ -103,6 +103,12 @@ export function App() {
   const dynamicRasterScaleRef = useRef(dynamicRasterScale);
   const [webglHordeMobBodies, setWebglHordeMobBodies] = useState(true);
   const webglHordeMobBodiesRef = useRef(webglHordeMobBodies);
+  const [staticWorldLayerEnabled, setStaticWorldLayerEnabled] = useState(true);
+  const staticWorldLayerEnabledRef = useRef(staticWorldLayerEnabled);
+  const [dynamicCanvasLayerEnabled, setDynamicCanvasLayerEnabled] = useState(true);
+  const dynamicCanvasLayerEnabledRef = useRef(dynamicCanvasLayerEnabled);
+  const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
+  const forceStaticCanvasRef = useRef(forceStaticCanvas);
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -129,6 +135,18 @@ export function App() {
   useEffect(() => {
     webglHordeMobBodiesRef.current = webglHordeMobBodies;
   }, [webglHordeMobBodies]);
+
+  useEffect(() => {
+    staticWorldLayerEnabledRef.current = staticWorldLayerEnabled;
+  }, [staticWorldLayerEnabled]);
+
+  useEffect(() => {
+    dynamicCanvasLayerEnabledRef.current = dynamicCanvasLayerEnabled;
+  }, [dynamicCanvasLayerEnabled]);
+
+  useEffect(() => {
+    forceStaticCanvasRef.current = forceStaticCanvas;
+  }, [forceStaticCanvas]);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -189,6 +207,24 @@ export function App() {
     };
     window.addEventListener('keydown', toggleWebglHordeMobBodies);
     return () => window.removeEventListener('keydown', toggleWebglHordeMobBodies);
+  }, [nativeWorldRenderer]);
+
+  useEffect(() => {
+    const toggleWebViewLayer = (event: KeyboardEvent) => {
+      if (event.repeat || nativeWorldRenderer) return;
+      if (event.code === 'F5') {
+        event.preventDefault();
+        setForceStaticCanvas((enabled) => !enabled);
+      } else if (event.code === 'F6') {
+        event.preventDefault();
+        setStaticWorldLayerEnabled((enabled) => !enabled);
+      } else if (event.code === 'F7') {
+        event.preventDefault();
+        setDynamicCanvasLayerEnabled((enabled) => !enabled);
+      }
+    };
+    window.addEventListener('keydown', toggleWebViewLayer);
+    return () => window.removeEventListener('keydown', toggleWebViewLayer);
   }, [nativeWorldRenderer]);
 
   useEffect(() => {
@@ -326,6 +362,7 @@ export function App() {
       webglHordeMobBodies: boolean;
     } | null = null;
     let lastProbeMode = canvasProbeModeRef.current;
+    let lastLayerConfiguration = '';
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
       if ('close' in image && typeof image.close === 'function') {
@@ -341,6 +378,10 @@ export function App() {
     ) => {
       if (dynamicFrame && dynamicFrame.image !== nextFrame) dynamicFrame.image.close();
       dynamicFrame = { image: nextFrame, width, height, camera, webglHordeMobBodies };
+    };
+    const clearDynamicFrame = () => {
+      if (dynamicFrame) dynamicFrame.image.close();
+      dynamicFrame = null;
     };
     const replaceStaticCache = (nextCache: StaticCache) => {
       if (staticCache && staticCache.image !== nextCache.image) {
@@ -568,6 +609,10 @@ export function App() {
     ) => {
       webglStaticWorldView = undefined;
       if (nativeWorldRenderer || !staticCanvas || !staticCtx || !staticCacheCtx) return false;
+      if (!staticWorldLayerEnabledRef.current) {
+        staticCanvas.style.visibility = 'hidden';
+        return false;
+      }
       const resourceRevision = worldInput.resourceNodes
         .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
         .join(',');
@@ -610,7 +655,9 @@ export function App() {
         + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
       const sourceX = Math.max(0, Math.min(staticCache.width - sourceWidth, rawSourceX));
       const sourceY = Math.max(0, Math.min(staticCache.height - sourceHeight, rawSourceY));
-      const canUseWebgl = webglHordeMobBodiesRef.current && webglHordeMobRenderer?.isAvailable;
+      const canUseWebgl = !forceStaticCanvasRef.current
+        && webglHordeMobBodiesRef.current
+        && webglHordeMobRenderer?.isAvailable;
       if (canUseWebgl && webglHordeMobRenderer) {
         if (uploadedStaticCache !== staticCache) {
           uploadedStaticCache = webglHordeMobRenderer.uploadStaticWorld(staticCache.image) ? staticCache : null;
@@ -728,20 +775,24 @@ export function App() {
         }
       }
 
-      perfMonitor.setExtras({
-        monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
-        particles: curEngine.particles.length,
-        projectiles: curEngine.projectiles.length,
-        zoom: camera.zoom,
-        canvasW: viewportWidth,
-        canvasH: viewportHeight,
-        dynamicRasterScale: dynamicRasterScaleRef.current,
-        webglHordeMobBodies: webglHordeMobBodiesRef.current && webglHordeMobRenderer !== null,
-      });
-
       const drawStart = performance.now();
       const activeCanvasProbeMode = canvasProbeModeRef.current;
       const probeModeChanged = activeCanvasProbeMode !== lastProbeMode;
+      const layerConfiguration = [
+        staticWorldLayerEnabledRef.current ? 1 : 0,
+        dynamicCanvasLayerEnabledRef.current ? 1 : 0,
+        forceStaticCanvasRef.current ? 1 : 0,
+      ].join('');
+      const layerConfigurationChanged = layerConfiguration !== lastLayerConfiguration;
+      if (layerConfigurationChanged) {
+        if (!dynamicCanvasLayerEnabledRef.current) {
+          dynamicCanvasWorker?.postMessage({ type: 'clear' });
+          clearDynamicFrame();
+          ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        }
+        if (!staticWorldLayerEnabledRef.current && staticCanvas) staticCanvas.style.visibility = 'hidden';
+        lastLayerConfiguration = layerConfiguration;
+      }
       if (probeModeChanged) {
         if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
           dynamicCanvasWorker?.postMessage({ type: 'clear' });
@@ -753,6 +804,8 @@ export function App() {
         webglHordeMobRenderer?.clear();
       }
       const presentDynamicOverlay = (worldInput: WorldRenderInput) => {
+        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
+        if (!dynamicCanvasLayerEnabledRef.current) return webglBodiesActive;
         const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
         const workerInput = rasterScale === 1
           ? worldInput
@@ -762,7 +815,6 @@ export function App() {
             canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
           };
         const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
-        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
         const workerQueued = queueDynamicRender({
           input: workerInput,
           camera: workerCamera,
@@ -830,6 +882,20 @@ export function App() {
       }
       // raf-only intentionally performs no Canvas calls. It isolates WebView
       // scheduling from Canvas command submission and compositing.
+      perfMonitor.setExtras({
+        monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
+        particles: curEngine.particles.length,
+        projectiles: curEngine.projectiles.length,
+        zoom: camera.zoom,
+        canvasW: viewportWidth,
+        canvasH: viewportHeight,
+        dynamicRasterScale: dynamicRasterScaleRef.current,
+        webglHordeMobBodies: webglHordeMobBodiesRef.current && webglHordeMobRenderer !== null,
+        staticWorldLayerEnabled: staticWorldLayerEnabledRef.current,
+        dynamicCanvasLayerEnabled: dynamicCanvasLayerEnabledRef.current,
+        forceStaticCanvas: forceStaticCanvasRef.current,
+        webglStaticWorldActive: webglStaticWorldView !== undefined,
+      });
       const callbackFinishedAt = performance.now();
       perfMonitor.recordCanvasWebViewFrame(
         frameIntervalMs,

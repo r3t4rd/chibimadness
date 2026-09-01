@@ -44,6 +44,11 @@ export type PerfSnapshot = {
   dynamicRasterScale: number;
   /** WebView hybrid path: horde bodies are batched as WebGL atlas quads. */
   webglHordeMobBodies: boolean;
+  /** Live WebView layer switches used to isolate compositor pacing. */
+  staticWorldLayerEnabled: boolean;
+  dynamicCanvasLayerEnabled: boolean;
+  forceStaticCanvas: boolean;
+  webglStaticWorldActive: boolean;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -306,6 +311,10 @@ class PerformanceMonitor {
       offscreenDynamicRoundTripMs: this.offscreenDynamicRoundTripMs,
       dynamicRasterScale: this.extras.dynamicRasterScale ?? 1,
       webglHordeMobBodies: this.extras.webglHordeMobBodies === true,
+      staticWorldLayerEnabled: this.extras.staticWorldLayerEnabled !== false,
+      dynamicCanvasLayerEnabled: this.extras.dynamicCanvasLayerEnabled !== false,
+      forceStaticCanvas: this.extras.forceStaticCanvas === true,
+      webglStaticWorldActive: this.extras.webglStaticWorldActive === true,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,

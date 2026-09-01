@@ -96,8 +96,21 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
           <div className={stats.webglHordeMobBodies ? 'text-emerald-300' : 'text-slate-500'}>
             actor bodies {stats.webglHordeMobBodies ? 'WebGL2 runtime atlas active' : 'Canvas fallback'} · F10 toggle
           </div>
-          <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
-            world {nativeWorldActive ? 'native active' : 'canvas fallback'}
+          {!nativeWorldActive && (
+            <div className="text-slate-400">
+              layers: static {stats.staticWorldLayerEnabled ? 'on' : 'off'} F6 · dynamic {stats.dynamicCanvasLayerEnabled ? 'on' : 'off'} F7
+            </div>
+          )}
+          <div className={nativeWorldActive || stats.webglStaticWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
+            world {nativeWorldActive
+              ? 'native active'
+              : !stats.staticWorldLayerEnabled
+                ? 'off'
+                : stats.webglStaticWorldActive
+                  ? 'WebGL texture active'
+                  : stats.forceStaticCanvas
+                    ? 'Canvas present forced'
+                    : 'Canvas fallback'} · F5 path
           </div>
           <div>zoom {stats.zoom.toFixed(2)}x</div>
           <div>
