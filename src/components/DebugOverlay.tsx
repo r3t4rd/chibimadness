@@ -88,6 +88,11 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
               bridge {stats.nativeBridgeMs.toFixed(1)} ms · {(stats.nativeDynamicCommands ?? 0).toLocaleString()} cmd · {stats.nativeSceneTargetHz ?? 0} Hz
             </div>
           )}
+          {stats.offscreenDynamicFps !== null && (
+            <div className="text-cyan-300">
+              worker dyn {stats.offscreenDynamicFps} Hz · RTT {(stats.offscreenDynamicRoundTripMs ?? 0).toFixed(1)} ms
+            </div>
+          )}
           <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
             world {nativeWorldActive ? 'native active' : 'canvas fallback'}
           </div>

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChibiConfig, Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
+import { advanceCanvasCamera, drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -168,6 +168,7 @@ export function App() {
   const [nativeWorldRendererRequested, setNativeWorldRendererRequested] = useState(isNativeWorldRendererEnabled);
   const [nativeWorldRendererReady, setNativeWorldRendererReady] = useState(isNativeWorldRendererReady);
   const [canvasProbeMode, setCanvasProbeMode] = useState<CanvasProbeMode>('normal');
+  const canvasProbeModeRef = useRef<CanvasProbeMode>(canvasProbeMode);
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -182,6 +183,10 @@ export function App() {
     camera?: { x: number; y: number; zoom: number };
   } | null>(null);
   const nextSceneJobIdRef = useRef(1);
+
+  useEffect(() => {
+    canvasProbeModeRef.current = canvasProbeMode;
+  }, [canvasProbeMode]);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -297,9 +302,27 @@ export function App() {
     const staticCanvas = staticCanvasRef.current;
     if (!createdPlayer || (!nativeWorldRenderer && (!canvas || !staticCanvas))) return;
 
-    const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
+    // Move the high-churn actor pass to an attached OffscreenCanvas. Unlike an
+    // ImageBitmap copy this presents directly into the existing DOM canvas,
+    // so the WebView UI thread no longer performs Canvas2D raster work.
+    let dynamicCanvasWorker: Worker | null = null;
+    let ctx: CanvasRenderingContext2D | null = null;
+    if (!nativeWorldRenderer && canvas && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        const offscreen = canvas.transferControlToOffscreen();
+        dynamicCanvasWorker = new Worker(new URL('./game/dynamicCanvas.worker.ts', import.meta.url), { type: 'module' });
+        dynamicCanvasWorker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+      } catch {
+        // Older WebView2 builds can lack transferControlToOffscreen. They keep
+        // the direct Canvas path rather than risking a blank gameplay surface.
+        dynamicCanvasWorker = null;
+        ctx = canvas.getContext('2d');
+      }
+    } else if (!nativeWorldRenderer) {
+      ctx = canvas?.getContext('2d') ?? null;
+    }
     const staticCtx = nativeWorldRenderer ? null : staticCanvas?.getContext('2d', { alpha: false });
-    if (!nativeWorldRenderer && (!ctx || !staticCtx)) return;
+    if (!nativeWorldRenderer && ((!ctx && !dynamicCanvasWorker) || !staticCtx)) return;
     const staticCacheCanvas = document.createElement('canvas');
     const staticCacheCtx = nativeWorldRenderer ? null : staticCacheCanvas.getContext('2d', { alpha: false });
     if (!nativeWorldRenderer && !staticCacheCtx) return;
@@ -323,6 +346,15 @@ export function App() {
     let staticCacheBuildInFlight = false;
     let pendingStaticCacheBuild: StaticCacheBuild | null = null;
     let nextStaticCacheBuildId = 1;
+    type DynamicRender = {
+      input: WorldRenderInput;
+      camera: { x: number; y: number; zoom: number };
+    };
+    let dynamicRenderInFlight = false;
+    let pendingDynamicRender: DynamicRender | null = null;
+    let nextDynamicRenderId = 1;
+    let dynamicRenderStartedAt: number | null = null;
+    let lastProbeMode = canvasProbeModeRef.current;
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
       if ('close' in image && typeof image.close === 'function') {
@@ -370,6 +402,49 @@ export function App() {
       }
       return true;
     };
+
+    const startDynamicRender = (renderInput: DynamicRender) => {
+      if (!dynamicCanvasWorker) return;
+      dynamicRenderInFlight = true;
+      dynamicRenderStartedAt = performance.now();
+      dynamicCanvasWorker.postMessage({ type: 'render', id: nextDynamicRenderId++, ...renderInput });
+    };
+    const queueDynamicRender = (renderInput: DynamicRender) => {
+      if (!dynamicCanvasWorker) return false;
+      if (dynamicRenderInFlight) {
+        // Rendering old actors after a dense scene changes is worse than
+        // skipping one presentation: retain exactly one newest snapshot.
+        pendingDynamicRender = renderInput;
+      } else {
+        startDynamicRender(renderInput);
+      }
+      return true;
+    };
+
+    if (dynamicCanvasWorker) {
+      dynamicCanvasWorker.onmessage = (event: MessageEvent<{ id?: number; error?: string }>) => {
+        if (event.data.error) {
+          dynamicRenderInFlight = false;
+          dynamicRenderStartedAt = null;
+          pendingDynamicRender = null;
+          return;
+        }
+        if (event.data.id === undefined) return;
+        if (dynamicRenderStartedAt !== null) {
+          perfMonitor.recordOffscreenDynamicFrame(performance.now() - dynamicRenderStartedAt);
+        }
+        dynamicRenderStartedAt = null;
+        dynamicRenderInFlight = false;
+        const pending = pendingDynamicRender;
+        pendingDynamicRender = null;
+        if (pending) startDynamicRender(pending);
+      };
+      dynamicCanvasWorker.onerror = () => {
+        dynamicRenderInFlight = false;
+        dynamicRenderStartedAt = null;
+        pendingDynamicRender = null;
+      };
+    }
 
     if (!nativeWorldRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
       try {
@@ -729,15 +804,28 @@ export function App() {
       });
 
       const drawStart = performance.now();
-      if (canvasProbeMode === 'normal') {
+      const activeCanvasProbeMode = canvasProbeModeRef.current;
+      if (activeCanvasProbeMode !== lastProbeMode) {
+        if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
+          dynamicCanvasWorker?.postMessage({ type: 'clear' });
+        }
+        lastProbeMode = activeCanvasProbeMode;
+      }
+      if (activeCanvasProbeMode === 'normal') {
         const worldInput = buildWorldRenderInput();
         // Dynamic pass advances the existing Canvas camera every rAF. The
         // static cache is rendered with that resulting camera, so background
         // and actors stay in the same world coordinate system.
-        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        drawWorldInput(ctx, worldInput, { layer: 'dynamic' });
-
-        const camera = getCameraState();
+        const camera = advanceCanvasCamera(
+          curEngine.player,
+          timeInSeconds,
+          curEngine.screenShake,
+          curEngine.introCinematic,
+        );
+        if (!queueDynamicRender({ input: worldInput, camera })) {
+          ctx?.clearRect(0, 0, viewportWidth, viewportHeight);
+          if (ctx) drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
+        }
         const resourceRevision = curEngine.resourceNodes
           .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
           .join(',');
@@ -796,23 +884,32 @@ export function App() {
           viewportWidth,
           viewportHeight,
         );
-      } else if (canvasProbeMode === 'static-only') {
+      } else if (activeCanvasProbeMode === 'static-only') {
         // Terrain, buildings and world dressing. This is the candidate for a
         // retained/tiled Canvas cache if it is the pacing bottleneck.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
-        drawWorldInput(ctx, buildWorldRenderInput(), { layer: 'static' });
-      } else if (canvasProbeMode === 'dynamic-only') {
+        drawWorldInput(staticCtx, buildWorldRenderInput(), { layer: 'static' });
+      } else if (activeCanvasProbeMode === 'dynamic-only') {
         // Actors and screen-space effects, deliberately without static world
         // geometry. Clear first so dynamic pixels do not accumulate between
         // diagnostic frames.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
-        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        drawWorldInput(ctx, buildWorldRenderInput(), { layer: 'dynamic' });
-      } else if (canvasProbeMode === 'present-only') {
+        const worldInput = buildWorldRenderInput();
+        const camera = advanceCanvasCamera(
+          curEngine.player,
+          timeInSeconds,
+          curEngine.screenShake,
+          curEngine.introCinematic,
+        );
+        if (!queueDynamicRender({ input: worldInput, camera })) {
+          ctx?.clearRect(0, 0, viewportWidth, viewportHeight);
+          if (ctx) drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
+        }
+      } else if (activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
-        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        ctx?.clearRect(0, 0, viewportWidth, viewportHeight);
       }
       // raf-only intentionally performs no Canvas calls. It isolates WebView
       // scheduling from Canvas command submission and compositing.
@@ -831,10 +928,11 @@ export function App() {
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
+      dynamicCanvasWorker?.terminate();
       staticCacheWorker?.terminate();
       if (staticCache) releaseStaticCacheImage(staticCache.image);
     };
-  }, [createdPlayer, canvasProbeMode, nativeWorldRenderer, nativeWorldRendererRequested]);
+  }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
 
   // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
   useEffect(() => {
