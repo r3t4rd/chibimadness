@@ -4,7 +4,11 @@ import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import { advanceCanvasCamera, drawWorldInput, screenToWorld, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
-import { createWebglHordeMobRenderer, type WebglHordeMobRenderer } from './game/webglHordeMobRenderer';
+import {
+  createWebglHordeMobRenderer,
+  type WebglHordeMobRenderer,
+  type WebglStaticWorldView,
+} from './game/webglHordeMobRenderer';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
 import { CharacterCreator } from './components/CharacterCreator';
@@ -299,6 +303,8 @@ export function App() {
       revision: string;
     };
     let staticCache: StaticCache | null = null;
+    let uploadedStaticCache: StaticCache | null = null;
+    let webglStaticWorldView: WebglStaticWorldView | undefined;
     let staticCacheWorker: Worker | null = null;
     let staticCacheBuildInFlight = false;
     let pendingStaticCacheBuild: StaticCacheBuild | null = null;
@@ -512,6 +518,9 @@ export function App() {
         staticCanvas.height = viewportHeight;
       }
       staticCache = null;
+      uploadedStaticCache = null;
+      webglStaticWorldView = undefined;
+      if (staticCanvas) staticCanvas.style.visibility = 'visible';
       webglHordeMobRenderer?.clear();
     };
     handleResize();
@@ -538,6 +547,7 @@ export function App() {
             input.players,
             input.projectiles,
             input.particles,
+            webglStaticWorldView,
           );
           return true;
         }
@@ -550,6 +560,89 @@ export function App() {
         webglHordeMobRenderer = null;
         return false;
       }
+    };
+
+    const presentStaticWorld = (
+      worldInput: WorldRenderInput,
+      camera: { x: number; y: number; zoom: number },
+    ) => {
+      webglStaticWorldView = undefined;
+      if (nativeWorldRenderer || !staticCanvas || !staticCtx || !staticCacheCtx) return false;
+      const resourceRevision = worldInput.resourceNodes
+        .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
+        .join(',');
+      const staticRevision = [
+        worldInput.localPlayer.currentZone,
+        worldInput.localPlayer.interiorBuildingId ?? '',
+        worldInput.localPlayer.interiorFloor ?? 0,
+        Math.floor((worldInput.gameTimePhase ?? 0.35) * 12),
+        resourceRevision,
+      ].join('|');
+      const cacheShiftX = staticCache
+        ? Math.abs(camera.x - staticCache.camera.x) * staticCache.camera.zoom
+        : Infinity;
+      const cacheShiftY = staticCache
+        ? Math.abs(camera.y - staticCache.camera.y) * staticCache.camera.zoom
+        : Infinity;
+      const cacheNeedsRefresh = !staticCache
+        || staticCache.revision !== staticRevision
+        || cacheShiftX > staticCacheMargin * 0.45
+        || cacheShiftY > staticCacheMargin * 0.45
+        || Math.abs(camera.zoom - staticCache.camera.zoom) > 0.025;
+
+      if (cacheNeedsRefresh) {
+        const cacheWidth = viewportWidth + staticCacheMargin * 2;
+        const cacheHeight = viewportHeight + staticCacheMargin * 2;
+        const build: StaticCacheBuild = {
+          input: { ...worldInput, canvasWidth: cacheWidth, canvasHeight: cacheHeight },
+          camera: { ...camera },
+          revision: staticRevision,
+        };
+        if (!staticCache || !queueStaticCacheBuild(build)) renderStaticCacheOnMainThread(build);
+      }
+      if (!staticCache) return false;
+
+      const sourceWidth = viewportWidth * staticCache.camera.zoom / camera.zoom;
+      const sourceHeight = viewportHeight * staticCache.camera.zoom / camera.zoom;
+      const rawSourceX = (staticCache.width - sourceWidth) / 2
+        + (camera.x - staticCache.camera.x) * staticCache.camera.zoom;
+      const rawSourceY = (staticCache.height - sourceHeight) / 2
+        + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
+      const sourceX = Math.max(0, Math.min(staticCache.width - sourceWidth, rawSourceX));
+      const sourceY = Math.max(0, Math.min(staticCache.height - sourceHeight, rawSourceY));
+      const canUseWebgl = webglHordeMobBodiesRef.current && webglHordeMobRenderer?.isAvailable;
+      if (canUseWebgl && webglHordeMobRenderer) {
+        if (uploadedStaticCache !== staticCache) {
+          uploadedStaticCache = webglHordeMobRenderer.uploadStaticWorld(staticCache.image) ? staticCache : null;
+        }
+        if (uploadedStaticCache === staticCache) {
+          webglStaticWorldView = {
+            sourceX,
+            sourceY,
+            sourceWidth,
+            sourceHeight,
+            textureWidth: staticCache.width,
+            textureHeight: staticCache.height,
+          };
+          staticCanvas.style.visibility = 'hidden';
+          return true;
+        }
+      }
+
+      staticCanvas.style.visibility = 'visible';
+      staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+      staticCtx.drawImage(
+        staticCache.image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        viewportWidth,
+        viewportHeight,
+      );
+      return false;
     };
 
     const render = (time: number) => {
@@ -653,6 +746,7 @@ export function App() {
         if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
           dynamicCanvasWorker?.postMessage({ type: 'clear' });
         }
+        if (activeCanvasProbeMode !== 'normal' && staticCanvas) staticCanvas.style.visibility = 'visible';
         lastProbeMode = activeCanvasProbeMode;
       }
       if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
@@ -708,71 +802,8 @@ export function App() {
       };
       if (nativeWorldRenderer || activeCanvasProbeMode === 'normal') {
         const worldInput = buildWorldRenderInput();
+        if (!nativeWorldRenderer) presentStaticWorld(worldInput, camera);
         presentDynamicOverlay(worldInput);
-        if (!nativeWorldRenderer && staticCtx && staticCacheCtx) {
-        const resourceRevision = curEngine.resourceNodes
-          .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
-          .join(',');
-        const staticRevision = [
-          curEngine.player.currentZone,
-          curEngine.player.interiorBuildingId ?? '',
-          curEngine.player.interiorFloor ?? 0,
-          Math.floor(curEngine.gameTimePhase * 12),
-          resourceRevision,
-        ].join('|');
-        const cacheShiftX = staticCache
-          ? Math.abs(camera.x - staticCache.camera.x) * staticCache.camera.zoom
-          : Infinity;
-        const cacheShiftY = staticCache
-          ? Math.abs(camera.y - staticCache.camera.y) * staticCache.camera.zoom
-          : Infinity;
-        const cacheNeedsRefresh = !staticCache
-          || staticCache.revision !== staticRevision
-          || cacheShiftX > staticCacheMargin * 0.45
-          || cacheShiftY > staticCacheMargin * 0.45
-          || Math.abs(camera.zoom - staticCache.camera.zoom) > 0.025;
-
-        if (cacheNeedsRefresh) {
-          const cacheWidth = viewportWidth + staticCacheMargin * 2;
-          const cacheHeight = viewportHeight + staticCacheMargin * 2;
-          const build: StaticCacheBuild = {
-            input: { ...worldInput, canvasWidth: cacheWidth, canvasHeight: cacheHeight },
-            camera: { ...camera },
-            revision: staticRevision,
-          };
-          // A cold cache must be painted immediately so the game never opens
-          // to an empty world. Subsequent invalidations stay off the main
-          // thread and keep the old valid image until the worker replies.
-          if (!staticCache || !queueStaticCacheBuild(build)) {
-            renderStaticCacheOnMainThread(build);
-          }
-        }
-
-        if (!staticCache) {
-          // Keep the previous frame if the worker has not produced a cache yet.
-        } else {
-        const sourceWidth = viewportWidth * staticCache.camera.zoom / camera.zoom;
-        const sourceHeight = viewportHeight * staticCache.camera.zoom / camera.zoom;
-        const rawSourceX = (staticCache.width - sourceWidth) / 2
-          + (camera.x - staticCache.camera.x) * staticCache.camera.zoom;
-        const rawSourceY = (staticCache.height - sourceHeight) / 2
-          + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
-        const sourceX = Math.max(0, Math.min(staticCache.width - sourceWidth, rawSourceX));
-        const sourceY = Math.max(0, Math.min(staticCache.height - sourceHeight, rawSourceY));
-        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
-        staticCtx.drawImage(
-          staticCache.image,
-          sourceX,
-          sourceY,
-          sourceWidth,
-          sourceHeight,
-          0,
-          0,
-          viewportWidth,
-          viewportHeight,
-        );
-        }
-        }
       } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'static-only') {
         // Terrain, buildings and world dressing. This is the candidate for a
         // retained/tiled Canvas cache if it is the pacing bottleneck.

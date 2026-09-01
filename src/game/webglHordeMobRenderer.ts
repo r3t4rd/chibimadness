@@ -21,6 +21,15 @@ type AtlasSlot = {
   v1: number;
 };
 
+export type WebglStaticWorldView = {
+  sourceX: number;
+  sourceY: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  textureWidth: number;
+  textureHeight: number;
+};
+
 const CELL_SIZE = 128;
 const ATLAS_COLUMNS = 8;
 const ATLAS_ROWS = 12;
@@ -102,6 +111,7 @@ export class WebglHordeMobRenderer {
   private readonly program: WebGLProgram;
   private readonly buffer: WebGLBuffer;
   private readonly texture: WebGLTexture;
+  private readonly staticWorldTexture: WebGLTexture;
   private readonly atlasCanvas: HTMLCanvasElement;
   private readonly atlasSlots = new Map<string, AtlasSlot>();
   private readonly positionLocation: number;
@@ -111,6 +121,7 @@ export class WebglHordeMobRenderer {
   private lost = false;
   private drawnMobCount = 0;
   private nextAtlasSlot = 0;
+  private staticWorldReady = false;
 
   get isAvailable() {
     return !this.lost;
@@ -135,9 +146,11 @@ export class WebglHordeMobRenderer {
     this.program = createProgram(gl);
     const buffer = gl.createBuffer();
     const texture = gl.createTexture();
-    if (!buffer || !texture) throw new Error('WebGL atlas allocation failed');
+    const staticWorldTexture = gl.createTexture();
+    if (!buffer || !texture || !staticWorldTexture) throw new Error('WebGL atlas allocation failed');
     this.buffer = buffer;
     this.texture = texture;
+    this.staticWorldTexture = staticWorldTexture;
     this.atlasCanvas = document.createElement('canvas');
     this.atlasCanvas.width = ATLAS_COLUMNS * CELL_SIZE;
     this.atlasCanvas.height = ATLAS_ROWS * CELL_SIZE;
@@ -352,6 +365,7 @@ export class WebglHordeMobRenderer {
     vertices: number[],
     solidColor?: readonly [number, number, number, number],
     tint: readonly [number, number, number, number] = [1, 1, 1, 1],
+    texture: WebGLTexture = this.texture,
   ) {
     if (vertices.length === 0) return 0;
     const gl = this.gl;
@@ -363,7 +377,7 @@ export class WebglHordeMobRenderer {
     gl.enableVertexAttribArray(this.uvLocation);
     gl.vertexAttribPointer(this.uvLocation, 2, gl.FLOAT, false, 16, 8);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
     const sampler = gl.getUniformLocation(this.program, 'u_atlas');
     gl.uniform1i(sampler, 0);
     const probeSolidUniform = gl.getUniformLocation(this.program, 'u_probe_solid');
@@ -376,6 +390,39 @@ export class WebglHordeMobRenderer {
     return vertices.length / 24;
   }
 
+  /** Static cache is uploaded only on an invalidation, never once per rAF. */
+  uploadStaticWorld(image: CanvasImageSource) {
+    if (this.lost) return false;
+    const gl = this.gl;
+    try {
+      gl.bindTexture(gl.TEXTURE_2D, this.staticWorldTexture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image as TexImageSource);
+      this.staticWorldReady = true;
+      return true;
+    } catch {
+      this.staticWorldReady = false;
+      return false;
+    }
+  }
+
+  private renderStaticWorld(view: WebglStaticWorldView) {
+    if (!this.staticWorldReady) return false;
+    const u0 = view.sourceX / view.textureWidth;
+    const v0 = view.sourceY / view.textureHeight;
+    const u1 = (view.sourceX + view.sourceWidth) / view.textureWidth;
+    const v1 = (view.sourceY + view.sourceHeight) / view.textureHeight;
+    this.drawVertices([
+      -1, 1, u0, v0, 1, 1, u1, v0, 1, -1, u1, v1,
+      -1, 1, u0, v0, 1, -1, u1, v1, -1, -1, u0, v1,
+    ], undefined, [1, 1, 1, 1], this.staticWorldTexture);
+    return true;
+  }
+
   render(
     monsters: Monster[],
     localPlayer: Player,
@@ -383,6 +430,7 @@ export class WebglHordeMobRenderer {
     remotePlayers: Record<string, Player>,
     projectiles: Projectile[],
     particles: VisualParticle[],
+    staticWorld?: WebglStaticWorldView,
   ) {
     this.drawnMobCount = 0;
     if (this.lost) return 0;
@@ -391,6 +439,7 @@ export class WebglHordeMobRenderer {
     if (width < 1 || height < 1) return 0;
     const gl = this.gl;
     this.clear();
+    if (staticWorld) this.renderStaticWorld(staticWorld);
 
     const viewBounds = getViewBounds(camera.x, camera.y, width, height, camera.zoom);
     const blindness = getHordeBlindness();
@@ -672,6 +721,7 @@ export class WebglHordeMobRenderer {
     if (!this.lost) {
       this.gl.deleteBuffer(this.buffer);
       this.gl.deleteTexture(this.texture);
+      this.gl.deleteTexture(this.staticWorldTexture);
       this.gl.deleteProgram(this.program);
     }
   }
