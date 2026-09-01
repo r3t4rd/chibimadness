@@ -170,6 +170,7 @@ export function App() {
   const [canvasProbeMode, setCanvasProbeMode] = useState<CanvasProbeMode>('normal');
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastNativeSceneAt = useRef(0);
   const lastNativeEntityFrameAt = useRef(0);
@@ -293,12 +294,24 @@ export function App() {
     let animationId: number;
     let lastRenderedAt: number | null = null;
     const canvas = canvasRef.current;
-    if (!createdPlayer || (!nativeWorldRenderer && !canvas)) return;
+    const staticCanvas = staticCanvasRef.current;
+    if (!createdPlayer || (!nativeWorldRenderer && (!canvas || !staticCanvas))) return;
 
     const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
-    if (!nativeWorldRenderer && !ctx) return;
+    const staticCtx = nativeWorldRenderer ? null : staticCanvas?.getContext('2d', { alpha: false });
+    if (!nativeWorldRenderer && (!ctx || !staticCtx)) return;
+    const staticCacheCanvas = document.createElement('canvas');
+    const staticCacheCtx = nativeWorldRenderer ? null : staticCacheCanvas.getContext('2d', { alpha: false });
+    if (!nativeWorldRenderer && !staticCacheCtx) return;
     let viewportWidth = window.innerWidth;
     let viewportHeight = window.innerHeight;
+    const staticCacheMargin = 320;
+    let staticCache: {
+      camera: { x: number; y: number; zoom: number };
+      revision: string;
+      width: number;
+      height: number;
+    } | null = null;
 
     // Responsive Canvas Resize Observer
     const handleResize = () => {
@@ -308,6 +321,11 @@ export function App() {
         canvas.width = viewportWidth;
         canvas.height = viewportHeight;
       }
+      if (staticCanvas) {
+        staticCanvas.width = viewportWidth;
+        staticCanvas.height = viewportHeight;
+      }
+      staticCache = null;
     };
     handleResize();
     window.addEventListener('resize', handleResize);
@@ -611,20 +629,84 @@ export function App() {
 
       const drawStart = performance.now();
       if (canvasProbeMode === 'normal') {
-        drawWorldInput(ctx, buildWorldRenderInput());
+        const worldInput = buildWorldRenderInput();
+        // Dynamic pass advances the existing Canvas camera every rAF. The
+        // static cache is rendered with that resulting camera, so background
+        // and actors stay in the same world coordinate system.
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        drawWorldInput(ctx, worldInput, { layer: 'dynamic' });
+
+        const camera = getCameraState();
+        const resourceRevision = curEngine.resourceNodes
+          .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
+          .join(',');
+        const staticRevision = [
+          curEngine.player.currentZone,
+          curEngine.player.interiorBuildingId ?? '',
+          curEngine.player.interiorFloor ?? 0,
+          Math.floor(curEngine.gameTimePhase * 12),
+          resourceRevision,
+        ].join('|');
+        const cacheShiftX = staticCache
+          ? Math.abs(camera.x - staticCache.camera.x) * staticCache.camera.zoom
+          : Infinity;
+        const cacheShiftY = staticCache
+          ? Math.abs(camera.y - staticCache.camera.y) * staticCache.camera.zoom
+          : Infinity;
+        const cacheNeedsRefresh = !staticCache
+          || staticCache.revision !== staticRevision
+          || cacheShiftX > staticCacheMargin * 0.45
+          || cacheShiftY > staticCacheMargin * 0.45
+          || Math.abs(camera.zoom - staticCache.camera.zoom) > 0.025;
+
+        if (cacheNeedsRefresh) {
+          const cacheWidth = viewportWidth + staticCacheMargin * 2;
+          const cacheHeight = viewportHeight + staticCacheMargin * 2;
+          staticCacheCanvas.width = cacheWidth;
+          staticCacheCanvas.height = cacheHeight;
+          staticCacheCtx.clearRect(0, 0, cacheWidth, cacheHeight);
+          drawWorldInput(
+            staticCacheCtx,
+            { ...worldInput, canvasWidth: cacheWidth, canvasHeight: cacheHeight },
+            { layer: 'static', camera },
+          );
+          staticCache = { camera: { ...camera }, revision: staticRevision, width: cacheWidth, height: cacheHeight };
+        }
+
+        const sourceWidth = viewportWidth * staticCache.camera.zoom / camera.zoom;
+        const sourceHeight = viewportHeight * staticCache.camera.zoom / camera.zoom;
+        const sourceX = (staticCache.width - sourceWidth) / 2
+          + (camera.x - staticCache.camera.x) * staticCache.camera.zoom;
+        const sourceY = (staticCache.height - sourceHeight) / 2
+          + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+        staticCtx.drawImage(
+          staticCacheCanvas,
+          sourceX,
+          sourceY,
+          sourceWidth,
+          sourceHeight,
+          0,
+          0,
+          viewportWidth,
+          viewportHeight,
+        );
       } else if (canvasProbeMode === 'static-only') {
         // Terrain, buildings and world dressing. This is the candidate for a
         // retained/tiled Canvas cache if it is the pacing bottleneck.
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
         drawWorldInput(ctx, buildWorldRenderInput(), { layer: 'static' });
       } else if (canvasProbeMode === 'dynamic-only') {
         // Actors and screen-space effects, deliberately without static world
         // geometry. Clear first so dynamic pixels do not accumulate between
         // diagnostic frames.
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
         drawWorldInput(ctx, buildWorldRenderInput(), { layer: 'dynamic' });
       } else if (canvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
       }
       // raf-only intentionally performs no Canvas calls. It isolates WebView
@@ -764,13 +846,20 @@ export function App() {
               className="absolute inset-0 cursor-crosshair"
             />
           ) : (
-            <canvas
-              ref={canvasRef}
-              onContextMenu={(e) => e.preventDefault()}
-              onMouseDown={handleWorldPointerDown}
-              onMouseUp={handleWorldPointerUp}
-              className="absolute inset-0 block w-full h-full cursor-crosshair"
-            />
+            <>
+              <canvas
+                ref={staticCanvasRef}
+                aria-hidden="true"
+                className="absolute inset-0 block w-full h-full pointer-events-none"
+              />
+              <canvas
+                ref={canvasRef}
+                onContextMenu={(e) => e.preventDefault()}
+                onMouseDown={handleWorldPointerDown}
+                onMouseUp={handleWorldPointerUp}
+                className="absolute inset-0 block w-full h-full cursor-crosshair"
+              />
+            </>
           )}
 
           {/* 3. Floating In-Game Toast Notifications */}
