@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChibiConfig, Player, Item, ChatMessage } from './types/game';
+import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
@@ -29,7 +29,6 @@ import {
   net,
   sendNativeDynamicRenderScene,
   sendNativeStaticRenderScene,
-  sendNativeWorldRenderFrame,
   subscribeContentBuildInfo,
   subscribeNativeWorldRenderer,
 } from './game/multiplayerClient';
@@ -85,81 +84,6 @@ const FALLBACK_PLAYER: Player = {
   pendingEvolutionPicks: 0,
 };
 
-function hexColor(color: string | undefined, fallback: [number, number, number, number]): [number, number, number, number] {
-  const match = color?.match(/^#([0-9a-f]{6})$/i);
-  if (!match) return fallback;
-  const value = Number.parseInt(match[1], 16);
-  return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255, 1];
-}
-
-/**
- * Native rendering deliberately consumes the same visual recipe as the Canvas
- * renderer. Do not reduce a player to a faction colour here: cosmetics are
- * part of the game state and native parity depends on carrying them across the
- * bridge intact.
- */
-function nativeChibiRecipe(chibi: ChibiConfig) {
-  return {
-    hairStyle: chibi.hairStyle,
-    frontHairStyle: chibi.frontHairStyle,
-    backHairStyle: chibi.backHairStyle,
-    hairColor: chibi.hairColor,
-    skinTone: chibi.skinTone,
-    eyeColor: chibi.eyeColor,
-    eyeType: chibi.eyeType,
-    earType: chibi.earType,
-    earColor: chibi.earColor,
-    innerEarColor: chibi.innerEarColor,
-    haloType: chibi.haloType,
-    haloColor: chibi.haloColor,
-    outfitType: chibi.outfitType,
-    coatColor: chibi.coatColor,
-    skirtColor: chibi.skirtColor,
-    accentColor: chibi.accentColor,
-    ribbonColor: chibi.ribbonColor,
-    hatType: chibi.hatType,
-    hatColor: chibi.hatColor,
-    wingType: chibi.wingType,
-    wingColor: chibi.wingColor,
-  };
-}
-
-function nativeAnimationRecipe(player: Player) {
-  return {
-    state: player.state,
-    isSprinting: player.isSprinting,
-    jumpZ: player.jumpZ,
-    spawnBounce: player.spawnBounce,
-    attackTimer: player.attackTimer,
-    dodgeTimer: player.dodgeTimer,
-  };
-}
-
-function nativeWeaponType(player: Player) {
-  return player.equipment?.weapon?.gunType || 'pistol';
-}
-
-function nativeMonsterColor(faction: string | undefined): [number, number, number, number] {
-  if (faction === 'police') return [0.12, 0.75, 1, 1];
-  if (faction === 'punk_demon') return [1, 0.2, 0.32, 1];
-  if (faction === 'bandit') return [1, 0.6, 0.12, 1];
-  return [0.75, 0.2, 0.9, 1];
-}
-
-function nativeResourceColor(type: string): [number, number, number, number] {
-  if (type === 'iron_ore') return [0.48, 0.58, 0.7, 1];
-  if (type === 'lumite_crystal') return [0.55, 0.25, 1, 1];
-  if (type === 'star_flower') return [1, 0.76, 0.18, 1];
-  return [0.12, 0.52, 0.28, 1];
-}
-
-function nativePoiColor(type: string): [number, number, number, number] {
-  if (type === 'fire_hydrant') return [1, 0.18, 0.22, 1];
-  if (type === 'vending_machine') return [0.08, 0.66, 1, 1];
-  if (type === 'steam_geyser') return [0.72, 0.86, 0.96, 1];
-  return [1, 0.68, 0.12, 1];
-}
-
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -172,13 +96,11 @@ export function App() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastNativeSceneAt = useRef(0);
-  const lastNativeEntityFrameAt = useRef(0);
   const sceneWorkerRef = useRef<Worker | null>(null);
   const sceneCompileInFlightRef = useRef(false);
   const pendingSceneInputRef = useRef<{
     input: WorldRenderInput;
-    staticOnly: boolean;
-    camera?: { x: number; y: number; zoom: number };
+    camera: { x: number; y: number; zoom: number };
   } | null>(null);
   const nextSceneJobIdRef = useRef(1);
 
@@ -318,9 +240,8 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      // Canvas keeps the complete presentation input. Native mode splits it:
-      // only map state reaches the static compiler, while a bounded entity
-      // snapshot reaches Rust at its own cadence.
+      // Canvas keeps the complete presentation input. Native mode splits it
+      // into a cached static map pass and a realtime dynamic display list.
       const buildWorldRenderInput = (): WorldRenderInput => ({
         canvasWidth: viewportWidth,
         canvasHeight: viewportHeight,
@@ -341,42 +262,17 @@ export function App() {
         summons: curEngine.summons,
         gameTimePhase: curEngine.gameTimePhase,
       });
-      const buildStaticWorldRenderInput = (): WorldRenderInput => ({
-        canvasWidth: viewportWidth,
-        canvasHeight: viewportHeight,
-        localPlayer: curEngine.player,
-        players: {},
-        monsters: [],
-        resourceNodes: curEngine.resourceNodes,
-        dropItems: [],
-        projectiles: [],
-        particles: [],
-        damagePopups: [],
-        groundDecals: [],
-        time: timeInSeconds,
-        worldPois: curEngine.worldPois,
-        cars: [],
-        summons: [],
-        gameTimePhase: curEngine.gameTimePhase,
-      });
       if (nativeWorldRendererRequested) {
         const camera = updateNativeCamera(curEngine.player, time);
-        // Desktop-native presentation owns actor geometry. The worker produces
-        // only cacheable map data once WGPU is ready; dynamic Canvas commands
-        // must never cross the WebView bridge in the gameplay hot path.
-        const staticOnly = nativeWorldRenderer;
         const denseNativeScene = curEngine.monsters.length >= 20
           || curEngine.particles.length >= 48
           || curEngine.projectiles.length >= 16;
-        const nativeSceneTargetHz = staticOnly ? 15 : denseNativeScene ? 60 : 120;
+        const nativeSceneTargetHz = denseNativeScene ? 60 : 120;
         const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
         perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
         if (time - lastNativeSceneAt.current >= nativeSceneIntervalMs) {
           lastNativeSceneAt.current = time;
-          const worldRenderInput = staticOnly
-            ? buildStaticWorldRenderInput()
-            : buildWorldRenderInput();
-          const sceneJob = { input: worldRenderInput, staticOnly, camera };
+          const sceneJob = { input: buildWorldRenderInput(), camera };
           if (sceneCompileInFlightRef.current) {
             // Keep at most one newest snapshot; a queue would recreate the
             // same long-task backlog after a dense horde arrives.
@@ -388,201 +284,6 @@ export function App() {
               worker.postMessage({ id: nextSceneJobIdRef.current++, ...sceneJob });
             }
           }
-        }
-        const nativeEntityTargetHz = nativeWorldRenderer ? 60 : 30;
-        if (time - lastNativeEntityFrameAt.current >= 1000 / nativeEntityTargetHz) {
-          lastNativeEntityFrameAt.current = time;
-          const nativeViewPadding = 180;
-        const nativeHalfWidth = viewportWidth / camera.zoom / 2 + nativeViewPadding;
-        const nativeHalfHeight = viewportHeight / camera.zoom / 2 + nativeViewPadding;
-        const inNativeView = (x: number, y: number, size = 0) => (
-          Math.abs(x - camera.x) <= nativeHalfWidth + size
-          && Math.abs(y - camera.y) <= nativeHalfHeight + size
-        );
-        const entities = [
-          {
-            id: curEngine.player.id,
-            kind: 'player',
-            faction: '',
-            x: curEngine.player.x,
-            y: curEngine.player.y,
-            // Canvas chibi art occupies roughly a 72px native design box.
-            // The old 38px fallback was only a placeholder silhouette.
-            size: 72,
-            color: [0.1, 0.9, 1, 1] as [number, number, number, number],
-            velocityX: curEngine.player.vx,
-            velocityY: curEngine.player.vy,
-            hasVelocity: true,
-            hpRatio: curEngine.player.stats.maxHp > 0 ? curEngine.player.stats.hp / curEngine.player.stats.maxHp : 1,
-            facingLeft: curEngine.player.facing === 'left',
-            layer: 20,
-            chibi: nativeChibiRecipe(curEngine.player.chibi),
-            animation: nativeAnimationRecipe(curEngine.player),
-            weaponType: nativeWeaponType(curEngine.player),
-          },
-          ...(Object.values(curEngine.remotePlayers) as Player[])
-            .filter((player) => inNativeView(player.x, player.y, 48))
-            .map((player) => ({
-            id: player.id,
-            kind: 'player',
-            faction: '',
-            x: player.x,
-            y: player.y,
-            size: 68,
-            color: [0.35, 0.65, 1, 1] as [number, number, number, number],
-            velocityX: player.vx,
-            velocityY: player.vy,
-            hasVelocity: true,
-            hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 1,
-            facingLeft: player.facing === 'left',
-            layer: 18,
-            chibi: nativeChibiRecipe(player.chibi),
-            animation: nativeAnimationRecipe(player),
-            weaponType: nativeWeaponType(player),
-          })),
-          ...curEngine.monsters
-            .filter((monster) => monster.state !== 'dead' && monster.hp > 0 && inNativeView(monster.x, monster.y, 90))
-            .map((monster) => ({
-              id: monster.id,
-              kind: 'monster',
-              faction: monster.faction || '',
-              x: monster.x,
-              // Rust applies the vertical animation recipe; subtracting here
-              // as well displaced airborne enemies twice.
-              y: monster.y,
-              size: monster.isBoss ? 94 : monster.isJuggernaut ? 82 : monster.humanChibi ? 72 : 52,
-              color: nativeMonsterColor(monster.faction),
-              velocityX: 0,
-              velocityY: 0,
-              hasVelocity: false,
-              hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 1,
-              facingLeft: monster.facing === 'left',
-              layer: 10,
-              chibi: monster.humanChibi ? nativeChibiRecipe(monster.humanChibi) : undefined,
-              animation: {
-                state: monster.state === 'chase' ? 'walk' : monster.state,
-                jumpZ: monster.jumpZ || 0,
-                attackTimer: monster.attackCooldown,
-                dodgeTimer: monster.dodgeTimer || 0,
-              },
-              weaponType: monster.weaponType || 'pistol',
-              hasShield: Boolean(monster.hasShield),
-            })),
-          ...curEngine.projectiles.filter((projectile) => inNativeView(projectile.x, projectile.y, 48)).map((projectile) => ({
-            id: projectile.id,
-            kind: 'projectile',
-            faction: projectile.faction || '',
-            x: projectile.x,
-            y: projectile.y + (projectile.visualOffsetY || 0),
-            size: Math.max(4, projectile.size * 1.8),
-            color: hexColor(projectile.color, [1, 0.9, 0.2, 1]),
-            velocityX: projectile.vx,
-            velocityY: projectile.vy,
-            hasVelocity: true,
-            hpRatio: 1,
-            facingLeft: projectile.vx < 0,
-            layer: 30,
-            projectileType: projectile.type,
-            projectileRange: projectile.range,
-            tracerLength: projectile.tracerLength,
-            tracerWidth: projectile.tracerWidth,
-            distanceTraveled: projectile.distanceTraveled,
-          })),
-          ...curEngine.particles
-            .filter((particle) => particle.alpha > 0.01 && inNativeView(particle.x, particle.y, particle.size * 4))
-            .slice(0, 48)
-            .map((particle, index) => {
-              const color = hexColor(particle.color, [1, 0.9, 0.2, 1]);
-              return {
-                id: `fx:${index}:${particle.shape}`,
-                kind: 'particle',
-                faction: '',
-                x: particle.x,
-                y: particle.y,
-                size: Math.max(1.2, particle.size),
-                color: [color[0], color[1], color[2], particle.alpha] as [number, number, number, number],
-                velocityX: particle.vx,
-                velocityY: particle.vy,
-                hasVelocity: true,
-                hpRatio: 1,
-                facingLeft: false,
-                layer: 34,
-                effectType: particle.shape,
-              };
-            }),
-          ...curEngine.resourceNodes
-            .filter((node) => node.hp > 0 && inNativeView(node.x, node.y, 80))
-            .map((node) => ({
-              id: `resource:${node.id}`,
-              kind: 'resource',
-              faction: '',
-              x: node.x,
-              y: node.y,
-              size: Math.max(34, 52 * (node.scale || 1)),
-              color: nativeResourceColor(node.type),
-              velocityX: 0,
-              velocityY: 0,
-              hasVelocity: false,
-              hpRatio: node.maxHp > 0 ? node.hp / node.maxHp : 1,
-              facingLeft: false,
-              layer: 7,
-            })),
-          ...curEngine.dropItems.filter((drop) => inNativeView(drop.x, drop.y, 28)).map((drop) => ({
-            id: `drop:${drop.id}`,
-            kind: 'pickup',
-            faction: '',
-            x: drop.x,
-            y: drop.y - drop.bounceOffset,
-            size: drop.isXpGem ? 14 : 20,
-            color: drop.isXpGem ? [0.32, 1, 0.74, 1] as [number, number, number, number] : [1, 0.72, 0.16, 1] as [number, number, number, number],
-            velocityX: drop.vx || 0,
-            velocityY: drop.vy || 0,
-            hasVelocity: Boolean(drop.vx || drop.vy),
-            hpRatio: 1,
-            facingLeft: false,
-            layer: 14,
-          })),
-          ...curEngine.cars.filter((car) => inNativeView(car.x, car.y, 160)).map((car) => ({
-            id: `car:${car.id}`,
-            kind: 'vehicle',
-            faction: car.type === 'police_car' ? 'police' : 'punk_demon',
-            x: car.x,
-            y: car.y,
-            size: Math.max(car.width, car.height),
-            color: car.type === 'police_car' ? [0.08, 0.68, 1, 1] as [number, number, number, number] : [1, 0.14, 0.35, 1] as [number, number, number, number],
-            velocityX: car.vx,
-            velocityY: car.vy,
-            hasVelocity: true,
-            hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 1,
-            facingLeft: car.facing === 'left',
-            layer: 16,
-          })),
-          ...curEngine.worldPois.filter((poi) => inNativeView(poi.x, poi.y, 80)).map((poi) => ({
-            id: `poi:${poi.id}`,
-            kind: 'poi',
-            faction: '',
-            x: poi.x,
-            y: poi.y,
-            size: Math.max(20, poi.radius || Math.max(poi.width || 0, poi.height || 0) || 28),
-            color: nativePoiColor(poi.type),
-            velocityX: 0,
-            velocityY: 0,
-            hasVelocity: false,
-            hpRatio: 1,
-            facingLeft: false,
-            layer: 8,
-          })),
-        ].slice(0, 128);
-          sendNativeWorldRenderFrame({
-            cameraX: camera.x,
-            cameraY: camera.y,
-            zoom: camera.zoom,
-            viewportWidth,
-            viewportHeight,
-            timeSeconds: timeInSeconds,
-          theme: curEngine.player.currentZone,
-          entities,
-          });
         }
         perfMonitor.setExtras({
           monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,

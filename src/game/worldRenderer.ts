@@ -318,18 +318,19 @@ export function compileWorldScene(
  */
 export function compileDynamicWorldScene(
   measurementContext: Pick<CanvasRenderingContext2D, 'font' | 'measureText'>,
-  input: WorldRenderInput
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number }
 ): RenderScene {
   const compiled = compileRenderScene(
     measurementContext,
     {
       viewport: { width: input.canvasWidth, height: input.canvasHeight },
-      camera: getCameraState(),
+      camera,
       timeSeconds: input.time ?? 0,
     },
-    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'dynamic' })
+    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'dynamic', camera })
   );
-  compiled.scene.camera = getCameraState();
+  compiled.scene.camera = camera;
   return compiled.scene;
 }
 
