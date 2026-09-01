@@ -1,10 +1,12 @@
-import type { Monster } from '../types/game';
+import type { Monster, Player } from '../types/game';
 import { getViewBounds, isInViewBounds } from './viewCull';
 import {
   drawHordeMobAtlasSprite,
   drawWebglMonsterAtlasSprite,
+  drawWebglPlayerAtlasSprite,
   getHordeMobAtlasSprites,
   getWebglMonsterAtlasKey,
+  getWebglPlayerAtlasKey,
 } from './worldRenderer';
 import { getHordeBlindness, isInHordeArena } from './hordeMode';
 
@@ -22,6 +24,7 @@ const ATLAS_COLUMNS = 8;
 const ATLAS_ROWS = 8;
 const HORDE_SPRITE_WORLD_SIZE = 72;
 const HUMANOID_SPRITE_WORLD_SIZE = 128;
+const PLAYER_SPRITE_WORLD_SIZE = 144;
 
 const VERTEX_SHADER = `#version 300 es
 in vec2 a_position;
@@ -74,9 +77,9 @@ function createProgram(gl: WebGL2RenderingContext) {
 }
 
 /**
- * WebView hybrid renderer for the expensive, repeated horde body geometry.
- * It is intentionally a small isolated layer: Canvas retains all labels,
- * health bars, hit flashes, telegraphs, projectiles and screen effects.
+ * WebView hybrid renderer for repeated procedural actor geometry. It executes
+ * each appearance once into a runtime atlas; the frame loop only submits GPU
+ * quads. Canvas retains labels, hit flashes, telegraphs and screen effects.
  */
 export class WebglHordeMobRenderer {
   private readonly gl: WebGL2RenderingContext;
@@ -194,6 +197,36 @@ export class WebglHordeMobRenderer {
     }
   }
 
+  /** Registers a procedural player appearance only when it first appears. */
+  private ensurePlayerSprites(players: Player[]) {
+    const sourceContext = this.atlasCanvas.getContext('2d');
+    if (!sourceContext) return;
+    const gl = this.gl;
+    for (const player of players) {
+      const key = getWebglPlayerAtlasKey(player);
+      if (!key || this.atlasSlots.has(key) || this.nextAtlasSlot >= ATLAS_COLUMNS * ATLAS_ROWS) continue;
+      const index = this.nextAtlasSlot++;
+      const column = index % ATLAS_COLUMNS;
+      const row = Math.floor(index / ATLAS_COLUMNS);
+      const source = document.createElement('canvas');
+      source.width = CELL_SIZE;
+      source.height = CELL_SIZE;
+      const context = source.getContext('2d');
+      if (!context) continue;
+      context.translate(CELL_SIZE / 2, CELL_SIZE / 2);
+      drawWebglPlayerAtlasSprite(context, player);
+      sourceContext.drawImage(source, column * CELL_SIZE, row * CELL_SIZE);
+      this.atlasSlots.set(key, {
+        u0: (column * CELL_SIZE) / this.atlasCanvas.width,
+        v0: (row * CELL_SIZE) / this.atlasCanvas.height,
+        u1: ((column + 1) * CELL_SIZE) / this.atlasCanvas.width,
+        v1: ((row + 1) * CELL_SIZE) / this.atlasCanvas.height,
+      });
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, column * CELL_SIZE, row * CELL_SIZE, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    }
+  }
+
   clear() {
     if (this.lost) return;
     const gl = this.gl;
@@ -224,7 +257,7 @@ export class WebglHordeMobRenderer {
     return vertices.length / 24;
   }
 
-  render(monsters: Monster[], localPlayer: Monster | { x: number; y: number }, camera: Camera) {
+  render(monsters: Monster[], localPlayer: Player, camera: Camera, remotePlayers: Record<string, Player>) {
     this.drawnMobCount = 0;
     if (this.lost) return 0;
     const width = this.canvas.width;
@@ -237,6 +270,9 @@ export class WebglHordeMobRenderer {
     const blindness = getHordeBlindness();
     const blinded = isInHordeArena(localPlayer.x, localPlayer.y) && blindness.active && blindness.remaining > 0;
     this.ensureMonsterSprites(monsters);
+    const players = Object.values(remotePlayers);
+    if (!remotePlayers[localPlayer.id]) players.push(localPlayer);
+    this.ensurePlayerSprites(players);
     const vertices: number[] = [];
     for (const monster of monsters) {
       if (monster.state === 'dead' || !isInViewBounds(monster.x, monster.y, viewBounds)) continue;
@@ -256,6 +292,26 @@ export class WebglHordeMobRenderer {
       const top = 1 - (centerY - halfSize) * 2 / height;
       const bottom = 1 - (centerY + halfSize) * 2 / height;
       const flip = monster.facing === 'left';
+      const u0 = flip ? slot.u1 : slot.u0;
+      const u1 = flip ? slot.u0 : slot.u1;
+      vertices.push(
+        left, top, u0, slot.v0, right, top, u1, slot.v0, right, bottom, u1, slot.v1,
+        left, top, u0, slot.v0, right, bottom, u1, slot.v1, left, bottom, u0, slot.v1,
+      );
+    }
+    for (const player of players) {
+      if (player.state === 'dead' || !isInViewBounds(player.x, player.y, viewBounds)) continue;
+      const key = getWebglPlayerAtlasKey(player);
+      const slot = key ? this.atlasSlots.get(key) : undefined;
+      if (!slot) continue;
+      const halfSize = (PLAYER_SPRITE_WORLD_SIZE * camera.zoom) / 2;
+      const centerX = width / 2 + (player.x - camera.x) * camera.zoom;
+      const centerY = height / 2 + (player.y - camera.y) * camera.zoom;
+      const left = (centerX - halfSize) * 2 / width - 1;
+      const right = (centerX + halfSize) * 2 / width - 1;
+      const top = 1 - (centerY - halfSize) * 2 / height;
+      const bottom = 1 - (centerY + halfSize) * 2 / height;
+      const flip = player.facing === 'left';
       const u0 = flip ? slot.u1 : slot.u0;
       const u1 = flip ? slot.u0 : slot.u1;
       vertices.push(

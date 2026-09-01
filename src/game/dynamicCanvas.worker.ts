@@ -35,6 +35,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
       layer: 'dynamic',
       camera: message.camera,
       skipWebglHordeMobBodies: message.webglHordeMobBodies === true,
+      skipWebglPlayerBodies: message.webglHordeMobBodies === true,
     });
     const image = canvas.transferToImageBitmap();
     postToMain({

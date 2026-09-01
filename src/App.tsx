@@ -531,7 +531,7 @@ export function App() {
           return false;
         }
         if (webglHordeMobBodiesRef.current) {
-          webglHordeMobRenderer.render(input.monsters, input.localPlayer, camera);
+          webglHordeMobRenderer.render(input.monsters, input.localPlayer, camera, input.players);
           return true;
         }
         webglHordeMobRenderer.clear();
@@ -693,6 +693,7 @@ export function App() {
             layer: 'dynamic',
             camera,
             skipWebglHordeMobBodies: webglBodiesActive,
+            skipWebglPlayerBodies: webglBodiesActive,
           });
         }
       };

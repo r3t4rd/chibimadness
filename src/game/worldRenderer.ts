@@ -55,12 +55,10 @@ type WorldDrawOptions = {
   layer?: WorldPaintLayer;
   /** Reuses the dynamic pass camera while compiling static invalidations. */
   camera?: { x: number; y: number; zoom: number };
-  /**
-   * WebView-only hybrid path: a separate WebGL canvas owns the eligible horde
-   * body quads. Canvas still paints their shadows, HP bars and every transient
-   * state, so an unavailable/lost GL context can safely fall back per-frame.
-   */
+  /** WebView-only hybrid path: a WebGL atlas owns eligible monster bodies. */
   skipWebglHordeMobBodies?: boolean;
+  /** WebView-only hybrid path: a WebGL atlas owns eligible player bodies. */
+  skipWebglPlayerBodies?: boolean;
 };
 
 export function getCameraState() {
@@ -267,6 +265,7 @@ export function drawWorld(
     options.layer ?? 'full',
     options.camera?.zoom ?? camera.zoom,
     options.skipWebglHordeMobBodies ?? false,
+    options.skipWebglPlayerBodies ?? false,
   );
 }
 
@@ -417,6 +416,7 @@ export function renderWorld(
   layer: WorldPaintLayer = 'full',
   fixedZoom?: number,
   skipWebglHordeMobBodies = false,
+  skipWebglPlayerBodies = false,
 ) {
   const renderStatic = layer !== 'dynamic';
   const renderDynamic = layer !== 'static';
@@ -599,7 +599,10 @@ export function renderWorld(
       const isOmni = (p.omnislashStrikesLeft ?? 0) > 0;
       const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
 
-      if (isOmni) {
+      const useWebglPlayerBody = skipWebglPlayerBodies && getWebglPlayerAtlasKey(p) !== null;
+      if (useWebglPlayerBody) {
+        drawChibiCharacter(ctx, p, time, true, { overheadOnly: true });
+      } else if (isOmni) {
         ctx.save();
         ctx.globalAlpha = 0.25;
         drawChibiCharacter(ctx, p, time);
@@ -4492,6 +4495,15 @@ export function getWebglMonsterAtlasKey(monster: Monster): string | null {
   return `humanoid:${monster.type}:${monster.weaponType ?? 'pistol'}:${monster.isBoss ? 1 : 0}:${monster.faction ?? 'none'}`;
 }
 
+/**
+ * Runtime visual key for procedural players. Position and combat state are
+ * intentionally excluded: moving a player must never allocate a new raster.
+ */
+export function getWebglPlayerAtlasKey(player: Player): string | null {
+  if (player.state === 'dead' || player.isRiding || player.activeVehicleId) return null;
+  return `player:${JSON.stringify(player.chibi)}:${player.equipment.weapon?.id ?? 'none'}:${player.equipment.outfit?.id ?? 'none'}:${player.equipment.headwear?.id ?? 'none'}:${player.state}:${player.isAiming ? 1 : 0}:${player.isReloading ? 1 : 0}:${player.attackTimer > 0 ? 1 : 0}`;
+}
+
 /** Invoked only while a new runtime atlas slot is created, never per frame. */
 export function drawWebglMonsterAtlasSprite(ctx: CanvasRenderingContext2D, monster: Monster) {
   if (monster.hordeKind) {
@@ -4503,6 +4515,34 @@ export function drawWebglMonsterAtlasSprite(ctx: CanvasRenderingContext2D, monst
     return;
   }
   drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
+}
+
+/** Invoked only while a player visual enters the runtime atlas. */
+export function drawWebglPlayerAtlasSprite(ctx: CanvasRenderingContext2D, player: Player) {
+  drawChibiCharacter(
+    ctx,
+    {
+      ...player,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      previewOffsetX: 0,
+      previewOffsetY: 0,
+      spawnBounce: 1,
+      jumpZ: 0,
+      jumpVz: 0,
+      isJumping: false,
+      bhopStreak: 0,
+      isSprinting: false,
+      dodgeTimer: 0,
+      attackTimer: 0,
+      cinematicPose: 'none',
+    },
+    0,
+    true,
+    { bodyOnly: true },
+  );
 }
 
 function drawWebglHumanoidHealthBar(ctx: CanvasRenderingContext2D, monster: Monster) {

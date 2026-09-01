@@ -16,7 +16,8 @@ export function drawChibiCharacter(
   ctx: CanvasRenderingContext2D,
   player: Player,
   timeInSeconds: number,
-  isShadow: boolean = true
+  isShadow: boolean = true,
+  options: { bodyOnly?: boolean; overheadOnly?: boolean } = {},
 ) {
   const time = timeInSeconds;
   const {
@@ -38,6 +39,14 @@ export function drawChibiCharacter(
     skateTrickTimer = 0,
     skateTrickDuration = 0.5,
   } = player;
+
+  if (options.overheadOnly) {
+    ctx.save();
+    ctx.translate(x, y);
+    drawOverheadHUD(ctx, player, timeInSeconds);
+    ctx.restore();
+    return;
+  }
 
   const skateTrickProgress =
     skateTrick && skateTrickTimer > 0 ? 1 - skateTrickTimer / Math.max(0.05, skateTrickDuration) : 1;
@@ -308,11 +317,13 @@ export function drawChibiCharacter(
 
   ctx.restore();
 
-  // 9. Overhead UI (Health bar, Stamina bar, Name tag, Emotes, Chat bubble, Bhop combo)
-  ctx.save();
-  ctx.translate(x, y + offsetY - bobY);
-  drawOverheadHUD(ctx, player, time);
-  ctx.restore();
+  if (!options.bodyOnly) {
+    // 9. Overhead UI (Health bar, Stamina bar, Name tag, Emotes, Chat bubble, Bhop combo)
+    ctx.save();
+    ctx.translate(x, y + offsetY - bobY);
+    drawOverheadHUD(ctx, player, time);
+    ctx.restore();
+  }
 }
 
 /** Procedural cinematic pose visual effects overlay */
