@@ -2807,29 +2807,129 @@ impl NativeWorldRenderer {
                 _ => {}
             }
         }
-        let facing = if entity.facing_left { -1.0 } else { 1.0 };
-        self.add_world_circle(
-            x + facing * size * 0.10,
-            y - size * 0.30,
-            size * 0.055,
-            eye,
-            8,
-            world,
-        );
-        self.add_world_circle(
-            x - facing * size * 0.10,
-            y - size * 0.30,
-            size * 0.055,
-            eye,
-            8,
-            world,
-        );
-        self.add_world_circle(
-            x + facing * size * 0.10,
-            y - size * 0.30,
+        // The first native pass represented an eye as one coloured dot. That
+        // disappears behind saturated hair/skin and is why operators read as
+        // featureless silhouettes. Preserve the source's readable anime eye
+        // stack: dark lash, white sclera, iris, pupil and two highlights.
+        let face_ink = hex("#1A1816");
+        let blush = hex("#F472B6");
+        for cheek_x in [-0.18_f32, 0.18] {
+            self.add_world_ellipse(
+                x + size * cheek_x,
+                y - size * 0.18,
+                size * 0.065,
+                size * 0.032,
+                [blush[0], blush[1], blush[2], 0.42],
+                8,
+                world,
+            );
+        }
+        let eye_type = recipe.map_or("", |style| style.eye_type.as_str());
+        if matches!(eye_type, "happy" | "sleepy_closed") {
+            for eye_x in [-0.11_f32, 0.11] {
+                self.add_world_line(
+                    x + size * (eye_x - 0.055),
+                    y - size * 0.29,
+                    x + size * eye_x,
+                    y - size * 0.25,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+                self.add_world_line(
+                    x + size * eye_x,
+                    y - size * 0.25,
+                    x + size * (eye_x + 0.055),
+                    y - size * 0.29,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+            }
+        } else if matches!(eye_type, "dead_x" | "dizzy_spiral") {
+            for eye_x in [-0.11_f32, 0.11] {
+                self.add_world_line(
+                    x + size * (eye_x - 0.052),
+                    y - size * 0.35,
+                    x + size * (eye_x + 0.052),
+                    y - size * 0.24,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+                self.add_world_line(
+                    x + size * (eye_x - 0.052),
+                    y - size * 0.24,
+                    x + size * (eye_x + 0.052),
+                    y - size * 0.35,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+            }
+        } else {
+            for eye_x in [-0.11_f32, 0.11] {
+                self.add_world_circle(x + size * eye_x, y - size * 0.30, size * 0.090, face_ink, 10, world);
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.295,
+                    size * 0.073,
+                    hex("#FFFFFF"),
+                    10,
+                    world,
+                );
+                self.add_world_circle(x + size * eye_x, y - size * 0.292, size * 0.060, eye, 10, world);
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.287,
+                    size * 0.032,
+                    hex("#09090B"),
+                    9,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * (eye_x - 0.021),
+                    y - size * 0.322,
+                    size * 0.023,
+                    hex("#FFFFFF"),
+                    7,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * (eye_x + 0.024),
+                    y - size * 0.267,
+                    size * 0.010,
+                    hex("#FFFFFF"),
+                    6,
+                    world,
+                );
+                self.add_world_line(
+                    x + size * (eye_x - 0.074),
+                    y - size * 0.358,
+                    x + size * (eye_x + 0.074),
+                    y - size * 0.358,
+                    size * 0.018,
+                    face_ink,
+                    world,
+                );
+            }
+        }
+        self.add_world_ellipse(
+            x,
+            y - size * 0.155,
+            size * 0.060,
             size * 0.022,
-            [1.0, 1.0, 1.0, 0.92],
-            6,
+            face_ink,
+            8,
+            world,
+        );
+        self.add_world_ellipse(
+            x,
+            y - size * 0.160,
+            size * 0.044,
+            size * 0.013,
+            skin,
+            8,
             world,
         );
         if let Some(style) = recipe {
@@ -2838,26 +2938,6 @@ impl NativeWorldRenderer {
                 recipe_color(&style.accent_color, [0.96, 0.36, 0.55, 1.0]),
             );
             self.add_world_circle(x, y + size * 0.01, size * 0.06, accent, 8, world);
-            if style.eye_type == "dead_x" || style.eye_type == "dizzy_spiral" {
-                self.add_world_line(
-                    x - size * 0.16,
-                    y - size * 0.36,
-                    x - size * 0.04,
-                    y - size * 0.24,
-                    size * 0.025,
-                    hex("#0F172A"),
-                    world,
-                );
-                self.add_world_line(
-                    x - size * 0.16,
-                    y - size * 0.24,
-                    x - size * 0.04,
-                    y - size * 0.36,
-                    size * 0.025,
-                    hex("#0F172A"),
-                    world,
-                );
-            }
             if matches!(
                 style.outfit_type.as_str(),
                 "magic_robe" | "kimono_yukata" | "goth_lolita" | "winter_coat" | "detective_coat"

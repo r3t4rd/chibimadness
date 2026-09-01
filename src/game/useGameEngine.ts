@@ -2725,6 +2725,23 @@ export function useGameEngine(initialPlayer: Player) {
     const aimAngle = Math.atan2(dy, dx);
     const aimDirX = Math.cos(aimAngle);
     const aimDirY = Math.sin(aimAngle);
+    // Queued rapid-fire shots must not keep aiming at the coordinate that
+    // happened to be under the cursor when Q/E/F was pressed. In native mode
+    // the world is still driven by this input state, so resolve from the live
+    // pointer for every projectile in the burst.
+    const liveCursorAim = (livePlayer: Player) => {
+      const cursor = mouseWorldPosRef.current;
+      const hasCursor = Number.isFinite(cursor.x)
+        && Number.isFinite(cursor.y)
+        && (cursor.x !== 0 || cursor.y !== 0);
+      const liveTargetX = hasCursor ? cursor.x : targetX;
+      const liveTargetY = hasCursor ? cursor.y : targetY;
+      const liveAngle = Math.atan2(liveTargetY - livePlayer.y, liveTargetX - livePlayer.x);
+      return {
+        x: Math.cos(liveAngle),
+        y: Math.sin(liveAngle),
+      };
+    };
 
     // Input handlers read playerRef rather than waiting for React's next
     // render. Keep both representations in sync or Q/E/F can cast from stale
@@ -2760,15 +2777,16 @@ export function useGameEngine(initialPlayer: Player) {
         setTimeout(() => {
           if (playerRef.current.stats.hp <= 0) return;
           const liveP = playerRef.current;
+          const liveAim = liveCursorAim(liveP);
           sound.playShoot();
           pushSkillProj({
             id: `p_gat_${Date.now()}_${i}`,
             ownerId: liveP.id,
             type: 'bullet',
-            x: liveP.x + aimDirX * 22,
-            y: liveP.y + aimDirY * 22,
-            vx: aimDirX * 24 + (Math.random() - 0.5) * 1.5,
-            vy: aimDirY * 24 + (Math.random() - 0.5) * 1.5,
+            x: liveP.x + liveAim.x * 22,
+            y: liveP.y + liveAim.y * 22,
+            vx: liveAim.x * 24 + (Math.random() - 0.5) * 1.5,
+            vy: liveAim.y * 24 + (Math.random() - 0.5) * 1.5,
             damage: Math.round(liveP.stats.atk * 0.95),
             range: 1400,
             distanceTraveled: 0,
@@ -6290,11 +6308,26 @@ export function useGameEngine(initialPlayer: Player) {
 
     const handleMouseMove = (e: MouseEvent) => {
       const canvas = document.querySelector('canvas');
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const screenX = e.clientX - rect.left;
-      const screenY = e.clientY - rect.top;
-      mouseWorldPosRef.current = screenToWorld(screenX, screenY, canvas.width, canvas.height);
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        mouseWorldPosRef.current = screenToWorld(
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          canvas.width,
+          canvas.height,
+        );
+        return;
+      }
+      // Native WGPU owns the world surface and intentionally leaves no
+      // Canvas element in the WebView. Its input plane still spans the
+      // viewport, so using it here keeps held fire and queued skills aimed
+      // at the actual pointer instead of the (0, 0) world fallback.
+      mouseWorldPosRef.current = screenToWorld(
+        e.clientX,
+        e.clientY,
+        window.innerWidth,
+        window.innerHeight,
+      );
     };
 
     window.addEventListener('keydown', handleKeyDown);
