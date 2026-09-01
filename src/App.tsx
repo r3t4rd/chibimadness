@@ -105,7 +105,10 @@ export function App() {
   const webglHordeMobBodiesRef = useRef(webglHordeMobBodies);
   const [staticWorldLayerEnabled, setStaticWorldLayerEnabled] = useState(true);
   const staticWorldLayerEnabledRef = useRef(staticWorldLayerEnabled);
-  const [dynamicCanvasLayerEnabled, setDynamicCanvasLayerEnabled] = useState(true);
+  // WebView2 throttles requestAnimationFrame as soon as a freshly transferred
+  // ImageBitmap is composited through Canvas2D. Keep that compatibility path
+  // opt-in; the normal world is static texture + actor/effect GPU quads.
+  const [dynamicCanvasLayerEnabled, setDynamicCanvasLayerEnabled] = useState(false);
   const dynamicCanvasLayerEnabledRef = useRef(dynamicCanvasLayerEnabled);
   const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
   const forceStaticCanvasRef = useRef(forceStaticCanvas);
@@ -302,9 +305,9 @@ export function App() {
     const webglCanvas = webglCanvasRef.current;
     if (!createdPlayer || !canvas) return;
 
-    // Dynamic actors are always Canvas: either the full webview path, or a
-    // transparent overlay above the native static world. ImageBitmap transfer
-    // stays off the display-list bridge.
+    // Canvas dynamic presentation is a compatibility fallback. On WebView2 a
+    // per-frame ImageBitmap -> drawImage presentation throttles rAF to ~30 Hz,
+    // so normal WebView rendering keeps it disabled and draws the GPU path.
     let dynamicCanvasWorker: Worker | null = null;
     const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
