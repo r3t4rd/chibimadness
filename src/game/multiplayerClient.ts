@@ -1,5 +1,6 @@
 import { Player, DropItem, Monster, Projectile } from '../types/game';
 import { perfMonitor } from './performanceMonitor';
+import type { RenderScene } from './renderScene';
 
 export type NetEventListener = (type: string, data: any) => void;
 export type ContentBuildInfo = {
@@ -182,6 +183,22 @@ export function sendNativeWorldRenderFrame(frame: NativeWorldRenderFrame) {
     id: nextBridgeMessageId++,
     endpoint: 'world.frame',
     payload: frame,
+  });
+}
+
+/**
+ * The canonical world display-list transport. It is kept separate from the
+ * old entity frame during the migration, so an incomplete WGPU executor can
+ * never silently replace the proven Canvas image.
+ */
+export function sendNativeRenderScene(scene: RenderScene) {
+  if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
+  if (scene.version !== 1 || scene.commands.length > 65_536) return;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint: 'world.scene',
+    payload: scene,
   });
 }
 

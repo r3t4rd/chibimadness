@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
 use world_renderer::{
-    NativeRenderFrame, NativeRendererMetrics, NativeWorldRenderer, NativeWorldState,
+    NativeRenderFrame, NativeRenderScene, NativeRendererMetrics, NativeWorldRenderer, NativeWorldState,
 };
 use yuyib::{
     platform::{
@@ -355,6 +355,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let outbound_for_endpoint = Rc::clone(&outbound);
     let native_world = Rc::new(RefCell::new(NativeWorldState::default()));
     let native_world_for_endpoint = Rc::clone(&native_world);
+    let native_world_for_scene_endpoint = Rc::clone(&native_world);
     let server_url = server.map(|server| server.websocket_url);
     let content_version = launch_assets.version;
     let content_source = launch_assets.source;
@@ -386,6 +387,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("world.frame")?,
         move |frame: NativeRenderFrame| native_world_for_endpoint.borrow_mut().apply(frame),
+    ))?;
+    bridge.register(TypedEndpoint::new(
+        EndpointName::parse("world.scene")?,
+        move |scene: NativeRenderScene| native_world_for_scene_endpoint.borrow_mut().apply_scene(scene),
     ))?;
     let builder = WebViewBuilder::new()
         .with_local_page(page)

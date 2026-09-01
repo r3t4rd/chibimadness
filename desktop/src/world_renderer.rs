@@ -5,6 +5,14 @@ use serde::{Deserialize, Serialize};
 use yuyib::render::{RenderFrame, wgpu};
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
+// The display list crosses the WebView bridge, so it is untrusted input even
+// though today's sender is local game code. Keep it bounded before a future
+// WGPU executor looks at paths, styles, or arbitrary JSON arguments.
+const MAX_SCENE_COMMANDS: usize = 65_536;
+const MAX_SCENE_ARGUMENTS: usize = 64;
+const MAX_SCENE_VALUE_DEPTH: usize = 8;
+const MAX_SCENE_VALUE_ITEMS: usize = 2_048;
+const MAX_SCENE_STRING_BYTES: usize = 512;
 // Kept only as a visual-regression baseline while the source-layout renderer
 // is being completed; this path is deliberately not selected at runtime.
 #[allow(dead_code)]
@@ -180,6 +188,113 @@ pub struct NativeRenderFrame {
     pub entities: Vec<NativeRenderEntity>,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeRenderScene {
+    pub version: u8,
+    pub viewport: NativeSceneViewport,
+    pub camera: NativeSceneCamera,
+    #[serde(default)]
+    pub time_seconds: f32,
+    #[serde(default)]
+    pub commands: Vec<NativeSceneCommand>,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct NativeSceneViewport {
+    pub width: f32,
+    pub height: f32,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct NativeSceneCamera {
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase")]
+pub enum NativeSceneCommand {
+    Set {
+        property: String,
+        value: serde_json::Value,
+    },
+    Call {
+        method: String,
+        args: Vec<serde_json::Value>,
+        #[serde(default)]
+        result: Option<NativeSceneResourceRef>,
+    },
+    ResourceCall {
+        #[serde(rename = "ref")]
+        resource_ref: u32,
+        method: String,
+        args: Vec<serde_json::Value>,
+    },
+}
+
+#[derive(Clone, Deserialize)]
+pub struct NativeSceneResourceRef {
+    #[serde(rename = "ref")]
+    pub resource_ref: u32,
+    pub kind: String,
+}
+
+fn scene_value_is_bounded(value: &serde_json::Value, depth: usize, item_budget: &mut usize) -> bool {
+    if depth > MAX_SCENE_VALUE_DEPTH || *item_budget == 0 {
+        return false;
+    }
+    *item_budget -= 1;
+    match value {
+        serde_json::Value::Null | serde_json::Value::Bool(_) => true,
+        serde_json::Value::Number(number) => number.as_f64().is_some_and(f64::is_finite),
+        serde_json::Value::String(text) => text.len() <= MAX_SCENE_STRING_BYTES,
+        serde_json::Value::Array(values) => values
+            .iter()
+            .all(|value| scene_value_is_bounded(value, depth + 1, item_budget)),
+        serde_json::Value::Object(values) => values.iter().all(|(key, value)| {
+            key.len() <= MAX_SCENE_STRING_BYTES
+                && scene_value_is_bounded(value, depth + 1, item_budget)
+        }),
+    }
+}
+
+fn scene_command_is_bounded(command: &NativeSceneCommand) -> bool {
+    let (name, args, resource) = match command {
+        NativeSceneCommand::Set { property, value } => (property, std::slice::from_ref(value), None),
+        NativeSceneCommand::Call {
+            method,
+            args,
+            result,
+        } => (method, args.as_slice(), result.as_ref()),
+        NativeSceneCommand::ResourceCall {
+            resource_ref,
+            method,
+            args,
+        } => {
+            if *resource_ref == 0 {
+                return false;
+            }
+            (method, args.as_slice(), None)
+        }
+    };
+    if name.is_empty() || name.len() > 64 || args.len() > MAX_SCENE_ARGUMENTS {
+        return false;
+    }
+    if let Some(result) = resource {
+        if result.resource_ref == 0
+            || result.kind.is_empty()
+            || result.kind.len() > 32
+        {
+            return false;
+        }
+    }
+    let mut item_budget = MAX_SCENE_VALUE_ITEMS;
+    args.iter()
+        .all(|value| scene_value_is_bounded(value, 0, &mut item_budget))
+}
+
 fn default_hp_ratio() -> f32 {
     1.0
 }
@@ -220,6 +335,8 @@ fn visual_recipe_is_bounded(recipe: &NativeChibiRecipe) -> bool {
 pub struct NativeWorldState {
     frame: Option<NativeRenderFrame>,
     received_at: Option<Instant>,
+    scene: Option<NativeRenderScene>,
+    scene_received_at: Option<Instant>,
 }
 
 impl NativeWorldState {
@@ -315,6 +432,39 @@ impl NativeWorldState {
         frame.entities.sort_by_key(|entity| entity.layer);
         self.frame = Some(frame);
         self.received_at = Some(received_at);
+    }
+
+    /// Stages a canonical source-renderer display list.  It deliberately does
+    /// not select the list for presentation yet: native mode will switch only
+    /// once the WGPU executor covers and has been compared against the Canvas
+    /// reference backend.
+    pub fn apply_scene(&mut self, mut scene: NativeRenderScene) {
+        if scene.version != 1
+            || !scene.viewport.width.is_finite()
+            || !scene.viewport.height.is_finite()
+            || !scene.camera.x.is_finite()
+            || !scene.camera.y.is_finite()
+            || !scene.camera.zoom.is_finite()
+            || !scene.time_seconds.is_finite()
+        {
+            return;
+        }
+        scene.viewport.width = scene.viewport.width.clamp(1.0, 16_384.0);
+        scene.viewport.height = scene.viewport.height.clamp(1.0, 16_384.0);
+        scene.camera.zoom = scene.camera.zoom.clamp(0.2, 8.0);
+        scene.time_seconds = scene.time_seconds.rem_euclid(10_000_000.0);
+        if scene.commands.len() > MAX_SCENE_COMMANDS
+            || !scene.commands.iter().all(scene_command_is_bounded)
+        {
+            return;
+        }
+        self.scene = Some(scene);
+        self.scene_received_at = Some(Instant::now());
+    }
+
+    #[cfg(test)]
+    fn scene_command_count(&self) -> Option<usize> {
+        self.scene.as_ref().map(|scene| scene.commands.len())
     }
 
     fn frame_with_prediction(&self) -> Option<(&NativeRenderFrame, f32)> {
@@ -2204,5 +2354,37 @@ mod tests {
                 .as_ref()
                 .is_some_and(|animation| animation.is_sprinting)
         );
+    }
+
+    #[test]
+    fn canonical_scene_is_staged_only_when_bounded() {
+        let scene: NativeRenderScene = serde_json::from_str(
+            r##"{
+                "version": 1,
+                "viewport": {"width": 1920, "height": 1080},
+                "camera": {"x": 680, "y": 650, "zoom": 1},
+                "timeSeconds": 42.5,
+                "commands": [
+                    {"op": "set", "property": "fillStyle", "value": "#162C1E"},
+                    {"op": "call", "method": "fillRect", "args": [0, 0, 1920, 1080]}
+                ]
+            }"##,
+        )
+        .expect("canonical scene must deserialize");
+        let mut state = NativeWorldState::default();
+        state.apply_scene(scene);
+        assert_eq!(state.scene_command_count(), Some(2));
+
+        let invalid: NativeRenderScene = serde_json::from_str(
+            r##"{
+                "version": 1,
+                "viewport": {"width": 1920, "height": 1080},
+                "camera": {"x": 680, "y": 650, "zoom": 1},
+                "commands": [{"op": "resourceCall", "ref": 0, "method": "addColorStop", "args": [0, "red"]}]
+            }"##,
+        )
+        .expect("invalid payload shape still deserializes before validation");
+        state.apply_scene(invalid);
+        assert_eq!(state.scene_command_count(), Some(2));
     }
 }
