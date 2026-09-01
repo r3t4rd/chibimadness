@@ -1,12 +1,66 @@
 {
   "name": "world_environment_atlas",
   "texture": "world_environment_atlas.png",
-  "width": 432,
-  "height": 432,
+  "width": 720,
+  "height": 576,
   "frames": {
-    "prop_server_rack": {
+    "tree_pine": {
       "x": 8,
       "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "foliage"
+    },
+    "tree_birch": {
+      "x": 152,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "foliage"
+    },
+    "tree_oak": {
+      "x": 296,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "foliage"
+    },
+    "tree_autumn": {
+      "x": 440,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "foliage"
+    },
+    "boulder_granite": {
+      "x": 584,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "terrain"
+    },
+    "mossy_log": {
+      "x": 8,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "terrain"
+    },
+    "prop_server_rack": {
+      "x": 152,
+      "y": 152,
       "w": 128,
       "h": 128,
       "pivotX": 0.5,
@@ -14,8 +68,8 @@
       "category": "prop"
     },
     "prop_quantum_core": {
-      "x": 152,
-      "y": 8,
+      "x": 296,
+      "y": 152,
       "w": 128,
       "h": 128,
       "pivotX": 0.5,
@@ -23,16 +77,7 @@
       "category": "prop"
     },
     "prop_explosive_barrel": {
-      "x": 296,
-      "y": 8,
-      "w": 128,
-      "h": 128,
-      "pivotX": 0.5,
-      "pivotY": 0.5,
-      "category": "prop"
-    },
-    "prop_crate": {
-      "x": 8,
+      "x": 440,
       "y": 152,
       "w": 128,
       "h": 128,
@@ -40,8 +85,8 @@
       "pivotY": 0.5,
       "category": "prop"
     },
-    "prop_streetlamp": {
-      "x": 152,
+    "prop_ammo_crate": {
+      "x": 584,
       "y": 152,
       "w": 128,
       "h": 128,
@@ -49,16 +94,7 @@
       "pivotY": 0.5,
       "category": "prop"
     },
-    "prop_vending_machine": {
-      "x": 296,
-      "y": 152,
-      "w": 128,
-      "h": 128,
-      "pivotX": 0.5,
-      "pivotY": 0.5,
-      "category": "prop"
-    },
-    "prop_barrier": {
+    "prop_security_turret": {
       "x": 8,
       "y": 296,
       "w": 128,
@@ -66,6 +102,78 @@
       "pivotX": 0.5,
       "pivotY": 0.5,
       "category": "prop"
+    },
+    "prop_vending_machine": {
+      "x": 152,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_streetlamp": {
+      "x": 296,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_road_barrier": {
+      "x": 440,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_campfire": {
+      "x": 584,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "rift_rift_crimson": {
+      "x": 8,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "rift"
+    },
+    "rift_rift_void": {
+      "x": 152,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "rift"
+    },
+    "rift_rift_cyan": {
+      "x": 296,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "rift"
+    },
+    "rift_rift_amber": {
+      "x": 440,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "rift"
     }
   }
 }

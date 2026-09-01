@@ -1,8 +1,8 @@
 {
   "name": "weapons_atlas",
   "texture": "weapons_atlas.png",
-  "width": 576,
-  "height": 432,
+  "width": 720,
+  "height": 576,
   "frames": {
     "weapon_ak47": {
       "x": 8,
@@ -13,7 +13,7 @@
       "pivotY": 0.5,
       "category": "weapon"
     },
-    "weapon_m4a1": {
+    "weapon_cheytac": {
       "x": 152,
       "y": 8,
       "w": 128,
@@ -22,7 +22,7 @@
       "pivotY": 0.5,
       "category": "weapon"
     },
-    "weapon_cheytac": {
+    "weapon_mac10": {
       "x": 296,
       "y": 8,
       "w": 128,
@@ -40,9 +40,9 @@
       "pivotY": 0.5,
       "category": "weapon"
     },
-    "weapon_mac10": {
-      "x": 8,
-      "y": 152,
+    "weapon_revolver": {
+      "x": 584,
+      "y": 8,
       "w": 128,
       "h": 128,
       "pivotX": 0.5,
@@ -50,16 +50,7 @@
       "category": "weapon"
     },
     "weapon_pistol": {
-      "x": 152,
-      "y": 152,
-      "w": 128,
-      "h": 128,
-      "pivotX": 0.5,
-      "pivotY": 0.5,
-      "category": "weapon"
-    },
-    "weapon_revolver": {
-      "x": 296,
+      "x": 8,
       "y": 152,
       "w": 128,
       "h": 128,
@@ -68,7 +59,7 @@
       "category": "weapon"
     },
     "weapon_katana": {
-      "x": 440,
+      "x": 152,
       "y": 152,
       "w": 128,
       "h": 128,
@@ -77,6 +68,33 @@
       "category": "weapon"
     },
     "weapon_sledgehammer": {
+      "x": 296,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_throwing_knives": {
+      "x": 440,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_scythe": {
+      "x": 584,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_greatsword": {
       "x": 8,
       "y": 296,
       "w": 128,
@@ -85,7 +103,7 @@
       "pivotY": 0.5,
       "category": "weapon"
     },
-    "weapon_scythe": {
+    "weapon_staff": {
       "x": 152,
       "y": 296,
       "w": 128,
@@ -94,7 +112,7 @@
       "pivotY": 0.5,
       "category": "weapon"
     },
-    "weapon_greatsword": {
+    "weapon_wand": {
       "x": 296,
       "y": 296,
       "w": 128,
@@ -102,6 +120,69 @@
       "pivotX": 0.5,
       "pivotY": 0.5,
       "category": "weapon"
+    },
+    "weapon_grimoire": {
+      "x": 440,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_totem": {
+      "x": 584,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "attachment_ak_banana_mag": {
+      "x": 8,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "attachment"
+    },
+    "attachment_sniper_scope": {
+      "x": 152,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "attachment"
+    },
+    "attachment_suppressor": {
+      "x": 296,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "attachment"
+    },
+    "attachment_laser_sight": {
+      "x": 440,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "attachment"
+    },
+    "attachment_drum_magazine": {
+      "x": 584,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "attachment"
     }
   }
 }

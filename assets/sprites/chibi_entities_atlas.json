@@ -1,8 +1,8 @@
 {
   "name": "chibi_entities_atlas",
   "texture": "chibi_entities_atlas.png",
-  "width": 720,
-  "height": 540,
+  "width": 1080,
+  "height": 900,
   "frames": {
     "operator_millennium_student": {
       "x": 10,
@@ -40,54 +40,225 @@
       "pivotY": 0.5,
       "category": "operator"
     },
-    "enemy_cop_swat": {
+    "operator_tactical_vanguard": {
+      "x": 730,
+      "y": 10,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "operator"
+    },
+    "operator_idol_superstar": {
+      "x": 910,
+      "y": 10,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "operator"
+    },
+    "police_cop_officer": {
       "x": 10,
       "y": 190,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "enemy"
+      "category": "police"
     },
-    "enemy_cop_officer": {
+    "police_cop_swat": {
       "x": 190,
       "y": 190,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "enemy"
+      "category": "police"
     },
-    "enemy_cop_juggernaut": {
+    "police_cop_enforcer": {
       "x": 370,
       "y": 190,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "enemy"
+      "category": "police"
     },
-    "enemy_bandit_grunt": {
+    "police_cop_marksman": {
       "x": 550,
       "y": 190,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "enemy"
+      "category": "police"
     },
-    "enemy_bandit_boss": {
+    "police_cop_juggernaut": {
+      "x": 730,
+      "y": 190,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "police"
+    },
+    "punk_punk_grunt": {
+      "x": 910,
+      "y": 190,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "punk"
+    },
+    "punk_punk_anarchist": {
       "x": 10,
       "y": 370,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "enemy"
+      "category": "punk"
     },
-    "vehicle_police_cruiser": {
+    "punk_punk_molotov": {
       "x": 190,
       "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "punk"
+    },
+    "punk_punk_juggernaut": {
+      "x": 370,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "punk"
+    },
+    "bandit_bandit_grunt": {
+      "x": 550,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_scout": {
+      "x": 730,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_gunner": {
+      "x": 910,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_shotgunner": {
+      "x": 10,
+      "y": 550,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_sniper": {
+      "x": 190,
+      "y": 550,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_brawler": {
+      "x": 370,
+      "y": 550,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "boss_boss_welder": {
+      "x": 550,
+      "y": 550,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "boss_boss_outlaw_viktor": {
+      "x": 730,
+      "y": 550,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "boss_boss_bandit_warlord": {
+      "x": 910,
+      "y": 550,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "cadet_cadet_bat": {
+      "x": 10,
+      "y": 730,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "cadet_cadet_gunner": {
+      "x": 190,
+      "y": 730,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "cadet_cadet_mage": {
+      "x": 370,
+      "y": 730,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "cadet_human_target": {
+      "x": 550,
+      "y": 730,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "vehicle_police_cruiser": {
+      "x": 730,
+      "y": 730,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
@@ -95,8 +266,8 @@
       "category": "vehicle"
     },
     "vehicle_cyber_muscle_car": {
-      "x": 370,
-      "y": 370,
+      "x": 910,
+      "y": 730,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
