@@ -93,6 +93,9 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
               worker dyn {stats.offscreenDynamicFps} Hz · RTT {(stats.offscreenDynamicRoundTripMs ?? 0).toFixed(1)} ms · raster {(stats.dynamicRasterScale * 100).toFixed(0)}% · F9 scale
             </div>
           )}
+          <div className={stats.webglHordeMobBodies ? 'text-emerald-300' : 'text-slate-500'}>
+            horde bodies {stats.webglHordeMobBodies ? 'WebGL2 atlas active' : 'Canvas fallback'} · F10 toggle
+          </div>
           <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
             world {nativeWorldActive ? 'native active' : 'canvas fallback'}
           </div>

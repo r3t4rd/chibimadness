@@ -58,6 +58,12 @@ type WorldDrawOptions = {
   /** Reuses the dynamic pass camera while compiling static invalidations. */
   camera?: { x: number; y: number; zoom: number };
   maxDetailedMonsters?: number;
+  /**
+   * WebView-only hybrid path: a separate WebGL canvas owns the eligible horde
+   * body quads. Canvas still paints their shadows, HP bars and every transient
+   * state, so an unavailable/lost GL context can safely fall back per-frame.
+   */
+  skipWebglHordeMobBodies?: boolean;
 };
 
 export function getCameraState() {
@@ -263,7 +269,8 @@ export function drawWorld(
     gameTimePhase,
     options.layer ?? 'full',
     options.camera?.zoom ?? camera.zoom,
-    options.maxDetailedMonsters ?? undefined
+    options.maxDetailedMonsters ?? undefined,
+    options.skipWebglHordeMobBodies ?? false,
   );
 }
 
@@ -420,7 +427,8 @@ export function renderWorld(
   gameTimePhase: number = 0.35,
   layer: WorldPaintLayer = 'full',
   fixedZoom?: number,
-  maxDetailedMonsters?: number
+  maxDetailedMonsters?: number,
+  skipWebglHordeMobBodies = false,
 ) {
   const renderStatic = layer !== 'dynamic';
   const renderDynamic = layer !== 'static';
@@ -586,7 +594,7 @@ export function renderWorld(
       playerY,
       maxDetailedMonsters
     );
-    drawMonsters(ctx, detailedMonsters, time);
+    drawMonsters(ctx, detailedMonsters, time, skipWebglHordeMobBodies);
     if (silhouetteMonsters.length > 0) {
       drawMonsterSilhouettes(ctx, silhouetteMonsters, time);
     }
@@ -4443,6 +4451,42 @@ const CACHEABLE_HORDE_KINDS = new Set([
   'splitter', 'boss_titan', 'boss_storm',
 ]);
 
+const HORDE_ATLAS_SPRITES = [
+  { kind: 'mite', boss: false, color: '#22D3EE' },
+  { kind: 'shade', boss: false, color: '#6D28D9' },
+  { kind: 'raider', boss: false, color: '#64748B' },
+  { kind: 'shotgun', boss: false, color: '#F59E0B' },
+  { kind: 'bomber', boss: false, color: '#F97316' },
+  { kind: 'dasher', boss: false, color: '#F43F5E' },
+  { kind: 'sniper', boss: false, color: '#EF4444' },
+  { kind: 'splitter', boss: false, color: '#E879F9' },
+  { kind: 'boss_titan', boss: true, color: '#334155' },
+  { kind: 'boss_storm', boss: true, color: '#C026D3' },
+] as const;
+
+export type HordeMobAtlasSprite = (typeof HORDE_ATLAS_SPRITES)[number];
+
+/** Runtime atlas source. The established vector body remains authoritative. */
+export function getHordeMobAtlasSprites(): readonly HordeMobAtlasSprite[] {
+  return HORDE_ATLAS_SPRITES;
+}
+
+export function drawHordeMobAtlasSprite(
+  ctx: CanvasRenderingContext2D,
+  sprite: HordeMobAtlasSprite,
+) {
+  drawCachedHordeMobBody(ctx, sprite.kind, sprite.boss, sprite.color);
+}
+
+/** A flash is deliberately kept on Canvas so the hit response cannot lag GL. */
+export function getWebglHordeMobAtlasKey(monster: Monster): string | null {
+  const kind = monster.hordeKind;
+  if (!kind || !CACHEABLE_HORDE_KINDS.has(kind) || (monster.hitFlash || 0) > 0) return null;
+  const boss = Boolean(monster.isBoss);
+  const sprite = HORDE_ATLAS_SPRITES.find((candidate) => candidate.kind === kind && candidate.boss === boss);
+  return sprite ? `${sprite.kind}:${sprite.boss ? 1 : 0}` : null;
+}
+
 function drawCachedHordeMobBody(
   ctx: CanvasRenderingContext2D,
   kind: string,
@@ -4526,7 +4570,12 @@ function getCachedHordeMobSprite(kind: string, boss: boolean, color: string) {
   return sprite;
 }
 
-function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
+function drawHordeMob(
+  ctx: CanvasRenderingContext2D,
+  m: Monster,
+  time: number,
+  skipWebglHordeMobBody = false,
+) {
   const kind = m.hordeKind || 'shade';
   const flash = (m.hitFlash || 0) > 0;
   const boss = !!m.isBoss;
@@ -4560,10 +4609,14 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   ctx.ellipse(0, 16, 16, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const cachedSprite = !flash && !(ctx as RenderSceneLayerContext).__disableSpriteCache
+  const atlasOwnedByWebgl = skipWebglHordeMobBody && getWebglHordeMobAtlasKey(m) !== null;
+  const cachedSprite = !atlasOwnedByWebgl && !flash && !(ctx as RenderSceneLayerContext).__disableSpriteCache
     ? getCachedHordeMobSprite(kind, boss, col)
     : null;
-  if (cachedSprite) {
+  if (atlasOwnedByWebgl) {
+    // The transparent WebGL layer draws just this body. Leave the Canvas
+    // shadow and status UI below/above it in their established draw order.
+  } else if (cachedSprite) {
     ctx.drawImage(cachedSprite, -36, -36);
   } else if (kind === 'mite') {
     ctx.fillStyle = col;
@@ -4759,7 +4812,12 @@ function drawMonsterSilhouettes(ctx: CanvasRenderingContext2D, monsters: Monster
   });
 }
 
-function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number) {
+function drawMonsters(
+  ctx: CanvasRenderingContext2D,
+  monsters: Monster[],
+  time: number,
+  skipWebglHordeMobBodies = false,
+) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
     if (m.hp <= 0 && (m.deathProgress === undefined || m.deathProgress >= 1.0)) return;
@@ -4768,7 +4826,7 @@ function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: 
     ctx.translate(m.x, m.y);
 
     if (m.hordeKind) {
-      drawHordeMob(ctx, m, time);
+      drawHordeMob(ctx, m, time, skipWebglHordeMobBodies);
     } else if (m.type === 'forest_wolf') {
       // Draw Forest Feral Wolf
       ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';

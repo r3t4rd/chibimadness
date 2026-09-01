@@ -4,6 +4,7 @@ import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import { advanceCanvasCamera, drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
+import { createWebglHordeMobRenderer, type WebglHordeMobRenderer } from './game/webglHordeMobRenderer';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
 import { CharacterCreator } from './components/CharacterCreator';
@@ -140,9 +141,12 @@ export function App() {
   const canvasProbeModeRef = useRef<CanvasProbeMode>(canvasProbeMode);
   const [dynamicRasterScale, setDynamicRasterScale] = useState(1);
   const dynamicRasterScaleRef = useRef(dynamicRasterScale);
+  const [webglHordeMobBodies, setWebglHordeMobBodies] = useState(true);
+  const webglHordeMobBodiesRef = useRef(webglHordeMobBodies);
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastNativeSceneAt = useRef(0);
   const sceneWorkerRef = useRef<Worker | null>(null);
@@ -160,6 +164,10 @@ export function App() {
   useEffect(() => {
     dynamicRasterScaleRef.current = dynamicRasterScale;
   }, [dynamicRasterScale]);
+
+  useEffect(() => {
+    webglHordeMobBodiesRef.current = webglHordeMobBodies;
+  }, [webglHordeMobBodies]);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -210,6 +218,16 @@ export function App() {
     };
     window.addEventListener('keydown', cycleDynamicRasterScale);
     return () => window.removeEventListener('keydown', cycleDynamicRasterScale);
+  }, [nativeWorldRenderer]);
+
+  useEffect(() => {
+    const toggleWebglHordeMobBodies = (event: KeyboardEvent) => {
+      if (event.code !== 'F10' || event.repeat || nativeWorldRenderer) return;
+      event.preventDefault();
+      setWebglHordeMobBodies((enabled) => !enabled);
+    };
+    window.addEventListener('keydown', toggleWebglHordeMobBodies);
+    return () => window.removeEventListener('keydown', toggleWebglHordeMobBodies);
   }, [nativeWorldRenderer]);
 
   useEffect(() => {
@@ -283,6 +301,7 @@ export function App() {
     let lastRenderedAt: number | null = null;
     const canvas = canvasRef.current;
     const staticCanvas = staticCanvasRef.current;
+    const webglCanvas = webglCanvasRef.current;
     if (!createdPlayer || (!nativeWorldRenderer && (!canvas || !staticCanvas))) return;
 
     // The WebView always retains its visible Canvas context. Dynamic geometry
@@ -290,6 +309,9 @@ export function App() {
     // can therefore fall back to direct Canvas without blanking the world.
     let dynamicCanvasWorker: Worker | null = null;
     let ctx: CanvasRenderingContext2D | null = nativeWorldRenderer ? null : canvas?.getContext('2d') ?? null;
+    let webglHordeMobRenderer: WebglHordeMobRenderer | null = !nativeWorldRenderer && webglCanvas
+      ? createWebglHordeMobRenderer(webglCanvas)
+      : null;
     if (!nativeWorldRenderer && canvas && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
       try {
         dynamicCanvasWorker = new Worker(new URL('./game/dynamicCanvas.worker.ts', import.meta.url), { type: 'module' });
@@ -326,12 +348,13 @@ export function App() {
     type DynamicRender = {
       input: WorldRenderInput;
       camera: { x: number; y: number; zoom: number };
+      webglHordeMobBodies: boolean;
     };
     let dynamicRenderInFlight = false;
     let pendingDynamicRender: DynamicRender | null = null;
     let nextDynamicRenderId = 1;
     let dynamicRenderStartedAt: number | null = null;
-    let dynamicFrame: ImageBitmap | null = null;
+    let dynamicFrame: { image: ImageBitmap; webglHordeMobBodies: boolean } | null = null;
     let lastProbeMode = canvasProbeModeRef.current;
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
@@ -339,9 +362,9 @@ export function App() {
         image.close();
       }
     };
-    const replaceDynamicFrame = (nextFrame: ImageBitmap) => {
-      if (dynamicFrame && dynamicFrame !== nextFrame) dynamicFrame.close();
-      dynamicFrame = nextFrame;
+    const replaceDynamicFrame = (nextFrame: ImageBitmap, webglHordeMobBodies: boolean) => {
+      if (dynamicFrame && dynamicFrame.image !== nextFrame) dynamicFrame.image.close();
+      dynamicFrame = { image: nextFrame, webglHordeMobBodies };
     };
     const replaceStaticCache = (nextCache: StaticCache) => {
       if (staticCache && staticCache.image !== nextCache.image) {
@@ -413,7 +436,12 @@ export function App() {
     };
 
     if (dynamicCanvasWorker) {
-      dynamicCanvasWorker.onmessage = (event: MessageEvent<{ id?: number; error?: string; image?: ImageBitmap }>) => {
+      dynamicCanvasWorker.onmessage = (event: MessageEvent<{
+        id?: number;
+        error?: string;
+        image?: ImageBitmap;
+        webglHordeMobBodies?: boolean;
+      }>) => {
         if (event.data.error) {
           dynamicRenderInFlight = false;
           dynamicRenderStartedAt = null;
@@ -423,7 +451,7 @@ export function App() {
           return;
         }
         if (event.data.id === undefined) return;
-        if (event.data.image) replaceDynamicFrame(event.data.image);
+        if (event.data.image) replaceDynamicFrame(event.data.image, event.data.webglHordeMobBodies === true);
         if (dynamicRenderStartedAt !== null) {
           perfMonitor.recordOffscreenDynamicFrame(performance.now() - dynamicRenderStartedAt);
         }
@@ -493,14 +521,44 @@ export function App() {
         canvas.width = viewportWidth;
         canvas.height = viewportHeight;
       }
+      if (webglCanvas) {
+        webglCanvas.width = viewportWidth;
+        webglCanvas.height = viewportHeight;
+      }
       if (staticCanvas) {
         staticCanvas.width = viewportWidth;
         staticCanvas.height = viewportHeight;
       }
       staticCache = null;
+      webglHordeMobRenderer?.clear();
     };
     handleResize();
     window.addEventListener('resize', handleResize);
+
+    const renderWebglHordeMobBodies = (
+      input: WorldRenderInput,
+      camera: { x: number; y: number; zoom: number },
+    ) => {
+      if (!webglHordeMobBodiesRef.current || !webglHordeMobRenderer) {
+        webglHordeMobRenderer?.clear();
+        return false;
+      }
+      try {
+        if (!webglHordeMobRenderer.isAvailable) {
+          webglHordeMobRenderer.destroy();
+          webglHordeMobRenderer = null;
+          return false;
+        }
+        webglHordeMobRenderer.render(input.monsters, input.localPlayer, camera);
+        return true;
+      } catch {
+        // Context loss or an implementation-specific WebView GL failure must
+        // never hide a monster. The next Canvas worker frame owns every body.
+        webglHordeMobRenderer.destroy();
+        webglHordeMobRenderer = null;
+        return false;
+      }
+    };
 
     const render = (time: number) => {
       const callbackStartedAt = performance.now();
@@ -582,6 +640,7 @@ export function App() {
         canvasW: viewportWidth,
         canvasH: viewportHeight,
         dynamicRasterScale: dynamicRasterScaleRef.current,
+        webglHordeMobBodies: webglHordeMobBodiesRef.current && webglHordeMobRenderer !== null,
       });
 
       const drawStart = performance.now();
@@ -591,6 +650,9 @@ export function App() {
           dynamicCanvasWorker?.postMessage({ type: 'clear' });
         }
         lastProbeMode = activeCanvasProbeMode;
+      }
+      if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
+        webglHordeMobRenderer?.clear();
       }
       if (activeCanvasProbeMode === 'normal') {
         const worldInput = buildWorldRenderInput();
@@ -612,14 +674,23 @@ export function App() {
             canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
           };
         const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
-        const workerQueued = queueDynamicRender({ input: workerInput, camera: workerCamera });
+        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
+        const workerQueued = queueDynamicRender({
+          input: workerInput,
+          camera: workerCamera,
+          webglHordeMobBodies: webglBodiesActive,
+        });
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        if (workerQueued && dynamicFrame) {
-          ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
+        if (workerQueued && dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
+          ctx.drawImage(dynamicFrame.image, 0, 0, viewportWidth, viewportHeight);
         } else {
           // Paint the first frame locally while the worker warms up, and use
           // this same path immediately if structured cloning ever fails.
-          drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
+          drawWorldInput(ctx, worldInput, {
+            layer: 'dynamic',
+            camera,
+            skipWebglHordeMobBodies: webglBodiesActive,
+          });
         }
         const resourceRevision = curEngine.resourceNodes
           .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
@@ -706,12 +777,21 @@ export function App() {
             canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
           };
         const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
-        const workerQueued = queueDynamicRender({ input: workerInput, camera: workerCamera });
+        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
+        const workerQueued = queueDynamicRender({
+          input: workerInput,
+          camera: workerCamera,
+          webglHordeMobBodies: webglBodiesActive,
+        });
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        if (workerQueued && dynamicFrame) {
-          ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
+        if (workerQueued && dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
+          ctx.drawImage(dynamicFrame.image, 0, 0, viewportWidth, viewportHeight);
         } else {
-          drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
+          drawWorldInput(ctx, worldInput, {
+            layer: 'dynamic',
+            camera,
+            skipWebglHordeMobBodies: webglBodiesActive,
+          });
         }
       } else if (activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
@@ -738,7 +818,8 @@ export function App() {
       window.removeEventListener('resize', handleResize);
       dynamicCanvasWorker?.terminate();
       staticCacheWorker?.terminate();
-      dynamicFrame?.close();
+      dynamicFrame?.image.close();
+      webglHordeMobRenderer?.destroy();
       if (staticCache) releaseStaticCacheImage(staticCache.image);
     };
   }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
@@ -863,6 +944,11 @@ export function App() {
             <>
               <canvas
                 ref={staticCanvasRef}
+                aria-hidden="true"
+                className="absolute inset-0 block w-full h-full pointer-events-none"
+              />
+              <canvas
+                ref={webglCanvasRef}
                 aria-hidden="true"
                 className="absolute inset-0 block w-full h-full pointer-events-none"
               />

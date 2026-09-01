@@ -1,7 +1,13 @@
 import { drawWorldInput, type WorldRenderInput } from './worldRenderer';
 
 type WorkerMessage =
-  | { type: 'render'; id: number; input: WorldRenderInput; camera: { x: number; y: number; zoom: number } }
+  | {
+    type: 'render';
+    id: number;
+    input: WorldRenderInput;
+    camera: { x: number; y: number; zoom: number };
+    webglHordeMobBodies?: boolean;
+  }
   | { type: 'clear' };
 
 let canvas: OffscreenCanvas | null = null;
@@ -28,9 +34,16 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
     drawWorldInput(context as unknown as CanvasRenderingContext2D, message.input, {
       layer: 'dynamic',
       camera: message.camera,
+      skipWebglHordeMobBodies: message.webglHordeMobBodies === true,
     });
     const image = canvas.transferToImageBitmap();
-    postToMain({ id: message.id, width: canvas.width, height: canvas.height, image }, [image]);
+    postToMain({
+      id: message.id,
+      width: canvas.width,
+      height: canvas.height,
+      webglHordeMobBodies: message.webglHordeMobBodies === true,
+      image,
+    }, [image]);
   } catch (error) {
     postToMain({
       id: message.id,

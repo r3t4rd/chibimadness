@@ -36,6 +36,8 @@ export type PerfSnapshot = {
   offscreenDynamicFps: number | null;
   offscreenDynamicRoundTripMs: number | null;
   dynamicRasterScale: number;
+  /** WebView hybrid path: horde bodies are batched as WebGL atlas quads. */
+  webglHordeMobBodies: boolean;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -297,6 +299,7 @@ class PerformanceMonitor {
         : null,
       offscreenDynamicRoundTripMs: this.offscreenDynamicRoundTripMs,
       dynamicRasterScale: this.extras.dynamicRasterScale ?? 1,
+      webglHordeMobBodies: this.extras.webglHordeMobBodies === true,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
