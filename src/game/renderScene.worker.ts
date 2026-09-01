@@ -22,6 +22,12 @@ function staticSceneKey(input: WorldRenderInput, camera: { x: number; y: number;
     viewport: [input.canvasWidth, input.canvasHeight],
     cameraTile: [Math.floor(camera.x / 640), Math.floor(camera.y / 640), Math.round(camera.zoom * 20)],
     worldPois: input.worldPois ?? [],
+    // Retained props redraw only when their observable state changes. This
+    // keeps destroyed nodes/cars visually correct without putting all of
+    // their geometry back into the combat-rate dynamic mesh.
+    occupancy: [input.localPlayer.interiorBuildingId ?? null, input.localPlayer.interiorFloor ?? 0],
+    resourceNodes: input.resourceNodes.map((node) => [node.id, node.x, node.y, node.hp, node.type, node.scale]),
+    cars: input.cars?.filter((car) => car.state !== 'player_driven').map((car) => [car.id, car.x, car.y, car.facing, car.state]) ?? [],
   });
 }
 

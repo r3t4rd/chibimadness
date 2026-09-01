@@ -482,6 +482,26 @@ export function renderWorld(
     drawEnvironmentDecor(ctx, camera, canvasWidth, canvasHeight, time);
   }
 
+  // These entities are world dressing rather than combat state. Keeping them
+  // in the retained texture prevents a crowded town from becoming an
+  // accidental per-frame mesh, while their actual mutable actors remain in
+  // the dynamic pass below.
+  if (renderStatic) {
+    drawInteractiveObjects(
+      ctx,
+      indoors ? interactiveObjects : interactiveObjects.filter((o) => inView(o.x, o.y)),
+      time,
+      occupancy
+    );
+    if (!indoors && !inHorde) {
+      drawUrbanAtmosphereAndNeons(ctx, camera, canvasWidth, canvasHeight, time);
+      drawResourceNodes(ctx, resourceNodes.filter((n) => inView(n.x, n.y)), time);
+      drawNPCs(ctx, npcs.filter((n) => inView(n.x, n.y)), time);
+      drawWorldCars(ctx, cars.filter((c) => inView(c.x + 50, c.y + 24)), localPlayer, time);
+      drawGiantAncientTreesAndCanopies(ctx, localPlayer, time);
+    }
+  }
+
   if (!renderDynamic) {
     // Static-only compilation stops before every mutable/animated object.
     ctx.restore(); // view clip
@@ -495,14 +515,6 @@ export function renderWorld(
   // their actors in the retained static layer.
   markRenderSceneLayer(ctx, 'dynamic');
 
-  // 2.2. Draw Interactive Objects (Red Explosive Barrels & Crates)
-  drawInteractiveObjects(
-    ctx,
-    indoors ? interactiveObjects : interactiveObjects.filter((o) => inView(o.x, o.y)),
-    time,
-    occupancy
-  );
-
   if (!indoors) {
     drawGroundDecals(
       ctx,
@@ -510,13 +522,9 @@ export function renderWorld(
       time
     );
     if (!inHorde) {
-      drawUrbanAtmosphereAndNeons(ctx, camera, canvasWidth, canvasHeight, time);
-      drawResourceNodes(ctx, resourceNodes.filter((n) => inView(n.x, n.y)), time);
     }
     drawDropItems(ctx, dropItems.filter((d) => inView(d.x, d.y) && (!blinded || d.isXpGem)), time);
     if (!inHorde) {
-      drawNPCs(ctx, npcs.filter((n) => inView(n.x, n.y)), time);
-      drawWorldCars(ctx, cars.filter((c) => inView(c.x + 50, c.y + 24)), localPlayer, time);
     }
     const visibleMonsters = monsters.filter((m) => {
       if (m.state === 'dead' || !inView(m.x, m.y)) return false;
@@ -770,10 +778,6 @@ export function renderWorld(
   drawProjectiles(ctx, visProj);
   drawParticles(ctx, particles.filter((p) => inView(p.x, p.y)));
   drawDamagePopups(ctx, damagePopups.filter((p) => inView(p.x, p.y)));
-
-  if (!indoors && !inHorde) {
-    drawGiantAncientTreesAndCanopies(ctx, localPlayer, time);
-  }
 
   ctx.restore();
 
