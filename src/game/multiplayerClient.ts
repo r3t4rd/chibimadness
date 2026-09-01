@@ -93,9 +93,12 @@ let nextBridgeMessageId = 1;
 
 function requestDesktopServerConfiguration() {
   if (typeof window === 'undefined' || configuredServerUrl) return;
-  const isEmbeddedDesktop =
-    window.location.protocol === 'app:' || window.location.hostname === 'app.localhost';
-  if (!isEmbeddedDesktop || !window.yuyib?.post) return;
+  // `LocalPage` is served through Yuyib's local asset origin, whose scheme
+  // is an implementation detail and has changed across WebView hosts. The
+  // bridge object is the authoritative capability check: if it is present we
+  // are inside the trusted desktop shell. Gating on `app:` silently dropped
+  // `game.ready`, leaving a perfectly native process in WebGL fallback mode.
+  if (!window.yuyib?.post) return;
 
   let attemptsRemaining = 20;
   const request = () => {
