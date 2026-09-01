@@ -202,6 +202,30 @@ export function sendNativeRenderScene(scene: RenderScene) {
   });
 }
 
+/**
+ * Retained native world transport. Static geometry is sent only on an
+ * invalidation; the dynamic list remains small and is the only realtime
+ * message crossing WebView2 on ordinary gameplay frames.
+ */
+export function sendNativeStaticRenderScene(scene: RenderScene) {
+  sendNativeLayeredRenderScene('world.scene.static', scene);
+}
+
+export function sendNativeDynamicRenderScene(scene: RenderScene) {
+  sendNativeLayeredRenderScene('world.scene.dynamic', scene);
+}
+
+function sendNativeLayeredRenderScene(endpoint: 'world.scene.static' | 'world.scene.dynamic', scene: RenderScene) {
+  if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
+  if (scene.version !== 1 || scene.commands.length > 65_536) return;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint,
+    payload: scene,
+  });
+}
+
 class MultiplayerClient {
   private ws: WebSocket | null = null;
   private listeners: Set<NetEventListener> = new Set();

@@ -52,16 +52,35 @@ fn recipe_color(value: &str, fallback: [f32; 4]) -> [f32; 4] {
 }
 
 const WORLD_SHADER: &str = r#"
+struct Camera {
+    viewport: vec2<f32>,
+    position: vec2<f32>,
+    zoom: f32,
+    _padding: vec3<f32>,
+};
+
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
 };
 
+@group(0) @binding(0) var<uniform> camera: Camera;
+
 @vertex
 fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec4<f32>) -> VertexOutput {
     var output: VertexOutput;
-    output.position = vec4<f32>(position, 0.0, 1.0);
-    output.color = color;
+    if (color.a < 0.0) {
+        let screen = (position - camera.position) * camera.zoom + camera.viewport * 0.5;
+        output.position = vec4<f32>(
+            screen.x / camera.viewport.x * 2.0 - 1.0,
+            1.0 - screen.y / camera.viewport.y * 2.0,
+            0.0,
+            1.0,
+        );
+    } else {
+        output.position = vec4<f32>(position, 0.0, 1.0);
+    }
+    output.color = vec4<f32>(color.rgb, abs(color.a));
     return output;
 }
 
@@ -219,6 +238,9 @@ pub struct NativeSceneCamera {
 #[derive(Clone, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase")]
 pub enum NativeSceneCommand {
+    Layer {
+        name: String,
+    },
     Set {
         property: String,
         value: serde_json::Value,
@@ -269,6 +291,9 @@ fn scene_value_is_bounded(
 
 fn scene_command_is_bounded(command: &NativeSceneCommand) -> bool {
     let (name, args, resource) = match command {
+        NativeSceneCommand::Layer { name } => {
+            return matches!(name.as_str(), "screen" | "static" | "dynamic");
+        }
         NativeSceneCommand::Set { property, value } => {
             (property, std::slice::from_ref(value), None)
         }
@@ -341,9 +366,15 @@ fn visual_recipe_is_bounded(recipe: &NativeChibiRecipe) -> bool {
 pub struct NativeWorldState {
     frame: Option<NativeRenderFrame>,
     received_at: Option<Instant>,
+    // Legacy monolithic display-list endpoint. Kept so older content bundles
+    // can still start while the retained protocol rolls out atomically.
     scene: Option<NativeRenderScene>,
     scene_received_at: Option<Instant>,
     scene_revision: u64,
+    static_scene: Option<NativeRenderScene>,
+    static_scene_revision: u64,
+    dynamic_scene: Option<NativeRenderScene>,
+    dynamic_scene_revision: u64,
 }
 
 impl NativeWorldState {
@@ -446,6 +477,31 @@ impl NativeWorldState {
     /// once the WGPU executor covers and has been compared against the Canvas
     /// reference backend.
     pub fn apply_scene(&mut self, mut scene: NativeRenderScene) {
+        if !Self::normalize_scene(&mut scene) {
+            return;
+        }
+        self.scene = Some(scene);
+        self.scene_received_at = Some(Instant::now());
+        self.scene_revision = self.scene_revision.wrapping_add(1);
+    }
+
+    pub fn apply_static_scene(&mut self, mut scene: NativeRenderScene) {
+        if !Self::normalize_scene(&mut scene) {
+            return;
+        }
+        self.static_scene = Some(scene);
+        self.static_scene_revision = self.static_scene_revision.wrapping_add(1);
+    }
+
+    pub fn apply_dynamic_scene(&mut self, mut scene: NativeRenderScene) {
+        if !Self::normalize_scene(&mut scene) {
+            return;
+        }
+        self.dynamic_scene = Some(scene);
+        self.dynamic_scene_revision = self.dynamic_scene_revision.wrapping_add(1);
+    }
+
+    fn normalize_scene(scene: &mut NativeRenderScene) -> bool {
         if scene.version != 1
             || !scene.viewport.width.is_finite()
             || !scene.viewport.height.is_finite()
@@ -454,7 +510,7 @@ impl NativeWorldState {
             || !scene.camera.zoom.is_finite()
             || !scene.time_seconds.is_finite()
         {
-            return;
+            return false;
         }
         scene.viewport.width = scene.viewport.width.clamp(1.0, 16_384.0);
         scene.viewport.height = scene.viewport.height.clamp(1.0, 16_384.0);
@@ -463,15 +519,26 @@ impl NativeWorldState {
         if scene.commands.len() > MAX_SCENE_COMMANDS
             || !scene.commands.iter().all(scene_command_is_bounded)
         {
-            return;
+            return false;
         }
-        self.scene = Some(scene);
-        self.scene_received_at = Some(Instant::now());
-        self.scene_revision = self.scene_revision.wrapping_add(1);
+        true
     }
 
     pub fn scene_with_revision(&self) -> Option<(&NativeRenderScene, u64)> {
         self.scene.as_ref().map(|scene| (scene, self.scene_revision))
+    }
+
+    pub fn retained_scenes_with_revisions(
+        &self,
+    ) -> Option<((&NativeRenderScene, u64), (&NativeRenderScene, u64))> {
+        self.static_scene.as_ref().zip(self.dynamic_scene.as_ref()).map(
+            |(static_scene, dynamic_scene)| {
+                (
+                    (static_scene, self.static_scene_revision),
+                    (dynamic_scene, self.dynamic_scene_revision),
+                )
+            },
+        )
     }
 
     #[cfg(test)]
@@ -501,14 +568,42 @@ struct Vertex {
     color: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CameraUniform {
+    viewport: [f32; 2],
+    position: [f32; 2],
+    zoom: f32,
+    _padding: [f32; 3],
+}
+
+#[derive(Clone, Copy)]
+enum SceneVertexSelection {
+    /// Compatibility path for one-piece display lists from older bundles.
+    All,
+    /// Retained background: screen clear plus camera-relative world geometry.
+    Static,
+    /// Actors, projectiles, decals and effects layered above the background.
+    Dynamic,
+}
+
 pub struct NativeWorldRenderer {
     pipeline: Option<wgpu::RenderPipeline>,
     surface_format: Option<wgpu::TextureFormat>,
+    camera_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    camera_bind_group: Option<wgpu::BindGroup>,
+    camera_buffer: Option<wgpu::Buffer>,
+    static_vertex_buffer: Option<wgpu::Buffer>,
+    static_vertex_capacity: usize,
+    static_vertices: Vec<Vertex>,
+    static_vertices_dirty: bool,
+    last_static_scene_revision: Option<u64>,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
     vertices_dirty: bool,
     last_scene_revision: Option<u64>,
+    last_dynamic_scene_revision: Option<u64>,
     text_font: Option<FontArc>,
     last_presented_at: Option<Instant>,
     metrics_started_at: Instant,
@@ -546,11 +641,20 @@ impl Default for NativeWorldRenderer {
         Self {
             pipeline: None,
             surface_format: None,
+            camera_bind_group_layout: None,
+            camera_bind_group: None,
+            camera_buffer: None,
+            static_vertex_buffer: None,
+            static_vertex_capacity: 0,
+            static_vertices: Vec::new(),
+            static_vertices_dirty: false,
+            last_static_scene_revision: None,
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
             vertices_dirty: false,
             last_scene_revision: None,
+            last_dynamic_scene_revision: None,
             text_font: load_native_text_font(),
             last_presented_at: None,
             metrics_started_at: Instant::now(),
@@ -589,11 +693,34 @@ impl NativeWorldRenderer {
     /// Returns true only after the frame reached the native surface. The
     /// WebView uses this acknowledgement to hide its Canvas fallback safely.
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
-        let rendered_scene = if let Some((scene, revision)) = state.scene_with_revision() {
-            if self.last_scene_revision != Some(revision) {
-                if !self.build_scene_vertices(scene) {
+        let mut retained_scene = None;
+        let rendered_scene = if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
+            state.retained_scenes_with_revisions()
+        {
+            if self.last_static_scene_revision != Some(static_revision) {
+                let Some(vertices) = self.scene_vertices(static_scene, SceneVertexSelection::Static) else {
                     return false;
-                }
+                };
+                self.static_vertices = vertices;
+                self.static_vertices_dirty = true;
+                self.last_static_scene_revision = Some(static_revision);
+            }
+            if self.last_dynamic_scene_revision != Some(dynamic_revision) {
+                let Some(vertices) = self.scene_vertices(dynamic_scene, SceneVertexSelection::Dynamic) else {
+                    return false;
+                };
+                self.vertices = vertices;
+                self.vertices_dirty = true;
+                self.last_dynamic_scene_revision = Some(dynamic_revision);
+            }
+            retained_scene = Some(dynamic_scene);
+            true
+        } else if let Some((scene, revision)) = state.scene_with_revision() {
+            if self.last_scene_revision != Some(revision) {
+                let Some(vertices) = self.scene_vertices(scene, SceneVertexSelection::All) else {
+                    return false;
+                };
+                self.vertices = vertices;
                 self.last_scene_revision = Some(revision);
                 self.vertices_dirty = true;
             }
@@ -612,22 +739,41 @@ impl NativeWorldRenderer {
         if !rendered_scene {
             return false;
         }
-        if self.vertices.is_empty() {
+        if self.vertices.is_empty() && self.static_vertices.is_empty() {
             return false;
         }
         self.ensure_pipeline(frame);
+        if let Some(scene) = retained_scene {
+            self.write_camera(frame, scene);
+        }
+        if self.static_vertices_dirty {
+            self.upload_static_vertices(frame);
+            self.static_vertices_dirty = false;
+        }
         if self.vertices_dirty {
             self.upload_vertices(frame);
             self.vertices_dirty = false;
         }
-        let (Some(pipeline), Some(vertex_buffer)) = (&self.pipeline, &self.vertex_buffer) else {
+        let (Some(pipeline), Some(camera_bind_group)) = (&self.pipeline, &self.camera_bind_group) else {
             return false;
         };
-        let vertex_count = self.vertices.len() as u32;
+        let static_vertex_count = self.static_vertices.len() as u32;
+        let dynamic_vertex_count = self.vertices.len() as u32;
         frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
             pass.set_pipeline(pipeline);
-            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-            pass.draw(0..vertex_count, 0..1);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            if static_vertex_count > 0 {
+                if let Some(static_vertex_buffer) = &self.static_vertex_buffer {
+                    pass.set_vertex_buffer(0, static_vertex_buffer.slice(..));
+                    pass.draw(0..static_vertex_count, 0..1);
+                }
+            }
+            if dynamic_vertex_count > 0 {
+                if let Some(vertex_buffer) = &self.vertex_buffer {
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(0..dynamic_vertex_count, 0..1);
+                }
+            }
         });
         true
     }
@@ -642,9 +788,41 @@ impl NativeWorldRenderer {
             label: Some("chibimadness native world shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(WORLD_SHADER)),
         });
+        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("chibimadness native world camera layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        use wgpu::util::DeviceExt;
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("chibimadness native world camera"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                viewport: [1.0, 1.0],
+                position: [0.0, 0.0],
+                zoom: 1.0,
+                _padding: [0.0; 3],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("chibimadness native world camera bind group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("chibimadness native world layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[Some(&camera_bind_group_layout)],
             immediate_size: 0,
         });
         let attributes = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
@@ -687,7 +865,26 @@ impl NativeWorldRenderer {
                 cache: None,
             }),
         );
+        self.camera_bind_group_layout = Some(camera_bind_group_layout);
+        self.camera_bind_group = Some(camera_bind_group);
+        self.camera_buffer = Some(camera_buffer);
         self.surface_format = Some(format);
+    }
+
+    fn write_camera(&self, frame: &RenderFrame<'_>, scene: &NativeRenderScene) {
+        let Some(buffer) = &self.camera_buffer else {
+            return;
+        };
+        frame.queue().write_buffer(
+            buffer,
+            0,
+            bytemuck::bytes_of(&CameraUniform {
+                viewport: [scene.viewport.width, scene.viewport.height],
+                position: [scene.camera.x, scene.camera.y],
+                zoom: scene.camera.zoom,
+                _padding: [0.0; 3],
+            }),
+        );
     }
 
     fn upload_vertices(&mut self, frame: &RenderFrame<'_>) {
@@ -708,6 +905,24 @@ impl NativeWorldRenderer {
         }
     }
 
+    fn upload_static_vertices(&mut self, frame: &RenderFrame<'_>) {
+        use wgpu::util::DeviceExt;
+
+        let bytes = bytemuck::cast_slice(&self.static_vertices);
+        if self.static_vertex_capacity < bytes.len() {
+            self.static_vertex_buffer = Some(frame.device().create_buffer_init(
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("chibimadness retained static world vertices"),
+                    contents: bytes,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                },
+            ));
+            self.static_vertex_capacity = bytes.len();
+        } else if let Some(buffer) = &self.static_vertex_buffer {
+            frame.queue().write_buffer(buffer, 0, bytes);
+        }
+    }
+
     fn build_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
         self.vertices.clear();
         // The native pass intentionally owns the world surface. The WebView
@@ -721,29 +936,61 @@ impl NativeWorldRenderer {
         }
     }
 
-    fn build_scene_vertices(&mut self, scene: &NativeRenderScene) -> bool {
+    fn scene_vertices(
+        &self,
+        scene: &NativeRenderScene,
+        selection: SceneVertexSelection,
+    ) -> Option<Vec<Vertex>> {
         let tessellation = scene_executor::tessellate(scene, self.text_font.as_ref());
         if tessellation.unsupported_commands != 0 || tessellation.truncated {
             eprintln!(
                 "native scene held on Canvas fallback: {} unsupported command(s), truncated={}",
                 tessellation.unsupported_commands, tessellation.truncated,
             );
-            return false;
+            return None;
         }
-        self.vertices.clear();
-        self.vertices.reserve(tessellation.triangles.len() * 3);
+        let mut vertices = Vec::with_capacity(tessellation.triangles.len() * 3);
         for triangle in tessellation.triangles {
+            let include = match selection {
+                SceneVertexSelection::All => true,
+                SceneVertexSelection::Static => triangle.layer != scene_executor::SceneLayer::Dynamic,
+                SceneVertexSelection::Dynamic => triangle.layer == scene_executor::SceneLayer::Dynamic,
+            };
+            if !include {
+                continue;
+            }
+            let is_world_space = matches!(selection, SceneVertexSelection::Static)
+                && triangle.layer == scene_executor::SceneLayer::Static;
             for index in 0..3 {
-                self.vertices.push(Vertex {
-                    position: [
+                let position = if is_world_space {
+                    [
+                        scene.camera.x
+                            + (triangle.positions[index][0] - scene.viewport.width * 0.5)
+                                / scene.camera.zoom,
+                        scene.camera.y
+                            + (triangle.positions[index][1] - scene.viewport.height * 0.5)
+                                / scene.camera.zoom,
+                    ]
+                } else {
+                    [
                         triangle.positions[index][0] / scene.viewport.width * 2.0 - 1.0,
                         1.0 - triangle.positions[index][1] / scene.viewport.height * 2.0,
-                    ],
-                    color: triangle.colors[index],
+                    ]
+                };
+                let mut color = triangle.colors[index];
+                if is_world_space {
+                    // The vertex ABI predates retained layers. A negative alpha
+                    // is a compact, lossless-enough space bit; the shader
+                    // restores the absolute alpha before blending.
+                    color[3] = -color[3].max(f32::EPSILON);
+                }
+                vertices.push(Vertex {
+                    position,
+                    color,
                 });
             }
         }
-        !self.vertices.is_empty()
+        Some(vertices)
     }
 
     /// Faithful fixed-layout base layer mirrored from `worldRenderer.ts`.

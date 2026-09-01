@@ -21,11 +21,25 @@ use crate::world_renderer::{NativeRenderScene, NativeSceneCommand};
 const MAX_TRIANGLES: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SceneLayer {
+    Screen,
+    Static,
+    Dynamic,
+}
+
+impl Default for SceneLayer {
+    fn default() -> Self {
+        Self::Screen
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SceneTriangle {
     pub positions: [[f32; 2]; 3],
     /// Vertex colours deliberately carry gradients through the existing WGPU
     /// pipeline without a second material pass.
     pub colors: [[f32; 4]; 3],
+    pub layer: SceneLayer,
 }
 
 #[derive(Default, Debug)]
@@ -33,6 +47,7 @@ pub struct SceneTessellation {
     pub triangles: Vec<SceneTriangle>,
     pub unsupported_commands: usize,
     pub truncated: bool,
+    current_layer: SceneLayer,
 }
 
 #[derive(Clone, Copy)]
@@ -355,7 +370,11 @@ fn push_raw(output: &mut SceneTessellation, positions: [[f32; 2]; 3], colors: [[
         output.truncated = true;
         return;
     }
-    output.triangles.push(SceneTriangle { positions, colors });
+    output.triangles.push(SceneTriangle {
+        positions,
+        colors,
+        layer: output.current_layer,
+    });
 }
 
 fn emit_triangle(
@@ -817,6 +836,17 @@ pub fn tessellate(scene: &NativeRenderScene, font: Option<&FontArc>) -> SceneTes
 
     for command in &scene.commands {
         match command {
+            NativeSceneCommand::Layer { name } => {
+                output.current_layer = match name.as_str() {
+                    "screen" => SceneLayer::Screen,
+                    "static" => SceneLayer::Static,
+                    "dynamic" => SceneLayer::Dynamic,
+                    // `NativeWorldState` rejects unknown labels before this
+                    // executor sees a scene. Keeping the previous label here
+                    // makes the executor defensive if it is reused directly.
+                    _ => output.current_layer,
+                };
+            }
             NativeSceneCommand::Set { property, value } => match property.as_str() {
                 "fillStyle" => {
                     if let Some(paint) = paint_from(value) {
@@ -1284,6 +1314,48 @@ mod tests {
         assert_eq!(output.triangles[0].positions[0], [11.0, 22.0]);
         assert_eq!(output.triangles[0].colors[0], [0.2, 0.4, 0.6, 0.5]);
         assert_eq!(output.unsupported_commands, 0);
+    }
+
+    #[test]
+    fn preserves_retained_layer_boundaries_in_triangle_output() {
+        let output = tessellate(
+            &scene(vec![
+                NativeSceneCommand::Layer {
+                    name: "static".into(),
+                },
+                NativeSceneCommand::Call {
+                    method: "fillRect".into(),
+                    args: vec![
+                        serde_json::json!(0),
+                        serde_json::json!(0),
+                        serde_json::json!(10),
+                        serde_json::json!(10),
+                    ],
+                    result: None,
+                },
+                NativeSceneCommand::Layer {
+                    name: "dynamic".into(),
+                },
+                NativeSceneCommand::Call {
+                    method: "fillRect".into(),
+                    args: vec![
+                        serde_json::json!(10),
+                        serde_json::json!(0),
+                        serde_json::json!(10),
+                        serde_json::json!(10),
+                    ],
+                    result: None,
+                },
+            ]),
+            None,
+        );
+        assert_eq!(output.triangles.len(), 4);
+        assert!(output.triangles[..2]
+            .iter()
+            .all(|triangle| triangle.layer == SceneLayer::Static));
+        assert!(output.triangles[2..]
+            .iter()
+            .all(|triangle| triangle.layer == SceneLayer::Dynamic));
     }
 
     #[test]

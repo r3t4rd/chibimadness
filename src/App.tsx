@@ -27,7 +27,8 @@ import {
   isNativeWorldRendererEnabled,
   isNativeWorldRendererReady,
   net,
-  sendNativeRenderScene,
+  sendNativeDynamicRenderScene,
+  sendNativeStaticRenderScene,
   sendNativeWorldRenderFrame,
   subscribeContentBuildInfo,
   subscribeNativeWorldRenderer,
@@ -225,9 +226,23 @@ export function App() {
       sceneCompileInFlightRef.current = true;
       worker.postMessage({ id: nextSceneJobIdRef.current++, input });
     };
-    worker.onmessage = (event: MessageEvent<{ id: number; scene?: unknown; error?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{
+      id: number;
+      staticScene?: unknown;
+      dynamicScene?: unknown;
+      error?: string;
+    }>) => {
       sceneCompileInFlightRef.current = false;
-      if (event.data.scene) sendNativeRenderScene(event.data.scene as Parameters<typeof sendNativeRenderScene>[0]);
+      if (event.data.staticScene) {
+        sendNativeStaticRenderScene(
+          event.data.staticScene as Parameters<typeof sendNativeStaticRenderScene>[0]
+        );
+      }
+      if (event.data.dynamicScene) {
+        sendNativeDynamicRenderScene(
+          event.data.dynamicScene as Parameters<typeof sendNativeDynamicRenderScene>[0]
+        );
+      }
       const pending = pendingSceneInputRef.current;
       pendingSceneInputRef.current = null;
       if (pending) submit(pending);

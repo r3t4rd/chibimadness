@@ -8,6 +8,14 @@ import { drawWorldBuildings, drawInteriorPrompt, drawBuildingOccluders, drawInte
 import { occupancyMatchesObject, isInteriorWorld } from './buildings';
 import { compileRenderScene, recordRenderScene, type RenderScene } from './renderScene';
 
+type RenderSceneLayerContext = CanvasRenderingContext2D & {
+  __renderSceneLayer?: (name: 'screen' | 'static' | 'dynamic') => void;
+};
+
+function markRenderSceneLayer(ctx: CanvasRenderingContext2D, name: 'screen' | 'static' | 'dynamic') {
+  (ctx as RenderSceneLayerContext).__renderSceneLayer?.(name);
+}
+
 // Persistent smoothed camera state
 let smoothedCameraX = 650;
 let smoothedCameraY = 750;
@@ -309,6 +317,7 @@ export function renderWorld(
 ) {
   ctx.save();
   // Clear screen — tinted by time of day
+  markRenderSceneLayer(ctx, 'screen');
   ctx.fillStyle = getSkyClearColor(gameTimePhase);
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
@@ -358,6 +367,10 @@ export function renderWorld(
   ctx.scale(safeZoom, safeZoom);
   ctx.translate(-canvasWidth / 2, -canvasHeight / 2);
   ctx.translate(Math.round(canvasWidth / 2 - camera.x), Math.round(canvasHeight / 2 - camera.y));
+  // Everything before the next marker is level geometry. It can be retained
+  // by WGPU and moved through a camera uniform instead of crossing the
+  // WebView bridge every simulation update.
+  markRenderSceneLayer(ctx, 'static');
 
   const playerX = localPlayer?.x ?? 0;
   const playerY = localPlayer?.y ?? 0;
@@ -401,6 +414,11 @@ export function renderWorld(
     drawWorldPois(ctx, worldPois.filter((p) => inView(p.x, p.y)), localPlayer, time);
     drawEnvironmentDecor(ctx, camera, canvasWidth, canvasHeight, time);
   }
+
+  // From here on objects can be destroyed, animated or change with combat.
+  // Keep one unconditional boundary so interiors do not accidentally freeze
+  // their actors in the retained static layer.
+  markRenderSceneLayer(ctx, 'dynamic');
 
   // 2.2. Draw Interactive Objects (Red Explosive Barrels & Crates)
   drawInteractiveObjects(

@@ -357,6 +357,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let native_world = Rc::new(RefCell::new(NativeWorldState::default()));
     let native_world_for_endpoint = Rc::clone(&native_world);
     let native_world_for_scene_endpoint = Rc::clone(&native_world);
+    let native_world_for_static_scene_endpoint = Rc::clone(&native_world);
+    let native_world_for_dynamic_scene_endpoint = Rc::clone(&native_world);
     let server_url = server.map(|server| server.websocket_url);
     let content_version = launch_assets.version;
     let content_source = launch_assets.source;
@@ -392,6 +394,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("world.scene")?,
         move |scene: NativeRenderScene| native_world_for_scene_endpoint.borrow_mut().apply_scene(scene),
+    ))?;
+    bridge.register(TypedEndpoint::new(
+        EndpointName::parse("world.scene.static")?,
+        move |scene: NativeRenderScene| {
+            native_world_for_static_scene_endpoint
+                .borrow_mut()
+                .apply_static_scene(scene)
+        },
+    ))?;
+    bridge.register(TypedEndpoint::new(
+        EndpointName::parse("world.scene.dynamic")?,
+        move |scene: NativeRenderScene| {
+            native_world_for_dynamic_scene_endpoint
+                .borrow_mut()
+                .apply_dynamic_scene(scene)
+        },
     ))?;
     let builder = WebViewBuilder::new()
         .with_local_page(page)

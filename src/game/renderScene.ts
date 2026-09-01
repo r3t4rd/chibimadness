@@ -19,7 +19,8 @@ export interface SceneObject {
 export type SceneCommand =
   | { op: 'set'; property: string; value: SceneValue }
   | { op: 'call'; method: string; args: SceneValue[]; result?: { ref: number; kind: SceneResourceKind } }
-  | { op: 'resourceCall'; ref: number; method: string; args: SceneValue[] };
+  | { op: 'resourceCall'; ref: number; method: string; args: SceneValue[] }
+  | { op: 'layer'; name: 'screen' | 'static' | 'dynamic' };
 
 export type RenderScene = {
   version: 1;
@@ -32,6 +33,13 @@ export type RenderScene = {
 export type SceneReplayResult = {
   appliedCommands: number;
   unsupportedCommands: SceneCommand[];
+};
+
+export type RenderSceneLayers = {
+  /** Background plus world geometry that is retained by the native surface. */
+  staticScene: RenderScene;
+  /** State-only preamble followed by actors, projectiles and time-varying FX. */
+  dynamicScene: RenderScene;
 };
 
 type ResourceTarget = CanvasGradient | CanvasPattern | CanvasImageSource;
@@ -132,6 +140,9 @@ export function recordRenderScene<T>(
 
   const proxy = new Proxy(context, {
     get(target, property, receiver) {
+      if (property === '__renderSceneLayer') {
+        return (name: 'screen' | 'static' | 'dynamic') => commands.push({ op: 'layer', name });
+      }
       const value = Reflect.get(target, property, target);
       if (typeof value !== 'function') return Reflect.get(target, property, receiver);
       return (...args: unknown[]) => {
@@ -210,11 +221,14 @@ export function replayRenderScene(
         const method = resource && (resource as unknown as Record<string, unknown>)[command.method];
         if (typeof method !== 'function') throw new Error('Unknown Canvas resource method');
         Reflect.apply(method, resource, command.args.map((arg) => decodeValue(arg, resources)));
-      } else {
+      } else if (command.op === 'call') {
         const method = (context as unknown as Record<string, unknown>)[command.method];
         if (typeof method !== 'function') throw new Error('Unknown Canvas method');
         const result = Reflect.apply(method, context, command.args.map((arg) => decodeValue(arg, resources)));
         if (command.result && isCanvasResource(result)) resources.set(command.result.ref, result);
+      } else {
+        // Layer markers are retained-renderer metadata, not Canvas APIs.
+        // A web replay deliberately treats them as no-ops.
       }
       appliedCommands += 1;
     } catch {
@@ -224,6 +238,50 @@ export function replayRenderScene(
     }
   }
   return { appliedCommands, unsupportedCommands };
+}
+
+const STATE_ONLY_CANVAS_CALLS = new Set([
+  'save', 'restore', 'translate', 'rotate', 'scale', 'transform', 'setTransform', 'resetTransform',
+  'beginPath', 'closePath', 'moveTo', 'lineTo', 'quadraticCurveTo', 'bezierCurveTo',
+  'arc', 'arcTo', 'ellipse', 'rect', 'roundRect', 'clip', 'setLineDash',
+  'createLinearGradient', 'createRadialGradient', 'createPattern',
+]);
+
+/**
+ * Turns one canonical draw list into independently executable retained layers.
+ *
+ * The dynamic layer receives only the Canvas state/path/resource preamble it
+ * needs. Replaying prior visual calls here would paint the static world a
+ * second time and defeat the retained GPU buffer.
+ */
+export function splitRenderScene(scene: RenderScene): RenderSceneLayers {
+  const dynamicStart = scene.commands.findIndex(
+    (command) => command.op === 'layer' && command.name === 'dynamic'
+  );
+  if (dynamicStart === -1) {
+    return {
+      staticScene: scene,
+      dynamicScene: { ...scene, commands: [] },
+    };
+  }
+
+  const staticCommands = scene.commands.slice(0, dynamicStart);
+  const dynamicPreamble = staticCommands.filter((command) => {
+    if (command.op === 'set' || command.op === 'resourceCall') return true;
+    return command.op === 'call' && STATE_ONLY_CANVAS_CALLS.has(command.method);
+  });
+
+  return {
+    staticScene: { ...scene, commands: staticCommands },
+    dynamicScene: {
+      ...scene,
+      commands: [
+        ...dynamicPreamble,
+        { op: 'layer', name: 'dynamic' },
+        ...scene.commands.slice(dynamicStart + 1),
+      ],
+    },
+  };
 }
 
 type VirtualSceneResource = {
@@ -297,6 +355,9 @@ export function compileRenderScene<T>(
   const context = new Proxy(state, {
     get(_target, property) {
       const method = String(property);
+      if (method === '__renderSceneLayer') {
+        return (name: 'screen' | 'static' | 'dynamic') => commands.push({ op: 'layer', name });
+      }
       // Canvas state is occasionally read and combined (for example
       // `ctx.globalAlpha *= fade`). Preserve it in the compiler instead of
       // accidentally treating a state property as a drawing method.
