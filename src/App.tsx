@@ -306,12 +306,113 @@ export function App() {
     let viewportWidth = window.innerWidth;
     let viewportHeight = window.innerHeight;
     const staticCacheMargin = 320;
-    let staticCache: {
+    type StaticCache = {
       camera: { x: number; y: number; zoom: number };
       revision: string;
       width: number;
       height: number;
-    } | null = null;
+      image: CanvasImageSource;
+    };
+    type StaticCacheBuild = {
+      input: WorldRenderInput;
+      camera: { x: number; y: number; zoom: number };
+      revision: string;
+    };
+    let staticCache: StaticCache | null = null;
+    let staticCacheWorker: Worker | null = null;
+    let staticCacheBuildInFlight = false;
+    let pendingStaticCacheBuild: StaticCacheBuild | null = null;
+    let nextStaticCacheBuildId = 1;
+
+    const releaseStaticCacheImage = (image: CanvasImageSource) => {
+      if ('close' in image && typeof image.close === 'function') {
+        image.close();
+      }
+    };
+    const replaceStaticCache = (nextCache: StaticCache) => {
+      if (staticCache && staticCache.image !== nextCache.image) {
+        releaseStaticCacheImage(staticCache.image);
+      }
+      staticCache = nextCache;
+    };
+    const renderStaticCacheOnMainThread = (build: StaticCacheBuild) => {
+      staticCacheCanvas.width = build.input.canvasWidth;
+      staticCacheCanvas.height = build.input.canvasHeight;
+      staticCacheCtx.clearRect(0, 0, build.input.canvasWidth, build.input.canvasHeight);
+      drawWorldInput(staticCacheCtx, build.input, { layer: 'static', camera: build.camera });
+      replaceStaticCache({
+        camera: { ...build.camera },
+        revision: build.revision,
+        width: build.input.canvasWidth,
+        height: build.input.canvasHeight,
+        image: staticCacheCanvas,
+      });
+    };
+    const startStaticCacheBuild = (build: StaticCacheBuild) => {
+      if (!staticCacheWorker) return;
+      staticCacheBuildInFlight = true;
+      try {
+        staticCacheWorker.postMessage({ id: nextStaticCacheBuildId++, ...build });
+      } catch {
+        staticCacheBuildInFlight = false;
+        staticCacheWorker.terminate();
+        staticCacheWorker = null;
+      }
+    };
+    const queueStaticCacheBuild = (build: StaticCacheBuild) => {
+      if (!staticCacheWorker) return false;
+      if (staticCacheBuildInFlight) {
+        // Never queue stale camera frames. The newest cache is the only one
+        // that can still cover the viewport when the worker becomes free.
+        pendingStaticCacheBuild = build;
+      } else {
+        startStaticCacheBuild(build);
+      }
+      return true;
+    };
+
+    if (!nativeWorldRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        staticCacheWorker = new Worker(
+          new URL('./game/staticCanvasCache.worker.ts', import.meta.url),
+          { type: 'module' },
+        );
+        staticCacheWorker.onmessage = (event: MessageEvent<{
+          camera: { x: number; y: number; zoom: number };
+          revision: string;
+          width: number;
+          height: number;
+          image?: ImageBitmap;
+          error?: string;
+        }>) => {
+          staticCacheBuildInFlight = false;
+          if (event.data.image) {
+            replaceStaticCache({
+              camera: event.data.camera,
+              revision: event.data.revision,
+              width: event.data.width,
+              height: event.data.height,
+              image: event.data.image,
+            });
+          } else if (event.data.error) {
+            staticCacheWorker?.terminate();
+            staticCacheWorker = null;
+          }
+          const pending = pendingStaticCacheBuild;
+          pendingStaticCacheBuild = null;
+          if (pending && staticCacheWorker) startStaticCacheBuild(pending);
+        };
+        staticCacheWorker.onerror = () => {
+          staticCacheBuildInFlight = false;
+          staticCacheWorker?.terminate();
+          staticCacheWorker = null;
+        };
+      } catch {
+        // The synchronous HTMLCanvasElement cache below is the compatibility
+        // path for runtimes that cannot start module workers.
+        staticCacheWorker = null;
+      }
+    }
 
     // Responsive Canvas Resize Observer
     const handleResize = () => {
@@ -662,26 +763,30 @@ export function App() {
         if (cacheNeedsRefresh) {
           const cacheWidth = viewportWidth + staticCacheMargin * 2;
           const cacheHeight = viewportHeight + staticCacheMargin * 2;
-          staticCacheCanvas.width = cacheWidth;
-          staticCacheCanvas.height = cacheHeight;
-          staticCacheCtx.clearRect(0, 0, cacheWidth, cacheHeight);
-          drawWorldInput(
-            staticCacheCtx,
-            { ...worldInput, canvasWidth: cacheWidth, canvasHeight: cacheHeight },
-            { layer: 'static', camera },
-          );
-          staticCache = { camera: { ...camera }, revision: staticRevision, width: cacheWidth, height: cacheHeight };
+          const build: StaticCacheBuild = {
+            input: { ...worldInput, canvasWidth: cacheWidth, canvasHeight: cacheHeight },
+            camera: { ...camera },
+            revision: staticRevision,
+          };
+          // A cold cache must be painted immediately so the game never opens
+          // to an empty world. Subsequent invalidations stay off the main
+          // thread and keep the old valid image until the worker replies.
+          if (!staticCache || !queueStaticCacheBuild(build)) {
+            renderStaticCacheOnMainThread(build);
+          }
         }
 
         const sourceWidth = viewportWidth * staticCache.camera.zoom / camera.zoom;
         const sourceHeight = viewportHeight * staticCache.camera.zoom / camera.zoom;
-        const sourceX = (staticCache.width - sourceWidth) / 2
+        const rawSourceX = (staticCache.width - sourceWidth) / 2
           + (camera.x - staticCache.camera.x) * staticCache.camera.zoom;
-        const sourceY = (staticCache.height - sourceHeight) / 2
+        const rawSourceY = (staticCache.height - sourceHeight) / 2
           + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
+        const sourceX = Math.max(0, Math.min(staticCache.width - sourceWidth, rawSourceX));
+        const sourceY = Math.max(0, Math.min(staticCache.height - sourceHeight, rawSourceY));
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
         staticCtx.drawImage(
-          staticCacheCanvas,
+          staticCache.image,
           sourceX,
           sourceY,
           sourceWidth,
@@ -726,6 +831,8 @@ export function App() {
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
+      staticCacheWorker?.terminate();
+      if (staticCache) releaseStaticCacheImage(staticCache.image);
     };
   }, [createdPlayer, canvasProbeMode, nativeWorldRenderer, nativeWorldRendererRequested]);
 
