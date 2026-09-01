@@ -376,6 +376,11 @@ export function App() {
     } | null = null;
     let lastProbeMode = canvasProbeModeRef.current;
     let lastLayerConfiguration = '';
+    // When every mutable pixel belongs to a native sprite, leaving even a
+    // transparent ImageBitmap canvas above WGPU makes WebView2 composite the
+    // whole window at rAF cadence. Sleep that overlay until an effect or an
+    // unsupported actor actually needs it again.
+    let nativeCanvasOverlaySleeping = false;
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
       if ('close' in image && typeof image.close === 'function') {
@@ -488,14 +493,18 @@ export function App() {
         }
         if (event.data.id === undefined) return;
         if (event.data.image && event.data.width && event.data.height && event.data.camera) {
-          replaceDynamicFrame(
-            event.data.image,
-            event.data.width,
-            event.data.height,
-            event.data.camera,
-            event.data.webglHordeMobBodies === true,
-            event.data.nativeSpriteBodies === true,
-          );
+          if (nativeCanvasOverlaySleeping) {
+            event.data.image.close();
+          } else {
+            replaceDynamicFrame(
+              event.data.image,
+              event.data.width,
+              event.data.height,
+              event.data.camera,
+              event.data.webglHordeMobBodies === true,
+              event.data.nativeSpriteBodies === true,
+            );
+          }
         }
         if (dynamicRenderStartedAt !== null) {
           perfMonitor.recordOffscreenDynamicFrame(performance.now() - dynamicRenderStartedAt);
@@ -882,6 +891,31 @@ export function App() {
           ? false
           : renderWebglHordeMobBodies(worldInput, camera);
         if (!dynamicCanvasLayerEnabledRef.current) return webglBodiesActive;
+        const allNativeActors = nativeSpriteBodies
+          // A dying enemy still has a Canvas ragdoll / death effect, so do
+          // not sleep the overlay merely because its state is already dead.
+          && worldInput.monsters.every((monster) => getNativeMonsterSpriteFrame(monster) !== null)
+          && [...Object.values(worldInput.players), worldInput.localPlayer]
+            .filter((player): player is Player => Boolean(player))
+            .every((player) => getNativePlayerSpriteFrame(player) !== null);
+        const noCanvasEffects = worldInput.dropItems.length === 0
+          && worldInput.projectiles.length === 0
+          && worldInput.particles.length === 0
+          && worldInput.damagePopups.length === 0
+          && worldInput.groundDecals.length === 0
+          && worldInput.cars.length === 0
+          && worldInput.summons.length === 0
+          && (!worldInput.introCinematic || worldInput.introCinematic.phase === 'none' || worldInput.introCinematic.phase === 'complete');
+        if (allNativeActors && noCanvasEffects) {
+          if (!nativeCanvasOverlaySleeping) {
+            nativeCanvasOverlaySleeping = true;
+            pendingDynamicRender = null;
+            clearDynamicFrame();
+            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+          }
+          return webglBodiesActive;
+        }
+        nativeCanvasOverlaySleeping = false;
         const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
         const workerInput = rasterScale === 1
           ? worldInput

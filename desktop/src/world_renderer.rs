@@ -942,7 +942,6 @@ pub struct NativeWorldRenderer {
     overlay_vertices: Vec<Vertex>,
     overlay_vertices_dirty: bool,
     last_scene_revision: Option<u64>,
-    last_frame_revision: Option<u64>,
     last_dynamic_scene_submitted_revision: Option<u64>,
     last_dynamic_scene_applied_revision: Option<u64>,
     latest_dynamic_scene: LatestDynamicScene,
@@ -1033,7 +1032,6 @@ impl Default for NativeWorldRenderer {
             overlay_vertices: Vec::new(),
             overlay_vertices_dirty: false,
             last_scene_revision: None,
-            last_frame_revision: None,
             last_dynamic_scene_submitted_revision: None,
             last_dynamic_scene_applied_revision: None,
             latest_dynamic_scene,
@@ -1145,23 +1143,22 @@ impl NativeWorldRenderer {
         let mut rendering_retained_scene = false;
         let rendered_scene = if let (
             Some((static_scene, static_revision)),
-            Some((world, prediction_seconds, frame_revision)),
+            Some((world, prediction_seconds, _frame_revision)),
         ) = (
             state.static_scene_with_revision(),
             state.frame_with_prediction_and_revision(),
         ) {
-            // Static display-list + camera frame. Actors are painted by the
-            // WebView Canvas overlay, so this path must win over a leftover
-            // dynamic command list from an older bundle.
+            // Static display-list + camera frame. Sprite atlas actors are
+            // retained by WGPU, so rebuild their tiny dynamic vertex buffers
+            // on every presentation. The WebView only sends position updates
+            // at rAF cadence; deriving prediction here lets native frames
+            // continue moving smoothly between those bridge messages.
             if self.last_static_scene_submitted_revision != Some(static_revision) {
                 self.submit_static_scene(static_revision, static_scene.clone());
                 self.last_static_scene_submitted_revision = Some(static_revision);
             }
-            if self.last_frame_revision != Some(frame_revision) {
-                self.build_dynamic_frame_vertices(world, prediction_seconds);
-                self.last_frame_revision = Some(frame_revision);
-                self.vertices_dirty = true;
-            }
+            self.build_dynamic_frame_vertices(world, prediction_seconds);
+            self.vertices_dirty = true;
             frame_scene = NativeRenderScene {
                 version: 1,
                 viewport: NativeSceneViewport {

@@ -4519,44 +4519,33 @@ const NATIVE_FACTION_SPRITES = new Set([
 const NATIVE_BOSS_SPRITES: Record<string, string> = {
   boss_welder: 'boss_boss_welder',
   boss_outlaw_viktor: 'boss_boss_outlaw_viktor',
+  bandit_boss: 'boss_boss_bandit_warlord',
   cop_juggernaut: 'boss_boss_police_juggernaut',
   punk_juggernaut: 'boss_boss_punk_juggernaut',
 };
 
 /**
- * A native atlas frame is selected only for a pose that is already static in
- * the source renderer. Transient combat states intentionally keep Canvas as
- * a correctness fallback until they have dedicated animation frames.
+ * Native actor sprites deliberately stay selected through combat state.
+ *
+ * The atlas cells are generated from the source Canvas routines, so a
+ * cooldown, a charged shot, or a `humanChibi` descriptor is not a different
+ * body asset. Treating those flags as a Canvas fallback made every crowded
+ * firefight re-rasterize the complete WebView layer and capped the picture at
+ * the browser rAF cadence. Transient muzzle flashes, telegraphs and damage
+ * effects remain an overlay; the actor body itself is always a sprite.
  */
 export function getNativeMonsterSpriteFrame(monster: Monster): string | null {
+  if (monster.hp <= 0) return null;
   const horde = getWebglHordeMobAtlasKey(monster);
   if (horde) {
     const [kind, boss] = horde.split(':');
     return `horde_${kind}${boss === '1' ? '_boss' : ''}`;
   }
   const bossFrame = NATIVE_BOSS_SPRITES[monster.type];
-  if (
-    bossFrame
-    && monster.hp > 0
-    && (monster.hitFlash || 0) <= 0
-    && (monster.jumpZ || 0) <= 0
-    && (monster.dodgeTimer || 0) <= 0
-    && !monster.isCharging
-    && !monster.isPinned
-    && (monster.attackCooldown || 0) <= 1
-  ) return bossFrame;
+  if (bossFrame) return bossFrame;
   if (
     monster.hordeKind
     || monster.type === 'forest_wolf'
-    || monster.hp <= 0
-    || (monster.hitFlash || 0) > 0
-    || (monster.jumpZ || 0) > 0
-    || (monster.dodgeTimer || 0) > 0
-    || monster.isCharging
-    || monster.isPinned
-    || monster.isJuggernaut
-    || monster.humanChibi
-    || (monster.attackCooldown || 0) > 1
   ) return null;
   const faction = monster.faction === 'punk_demon' ? 'punk' : monster.faction;
   const frame = `${faction}_${monster.type}`;
