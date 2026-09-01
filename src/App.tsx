@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Player, Item, ChatMessage } from './types/game';
+import { ChibiConfig, Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
@@ -98,8 +98,7 @@ function hexColor(color: string | undefined, fallback: [number, number, number, 
  * part of the game state and native parity depends on carrying them across the
  * bridge intact.
  */
-function nativeChibiRecipe(player: Player) {
-  const chibi = player.chibi;
+function nativeChibiRecipe(chibi: ChibiConfig) {
   return {
     hairStyle: chibi.hairStyle,
     frontHairStyle: chibi.frontHairStyle,
@@ -134,6 +133,10 @@ function nativeAnimationRecipe(player: Player) {
     attackTimer: player.attackTimer,
     dodgeTimer: player.dodgeTimer,
   };
+}
+
+function nativeWeaponType(player: Player) {
+  return player.equipment?.weapon?.gunType || 'pistol';
 }
 
 function nativeMonsterColor(faction: string | undefined): [number, number, number, number] {
@@ -389,8 +392,9 @@ export function App() {
             hpRatio: curEngine.player.stats.maxHp > 0 ? curEngine.player.stats.hp / curEngine.player.stats.maxHp : 1,
             facingLeft: curEngine.player.facing === 'left',
             layer: 20,
-            chibi: nativeChibiRecipe(curEngine.player),
+            chibi: nativeChibiRecipe(curEngine.player.chibi),
             animation: nativeAnimationRecipe(curEngine.player),
+            weaponType: nativeWeaponType(curEngine.player),
           },
           ...(Object.values(curEngine.remotePlayers) as Player[])
             .filter((player) => inNativeView(player.x, player.y, 48))
@@ -408,8 +412,9 @@ export function App() {
             hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 1,
             facingLeft: player.facing === 'left',
             layer: 18,
-            chibi: nativeChibiRecipe(player),
+            chibi: nativeChibiRecipe(player.chibi),
             animation: nativeAnimationRecipe(player),
+            weaponType: nativeWeaponType(player),
           })),
           ...curEngine.monsters
             .filter((monster) => monster.state !== 'dead' && monster.hp > 0 && inNativeView(monster.x, monster.y, 90))
@@ -427,6 +432,15 @@ export function App() {
               hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 1,
               facingLeft: monster.facing === 'left',
               layer: 10,
+              chibi: monster.humanChibi ? nativeChibiRecipe(monster.humanChibi) : undefined,
+              animation: {
+                state: monster.state === 'chase' ? 'walk' : monster.state,
+                jumpZ: monster.jumpZ || 0,
+                attackTimer: monster.attackCooldown,
+                dodgeTimer: monster.dodgeTimer || 0,
+              },
+              weaponType: monster.weaponType || 'pistol',
+              hasShield: Boolean(monster.hasShield),
             })),
           ...curEngine.projectiles.filter((projectile) => inNativeView(projectile.x, projectile.y, 48)).map((projectile) => ({
             id: projectile.id,

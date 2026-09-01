@@ -242,6 +242,10 @@ pub struct NativeRenderEntity {
     #[serde(default)]
     pub projectile_type: String,
     #[serde(default)]
+    pub weapon_type: String,
+    #[serde(default)]
+    pub has_shield: bool,
+    #[serde(default)]
     pub projectile_range: f32,
     #[serde(default)]
     pub tracer_length: f32,
@@ -471,6 +475,7 @@ impl NativeWorldState {
                 && entity.kind.len() <= 32
                 && entity.faction.len() <= 32
                 && entity.projectile_type.len() <= 32
+                && entity.weapon_type.len() <= 32
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
                     .animation
@@ -2437,7 +2442,7 @@ impl NativeWorldRenderer {
     fn add_humanoid(
         &mut self,
         entity: &NativeRenderEntity,
-        x: f32,
+        mut x: f32,
         mut y: f32,
         world: &NativeRenderFrame,
     ) {
@@ -2487,7 +2492,19 @@ impl NativeWorldRenderer {
         } else {
             (world.time_seconds * 2.0).sin() * size * 0.025
         };
-        y -= animation.map_or(0.0, |state| state.jump_z) + bob;
+        let spawn_lift = animation
+            .map(|state| (1.0 - state.spawn_bounce).clamp(0.0, 1.0) * size * 0.46)
+            .unwrap_or_default();
+        let dodge_progress = animation
+            .map(|state| (state.dodge_timer / 0.24).clamp(0.0, 1.0))
+            .unwrap_or_default();
+        if dodge_progress > 0.0 {
+            x += if entity.facing_left { -1.0 } else { 1.0 }
+                * size
+                * 0.34
+                * dodge_progress;
+        }
+        y -= animation.map_or(0.0, |state| state.jump_z) + bob + spawn_lift;
 
         // The source Chibi order is shadow -> back hair/wings -> outfit ->
         // face/front hair -> cosmetics/weapon. The primitives below retain
@@ -2513,6 +2530,38 @@ impl NativeWorldRenderer {
                     16,
                     world,
                 );
+                match style.halo_type.as_str() {
+                    "cross" => {
+                        self.add_world_rect(x, y - size * 0.83, size * 0.055, size * 0.30, halo, world);
+                        self.add_world_rect(x, y - size * 0.83, size * 0.22, size * 0.055, halo, world);
+                    }
+                    "star" | "floral" => {
+                        for point in 0..5 {
+                            let angle = point as f32 * std::f32::consts::TAU / 5.0
+                                - std::f32::consts::FRAC_PI_2;
+                            self.add_world_circle(
+                                x + angle.cos() * size * 0.20,
+                                y - size * 0.83 + angle.sin() * size * 0.12,
+                                size * 0.045,
+                                halo,
+                                7,
+                                world,
+                            );
+                        }
+                    }
+                    "crown" => {
+                        for offset in [-0.16_f32, 0.0, 0.16] {
+                            self.add_world_triangle(
+                                [x + size * (offset - 0.07), y - size * 0.84],
+                                [x + size * offset, y - size * 1.02],
+                                [x + size * (offset + 0.07), y - size * 0.84],
+                                halo,
+                                world,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
             }
             let wing = recipe_color(&style.wing_color, [0.38, 0.76, 1.0, 1.0]);
             if style.wing_type != "none" && !style.wing_type.is_empty() {
@@ -2576,6 +2625,61 @@ impl NativeWorldRenderer {
                         14,
                         world,
                     );
+                }
+                "anya_buns" | "cyber_buns" | "sailor_odango" | "twin_buns_flowing"
+                | "mega_drill_buns" | "high_bun" => {
+                    self.add_world_circle(
+                        x - size * 0.28,
+                        y - size * 0.54,
+                        size * 0.17,
+                        hair,
+                        10,
+                        world,
+                    );
+                    self.add_world_circle(
+                        x + size * 0.28,
+                        y - size * 0.54,
+                        size * 0.17,
+                        hair,
+                        10,
+                        world,
+                    );
+                }
+                "spiky" | "super_saiyan" | "pompadour_chad" | "topknot_samurai" => {
+                    for offset in [-0.28_f32, -0.10, 0.10, 0.28] {
+                        self.add_world_triangle(
+                            [x + size * (offset - 0.11), y - size * 0.47],
+                            [x + size * offset, y - size * 0.82],
+                            [x + size * (offset + 0.11), y - size * 0.47],
+                            hair,
+                            world,
+                        );
+                    }
+                }
+                "afro" | "fluffy_short" | "mushroom_bob" | "asymmetric_bob" | "cirno_bob"
+                | "cat_hood_bob" => {
+                    self.add_world_ellipse(
+                        x,
+                        y - size * 0.40,
+                        size * 0.40,
+                        size * 0.32,
+                        hair,
+                        14,
+                        world,
+                    );
+                }
+                "side_braid" | "fishtail_braid" | "dreadlocks" => {
+                    for offset in [-0.32_f32, 0.32] {
+                        self.add_world_ellipse(
+                            x + size * offset,
+                            y - size * 0.10,
+                            size * 0.08,
+                            size * 0.38,
+                            hair,
+                            10,
+                            world,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -2766,23 +2870,30 @@ impl NativeWorldRenderer {
                 self.add_world_rect(x, y - size * 0.70, size * 0.30, size * 0.16, hat, world);
             }
         }
-        let weapon_direction = if entity.facing_left { -1.0 } else { 1.0 };
-        self.add_world_rect(
-            x + weapon_direction * size * 0.42,
-            y + size * 0.04,
-            size * 0.46,
-            size * 0.12,
-            outline,
-            world,
-        );
-        self.add_world_rect(
-            x + weapon_direction * size * 0.42,
-            y + size * 0.01,
-            size * 0.34,
-            size * 0.06,
-            [0.70, 0.80, 0.92, 1.0],
-            world,
-        );
+        self.add_weapon_asset(entity, x, y, size, outline, world);
+        if entity.has_shield {
+            let shield_x = x
+                + if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34;
+            let shield = if entity.faction == "police" {
+                [0.06, 0.18, 0.42, 0.94]
+            } else {
+                [0.12, 0.10, 0.13, 0.94]
+            };
+            self.add_world_rect(shield_x, y + size * 0.02, size * 0.28, size * 0.64, outline, world);
+            self.add_world_rect(shield_x, y + size * 0.02, size * 0.22, size * 0.56, shield, world);
+            self.add_world_rect(
+                shield_x,
+                y - size * 0.10,
+                size * 0.14,
+                size * 0.10,
+                if entity.faction == "police" {
+                    [0.22, 0.82, 1.0, 0.72]
+                } else {
+                    [1.0, 0.22, 0.31, 0.72]
+                },
+                world,
+            );
+        }
         if entity.kind == "monster" {
             let bar_width = size * 1.28;
             self.add_world_rect(x, y - size * 0.86, bar_width, size * 0.11, outline, world);
@@ -2798,6 +2909,169 @@ impl NativeWorldRenderer {
                 },
                 world,
             );
+        }
+    }
+
+    /// Builds the equipment layer entirely on the native side. These are
+    /// stable local asset recipes (not Canvas commands) selected by the
+    /// authoritative entity snapshot.
+    fn add_weapon_asset(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        size: f32,
+        outline: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let direction = if entity.facing_left { -1.0 } else { 1.0 };
+        let origin_x = x + direction * size * 0.36;
+        let metal = [0.70, 0.80, 0.92, 1.0];
+        match entity.weapon_type.as_str() {
+            "bat" | "baton" => {
+                self.add_world_line(
+                    origin_x - direction * size * 0.10,
+                    y + size * 0.12,
+                    origin_x + direction * size * 0.48,
+                    y - size * 0.26,
+                    size * 0.09,
+                    outline,
+                    world,
+                );
+                self.add_world_line(
+                    origin_x - direction * size * 0.10,
+                    y + size * 0.12,
+                    origin_x + direction * size * 0.48,
+                    y - size * 0.26,
+                    size * 0.052,
+                    if entity.weapon_type == "baton" { metal } else { hex("#7C3F1D") },
+                    world,
+                );
+            }
+            "sledgehammer" => {
+                self.add_world_line(
+                    origin_x - direction * size * 0.08,
+                    y + size * 0.18,
+                    origin_x + direction * size * 0.46,
+                    y - size * 0.35,
+                    size * 0.07,
+                    hex("#5B3826"),
+                    world,
+                );
+                self.add_world_rect(
+                    origin_x + direction * size * 0.45,
+                    y - size * 0.36,
+                    size * 0.25,
+                    size * 0.18,
+                    outline,
+                    world,
+                );
+                self.add_world_rect(
+                    origin_x + direction * size * 0.45,
+                    y - size * 0.36,
+                    size * 0.19,
+                    size * 0.12,
+                    hex("#78716C"),
+                    world,
+                );
+            }
+            "blade" => {
+                self.add_world_line(
+                    origin_x,
+                    y + size * 0.08,
+                    origin_x + direction * size * 0.58,
+                    y - size * 0.18,
+                    size * 0.09,
+                    outline,
+                    world,
+                );
+                self.add_world_line(
+                    origin_x,
+                    y + size * 0.08,
+                    origin_x + direction * size * 0.58,
+                    y - size * 0.18,
+                    size * 0.045,
+                    hex("#E0F2FE"),
+                    world,
+                );
+            }
+            "staff" => {
+                self.add_world_line(
+                    origin_x,
+                    y + size * 0.18,
+                    origin_x + direction * size * 0.22,
+                    y - size * 0.48,
+                    size * 0.052,
+                    hex("#6B3E26"),
+                    world,
+                );
+                self.add_world_circle(
+                    origin_x + direction * size * 0.22,
+                    y - size * 0.48,
+                    size * 0.13,
+                    entity.color,
+                    10,
+                    world,
+                );
+            }
+            "molotov" => {
+                self.add_world_circle(
+                    origin_x + direction * size * 0.25,
+                    y - size * 0.08,
+                    size * 0.13,
+                    hex("#F97316"),
+                    10,
+                    world,
+                );
+                self.add_world_rect(
+                    origin_x + direction * size * 0.25,
+                    y - size * 0.25,
+                    size * 0.055,
+                    size * 0.14,
+                    hex("#FDE68A"),
+                    world,
+                );
+            }
+            "shotgun" | "ak47" | "cheytac" | "mac10" | "revolver" | "pistol" => {
+                let barrel_scale = match entity.weapon_type.as_str() {
+                    "cheytac" => 0.78,
+                    "ak47" => 0.62,
+                    "shotgun" => 0.58,
+                    "mac10" => 0.38,
+                    "revolver" => 0.35,
+                    _ => 0.32,
+                };
+                self.add_world_rect(
+                    origin_x,
+                    y + size * 0.04,
+                    size * (barrel_scale + 0.10),
+                    size * 0.13,
+                    outline,
+                    world,
+                );
+                self.add_world_rect(
+                    origin_x + direction * size * 0.03,
+                    y + size * 0.01,
+                    size * barrel_scale,
+                    size * 0.065,
+                    metal,
+                    world,
+                );
+                if matches!(entity.weapon_type.as_str(), "ak47" | "cheytac") {
+                    self.add_world_circle(
+                        origin_x - direction * size * 0.10,
+                        y + size * 0.13,
+                        size * 0.10,
+                        hex("#3F2A1D"),
+                        8,
+                        world,
+                    );
+                }
+            }
+            _ => {
+                self.add_world_rect(origin_x, y + size * 0.04, size * 0.46, size * 0.12, outline, world);
+                self.add_world_rect(origin_x, y + size * 0.01, size * 0.34, size * 0.06, metal, world);
+            }
         }
     }
 
@@ -2919,6 +3193,55 @@ impl NativeWorldRenderer {
                         world,
                     );
                 }
+            }
+            "falling_sword" => {
+                self.add_world_rect(x, y - radius * 0.45, radius * 0.34, radius * 2.2, hex("#0F172A"), world);
+                self.add_world_rect(x, y - radius * 0.45, radius * 0.22, radius * 1.95, hex("#E0F2FE"), world);
+                self.add_world_rect(x, y + radius * 0.60, radius * 0.78, radius * 0.20, hex("#F59E0B"), world);
+            }
+            "lightning_bolt" => {
+                let mut previous = [x, y - radius * 18.0];
+                for segment in 1..=6 {
+                    let progress = segment as f32 / 6.0;
+                    let phase = entity.distance_traveled * 0.037 + segment as f32 * 2.17;
+                    let next = [
+                        x + phase.sin() * radius * 1.35 * (1.0 - progress),
+                        y - radius * 18.0 * (1.0 - progress),
+                    ];
+                    self.add_world_line(
+                        previous[0],
+                        previous[1],
+                        next[0],
+                        next[1],
+                        radius * 0.82,
+                        entity.color,
+                        world,
+                    );
+                    self.add_world_line(
+                        previous[0],
+                        previous[1],
+                        next[0],
+                        next[1],
+                        radius * 0.30,
+                        [1.0, 1.0, 1.0, 0.94],
+                        world,
+                    );
+                    previous = next;
+                }
+            }
+            "void_singularity" => {
+                let pulse = 1.0 + (world.time_seconds * 10.0).sin() * 0.16;
+                self.add_world_circle(
+                    x,
+                    y,
+                    radius * pulse * 1.22,
+                    [0.49, 0.23, 0.93, 0.24],
+                    18,
+                    world,
+                );
+                self.add_world_circle(x, y, radius, [0.49, 0.23, 0.93, 0.62], 18, world);
+                self.add_world_circle(x, y, radius * 0.45, hex("#0F172A"), 14, world);
+                self.add_world_circle(x, y, radius * 0.15, [0.96, 0.45, 0.71, 0.92], 10, world);
             }
             "laser" if entity.projectile_range > 1_800.0 => {
                 self.add_world_line(
@@ -3405,6 +3728,7 @@ mod tests {
                     "id": "player-1", "kind": "player", "x": 680, "y": 650,
                     "size": 38, "color": [0.1, 0.9, 1, 1],
                     "projectileType": "magic_orb", "tracerLength": 18,
+                    "weaponType": "cheytac", "hasShield": true,
                     "chibi": {"hairStyle": "miku_twintails", "hairColor": "#38BDF8", "coatColor": "#FFFFFF", "skirtColor": "#334155", "earType": "cat", "earColor": "#38BDF8"},
                     "animation": {"state": "walk", "isSprinting": true, "jumpZ": 12}
                 }]
@@ -3422,6 +3746,8 @@ mod tests {
             Some("miku_twintails")
         );
         assert_eq!(entity.projectile_type, "magic_orb");
+        assert_eq!(entity.weapon_type, "cheytac");
+        assert!(entity.has_shield);
         assert!(entity
             .animation
             .as_ref()
