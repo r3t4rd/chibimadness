@@ -2752,6 +2752,9 @@ impl NativeWorldRenderer {
             12,
             world,
         );
+        if let Some(style) = recipe {
+            self.add_outfit_asset(style, x, y, size, coat, skirt, outline, world);
+        }
         self.add_world_circle(x, y - size * 0.28, size * 0.34, outline, 12, world);
         self.add_world_circle(x, y - size * 0.30, size * 0.29, skin, 12, world);
         self.add_world_circle(x, y - size * 0.43, size * 0.30, hair, 12, world);
@@ -2909,6 +2912,115 @@ impl NativeWorldRenderer {
                 },
                 world,
             );
+        }
+    }
+
+    /// Native equivalent of the source outfit pass. It keeps the recipe
+    /// vocabulary in Rust so an entity only transfers cosmetic state, never
+    /// a list of Canvas drawing commands.
+    fn add_outfit_asset(
+        &mut self,
+        style: &NativeChibiRecipe,
+        x: f32,
+        y: f32,
+        size: f32,
+        coat: [f32; 4],
+        skirt: [f32; 4],
+        outline: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let accent = recipe_color(
+            &style.accent_color,
+            recipe_color(&style.ribbon_color, [0.22, 0.74, 1.0, 1.0]),
+        );
+        match style.outfit_type.as_str() {
+            "cyber_hoodie" => {
+                self.add_world_rect(x, y + size * 0.02, size * 0.58, size * 0.44, coat, world);
+                self.add_world_rect(x, y + size * 0.13, size * 0.34, size * 0.12, accent, world);
+                self.add_world_line(
+                    x - size * 0.08,
+                    y - size * 0.10,
+                    x - size * 0.08,
+                    y + size * 0.08,
+                    size * 0.025,
+                    [1.0, 1.0, 1.0, 0.92],
+                    world,
+                );
+                self.add_world_line(
+                    x + size * 0.08,
+                    y - size * 0.10,
+                    x + size * 0.08,
+                    y + size * 0.08,
+                    size * 0.025,
+                    [1.0, 1.0, 1.0, 0.92],
+                    world,
+                );
+            }
+            "maid_idol" => {
+                self.add_world_rect(x, y + size * 0.02, size * 0.52, size * 0.42, coat, world);
+                self.add_world_triangle(
+                    [x - size * 0.15, y - size * 0.15],
+                    [x + size * 0.15, y - size * 0.15],
+                    [x, y + size * 0.22],
+                    [1.0, 1.0, 1.0, 1.0],
+                    world,
+                );
+                self.add_world_circle(x, y - size * 0.10, size * 0.07, accent, 8, world);
+            }
+            "magic_robe" | "kimono_yukata" | "shrine_miko" => {
+                self.add_world_ellipse(x, y + size * 0.23, size * 0.43, size * 0.30, coat, 14, world);
+                self.add_world_rect(x, y + size * 0.08, size * 0.62, size * 0.07, accent, world);
+                if style.outfit_type == "magic_robe" {
+                    self.add_world_circle(x, y - size * 0.03, size * 0.07, hex("#FDE047"), 8, world);
+                }
+            }
+            "goth_lolita" | "magical_girl" | "idol_stage" | "sailor_uniform" => {
+                self.add_world_ellipse(x, y + size * 0.30, size * 0.40, size * 0.22, skirt, 14, world);
+                for offset in [-0.22_f32, -0.07, 0.07, 0.22] {
+                    self.add_world_circle(
+                        x + size * offset,
+                        y + size * 0.46,
+                        size * 0.052,
+                        if style.outfit_type == "goth_lolita" { [1.0, 1.0, 1.0, 0.96] } else { accent },
+                        7,
+                        world,
+                    );
+                }
+                if style.outfit_type == "sailor_uniform" {
+                    self.add_world_triangle(
+                        [x - size * 0.16, y - size * 0.12],
+                        [x + size * 0.16, y - size * 0.12],
+                        [x, y + size * 0.12],
+                        accent,
+                        world,
+                    );
+                }
+            }
+            "tactical_shinobi" | "cyber_ninja" | "combat_commando" | "mecha_pilot"
+            | "military_officer" | "techwear_poncho" => {
+                self.add_world_rect(x, y + size * 0.22, size * 0.54, size * 0.20, outline, world);
+                self.add_world_rect(x, y + size * 0.18, size * 0.47, size * 0.13, skirt, world);
+                self.add_world_rect(x, y + size * 0.05, size * 0.54, size * 0.052, accent, world);
+                self.add_world_rect(x - size * 0.16, y + size * 0.25, size * 0.10, size * 0.07, accent, world);
+                self.add_world_rect(x + size * 0.16, y + size * 0.25, size * 0.10, size * 0.07, accent, world);
+            }
+            "bunny_suit" => {
+                self.add_world_rect(x, y + size * 0.08, size * 0.46, size * 0.43, coat, world);
+                self.add_world_circle(x, y + size * 0.38, size * 0.10, [1.0, 1.0, 1.0, 1.0], 8, world);
+            }
+            "vampire_noble" | "detective_coat" | "winter_coat" | "sukeban_trench" => {
+                self.add_world_ellipse(x, y + size * 0.23, size * 0.42, size * 0.32, coat, 14, world);
+                self.add_world_line(
+                    x,
+                    y - size * 0.12,
+                    x,
+                    y + size * 0.43,
+                    size * 0.028,
+                    accent,
+                    world,
+                );
+            }
+            _ => {}
         }
     }
 

@@ -384,7 +384,9 @@ export function App() {
             faction: '',
             x: curEngine.player.x,
             y: curEngine.player.y,
-            size: 38,
+            // Canvas chibi art occupies roughly a 72px native design box.
+            // The old 38px fallback was only a placeholder silhouette.
+            size: 72,
             color: [0.1, 0.9, 1, 1] as [number, number, number, number],
             velocityX: curEngine.player.vx,
             velocityY: curEngine.player.vy,
@@ -404,7 +406,7 @@ export function App() {
             faction: '',
             x: player.x,
             y: player.y,
-            size: 34,
+            size: 68,
             color: [0.35, 0.65, 1, 1] as [number, number, number, number],
             velocityX: player.vx,
             velocityY: player.vy,
@@ -426,7 +428,7 @@ export function App() {
               // Rust applies the vertical animation recipe; subtracting here
               // as well displaced airborne enemies twice.
               y: monster.y,
-              size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
+              size: monster.isBoss ? 94 : monster.isJuggernaut ? 82 : monster.humanChibi ? 72 : 52,
               color: nativeMonsterColor(monster.faction),
               velocityX: 0,
               velocityY: 0,
