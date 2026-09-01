@@ -83,6 +83,7 @@ export class WebglHordeMobRenderer {
   private readonly program: WebGLProgram;
   private readonly buffer: WebGLBuffer;
   private readonly texture: WebGLTexture;
+  private readonly dynamicOverlayTexture: WebGLTexture;
   private readonly atlasCanvas: HTMLCanvasElement;
   private readonly atlasSlots = new Map<string, AtlasSlot>();
   private readonly positionLocation: number;
@@ -90,6 +91,7 @@ export class WebglHordeMobRenderer {
   private lost = false;
   private drawnMobCount = 0;
   private nextAtlasSlot = 0;
+  private dynamicOverlayReady = false;
 
   get isAvailable() {
     return !this.lost;
@@ -114,9 +116,11 @@ export class WebglHordeMobRenderer {
     this.program = createProgram(gl);
     const buffer = gl.createBuffer();
     const texture = gl.createTexture();
-    if (!buffer || !texture) throw new Error('WebGL atlas allocation failed');
+    const dynamicOverlayTexture = gl.createTexture();
+    if (!buffer || !texture || !dynamicOverlayTexture) throw new Error('WebGL atlas allocation failed');
     this.buffer = buffer;
     this.texture = texture;
+    this.dynamicOverlayTexture = dynamicOverlayTexture;
     this.atlasCanvas = document.createElement('canvas');
     this.atlasCanvas.width = ATLAS_COLUMNS * CELL_SIZE;
     this.atlasCanvas.height = ATLAS_ROWS * CELL_SIZE;
@@ -202,7 +206,7 @@ export class WebglHordeMobRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
-  private drawVertices(vertices: number[], probeSolid = false) {
+  private drawVertices(vertices: number[], probeSolid = false, texture = this.texture) {
     if (vertices.length === 0) return 0;
     const gl = this.gl;
     gl.useProgram(this.program);
@@ -213,7 +217,7 @@ export class WebglHordeMobRenderer {
     gl.enableVertexAttribArray(this.uvLocation);
     gl.vertexAttribPointer(this.uvLocation, 2, gl.FLOAT, false, 16, 8);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
     const sampler = gl.getUniformLocation(this.program, 'u_atlas');
     gl.uniform1i(sampler, 0);
     const probeSolidUniform = gl.getUniformLocation(this.program, 'u_probe_solid');
@@ -305,11 +309,42 @@ export class WebglHordeMobRenderer {
     return this.drawVertices(vertices, true);
   }
 
+  /**
+   * Replaces Canvas2D's visible `drawImage(ImageBitmap)` presentation. The
+   * worker remains a compatibility raster source for now, but compositing the
+   * transparent frame through WebGL avoids the WebView Canvas present path.
+   */
+  uploadDynamicOverlay(image: ImageBitmap) {
+    if (this.lost) return false;
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.dynamicOverlayTexture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+    this.dynamicOverlayReady = true;
+    return true;
+  }
+
+  renderDynamicOverlay() {
+    if (this.lost || !this.dynamicOverlayReady) return false;
+    const vertices = [
+      -1, 1, 0, 1, 1, 1, 1, 1, 1, -1, 1, 0,
+      -1, 1, 0, 1, 1, -1, 1, 0, -1, -1, 0, 0,
+    ];
+    this.drawVertices(vertices, false, this.dynamicOverlayTexture);
+    return true;
+  }
+
   destroy() {
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost, false);
     if (!this.lost) {
       this.gl.deleteBuffer(this.buffer);
       this.gl.deleteTexture(this.texture);
+      this.gl.deleteTexture(this.dynamicOverlayTexture);
       this.gl.deleteProgram(this.program);
     }
   }

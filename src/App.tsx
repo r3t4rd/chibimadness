@@ -313,6 +313,8 @@ export function App() {
     let nextDynamicRenderId = 1;
     let dynamicRenderStartedAt: number | null = null;
     let dynamicFrame: { image: ImageBitmap; webglHordeMobBodies: boolean } | null = null;
+    let uploadedDynamicFrame: ImageBitmap | null = null;
+    let canvasOverlayClearedForWebgl = false;
     let lastProbeMode = canvasProbeModeRef.current;
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
@@ -498,8 +500,7 @@ export function App() {
       input: WorldRenderInput,
       camera: { x: number; y: number; zoom: number },
     ) => {
-      if (!webglHordeMobBodiesRef.current || !webglHordeMobRenderer) {
-        webglHordeMobRenderer?.clear();
+      if (!webglHordeMobRenderer) {
         return false;
       }
       try {
@@ -508,8 +509,12 @@ export function App() {
           webglHordeMobRenderer = null;
           return false;
         }
-        webglHordeMobRenderer.render(input.monsters, input.localPlayer, camera);
-        return true;
+        if (webglHordeMobBodiesRef.current) {
+          webglHordeMobRenderer.render(input.monsters, input.localPlayer, camera);
+          return true;
+        }
+        webglHordeMobRenderer.clear();
+        return false;
       } catch {
         // Context loss or an implementation-specific WebView GL failure must
         // never hide a monster. The next Canvas worker frame owns every body.
@@ -641,10 +646,31 @@ export function App() {
           camera: workerCamera,
           webglHordeMobBodies: webglBodiesActive,
         });
-        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        if (dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
-          ctx.drawImage(dynamicFrame.image, 0, 0, viewportWidth, viewportHeight);
-        } else if (!nativeWorldRenderer || !workerQueued) {
+        let presentedByWebgl = false;
+        if (webglHordeMobRenderer && dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
+          try {
+            if (uploadedDynamicFrame !== dynamicFrame.image) {
+              webglHordeMobRenderer.uploadDynamicOverlay(dynamicFrame.image);
+              uploadedDynamicFrame = dynamicFrame.image;
+            }
+            presentedByWebgl = webglHordeMobRenderer.renderDynamicOverlay();
+          } catch {
+            webglHordeMobRenderer.destroy();
+            webglHordeMobRenderer = null;
+            uploadedDynamicFrame = null;
+          }
+        }
+        if (presentedByWebgl) {
+          if (!canvasOverlayClearedForWebgl) {
+            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+            canvasOverlayClearedForWebgl = true;
+          }
+        } else {
+          canvasOverlayClearedForWebgl = false;
+          ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+          if (dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
+            ctx.drawImage(dynamicFrame.image, 0, 0, viewportWidth, viewportHeight);
+          } else if (!nativeWorldRenderer || !workerQueued) {
           // Native already shows the map. Skip a main-thread chibi paint while
           // the overlay worker warms up — that paint is the freeze we removed.
           drawWorldInput(ctx, worldInput, {
@@ -652,6 +678,7 @@ export function App() {
             camera,
             skipWebglHordeMobBodies: webglBodiesActive,
           });
+          }
         }
       };
       if (nativeWorldRenderer || activeCanvasProbeMode === 'normal') {
