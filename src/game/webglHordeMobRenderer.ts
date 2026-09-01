@@ -83,7 +83,6 @@ export class WebglHordeMobRenderer {
   private readonly program: WebGLProgram;
   private readonly buffer: WebGLBuffer;
   private readonly texture: WebGLTexture;
-  private readonly dynamicOverlayTexture: WebGLTexture;
   private readonly atlasCanvas: HTMLCanvasElement;
   private readonly atlasSlots = new Map<string, AtlasSlot>();
   private readonly positionLocation: number;
@@ -91,7 +90,6 @@ export class WebglHordeMobRenderer {
   private lost = false;
   private drawnMobCount = 0;
   private nextAtlasSlot = 0;
-  private dynamicOverlayReady = false;
 
   get isAvailable() {
     return !this.lost;
@@ -116,11 +114,9 @@ export class WebglHordeMobRenderer {
     this.program = createProgram(gl);
     const buffer = gl.createBuffer();
     const texture = gl.createTexture();
-    const dynamicOverlayTexture = gl.createTexture();
-    if (!buffer || !texture || !dynamicOverlayTexture) throw new Error('WebGL atlas allocation failed');
+    if (!buffer || !texture) throw new Error('WebGL atlas allocation failed');
     this.buffer = buffer;
     this.texture = texture;
-    this.dynamicOverlayTexture = dynamicOverlayTexture;
     this.atlasCanvas = document.createElement('canvas');
     this.atlasCanvas.width = ATLAS_COLUMNS * CELL_SIZE;
     this.atlasCanvas.height = ATLAS_ROWS * CELL_SIZE;
@@ -309,61 +305,11 @@ export class WebglHordeMobRenderer {
     return this.drawVertices(vertices, true);
   }
 
-  /**
-   * Replaces Canvas2D's visible `drawImage(ImageBitmap)` presentation. The
-   * worker remains a compatibility raster source for now, but compositing the
-   * transparent frame through WebGL avoids the WebView Canvas present path.
-   */
-  uploadDynamicOverlay(image: ImageBitmap) {
-    if (this.lost) return false;
-    const gl = this.gl;
-    gl.bindTexture(gl.TEXTURE_2D, this.dynamicOverlayTexture);
-    // ImageBitmap from the OffscreenCanvas already arrives in the orientation
-    // expected by our fullscreen UVs. Flipping it here mirrored all dynamic
-    // actors vertically in the WebGL presentation path.
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-    this.dynamicOverlayReady = true;
-    return true;
-  }
-
-  renderDynamicOverlay(options: {
-    camera: Camera;
-    sourceCamera: Camera;
-    sourceWidth: number;
-    sourceHeight: number;
-  }) {
-    if (this.lost || !this.dynamicOverlayReady) return false;
-    const sourceScaleX = Math.max(0.01, options.sourceWidth / this.canvas.width);
-    const sourceScaleY = Math.max(0.01, options.sourceHeight / this.canvas.height);
-    const sourceZoomX = options.sourceCamera.zoom / sourceScaleX;
-    const sourceZoomY = options.sourceCamera.zoom / sourceScaleY;
-    const scaleX = options.camera.zoom / sourceZoomX;
-    const scaleY = options.camera.zoom / sourceZoomY;
-    const translateX = (options.sourceCamera.x - options.camera.x) * options.camera.zoom * 2 / this.canvas.width;
-    const translateY = -(options.sourceCamera.y - options.camera.y) * options.camera.zoom * 2 / this.canvas.height;
-    const vertices = [
-      -scaleX + translateX, scaleY + translateY, 0, 0,
-      scaleX + translateX, scaleY + translateY, 1, 0,
-      scaleX + translateX, -scaleY + translateY, 1, 1,
-      -scaleX + translateX, scaleY + translateY, 0, 0,
-      scaleX + translateX, -scaleY + translateY, 1, 1,
-      -scaleX + translateX, -scaleY + translateY, 0, 1,
-    ];
-    this.drawVertices(vertices, false, this.dynamicOverlayTexture);
-    return true;
-  }
-
   destroy() {
     this.canvas.removeEventListener('webglcontextlost', this.onContextLost, false);
     if (!this.lost) {
       this.gl.deleteBuffer(this.buffer);
       this.gl.deleteTexture(this.texture);
-      this.gl.deleteTexture(this.dynamicOverlayTexture);
       this.gl.deleteProgram(this.program);
     }
   }

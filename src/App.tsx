@@ -319,8 +319,6 @@ export function App() {
       camera: { x: number; y: number; zoom: number };
       webglHordeMobBodies: boolean;
     } | null = null;
-    let uploadedDynamicFrame: ImageBitmap | null = null;
-    let canvasOverlayClearedForWebgl = false;
     let lastProbeMode = canvasProbeModeRef.current;
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
@@ -669,36 +667,26 @@ export function App() {
           camera: workerCamera,
           webglHordeMobBodies: webglBodiesActive,
         });
-        let presentedByWebgl = false;
-        if (webglHordeMobRenderer && dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
-          try {
-            if (uploadedDynamicFrame !== dynamicFrame.image) {
-              webglHordeMobRenderer.uploadDynamicOverlay(dynamicFrame.image);
-              uploadedDynamicFrame = dynamicFrame.image;
-            }
-            presentedByWebgl = webglHordeMobRenderer.renderDynamicOverlay({
-              camera,
-              sourceCamera: dynamicFrame.camera,
-              sourceWidth: dynamicFrame.width,
-              sourceHeight: dynamicFrame.height,
-            });
-          } catch {
-            webglHordeMobRenderer.destroy();
-            webglHordeMobRenderer = null;
-            uploadedDynamicFrame = null;
-          }
-        }
-        if (presentedByWebgl) {
-          if (!canvasOverlayClearedForWebgl) {
-            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-            canvasOverlayClearedForWebgl = true;
-          }
-        } else {
-          canvasOverlayClearedForWebgl = false;
-          ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-          if (dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
-            ctx.drawImage(dynamicFrame.image, 0, 0, viewportWidth, viewportHeight);
-          } else if (!nativeWorldRenderer || !workerQueued) {
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        if (dynamicFrame && dynamicFrame.webglHordeMobBodies === webglBodiesActive) {
+          // A worker frame was painted against its own camera. Reproject it
+          // while the next frame is in flight, otherwise actors visibly lag
+          // behind the camera at the worker cadence.
+          const sourceZoom = Math.max(0.01, dynamicFrame.camera.zoom);
+          const scale = camera.zoom / sourceZoom;
+          ctx.save();
+          ctx.translate(
+            viewportWidth / 2 + (dynamicFrame.camera.x - camera.x) * camera.zoom,
+            viewportHeight / 2 + (dynamicFrame.camera.y - camera.y) * camera.zoom,
+          );
+          ctx.scale(scale, scale);
+          ctx.drawImage(
+            dynamicFrame.image,
+            -dynamicFrame.width / 2,
+            -dynamicFrame.height / 2,
+          );
+          ctx.restore();
+        } else if (!nativeWorldRenderer || !workerQueued) {
           // Native already shows the map. Skip a main-thread chibi paint while
           // the overlay worker warms up — that paint is the freeze we removed.
           drawWorldInput(ctx, worldInput, {
@@ -706,7 +694,6 @@ export function App() {
             camera,
             skipWebglHordeMobBodies: webglBodiesActive,
           });
-          }
         }
       };
       if (nativeWorldRenderer || activeCanvasProbeMode === 'normal') {
