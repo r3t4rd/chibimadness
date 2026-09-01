@@ -10,17 +10,16 @@ type SceneCompileRequest = {
 };
 
 const measurementContext = new OffscreenCanvas(1, 1).getContext('2d');
-let lastStaticKey: string | null = null;
+let lastStaticContentKey: string | null = null;
+let lastStaticCamera: { x: number; y: number; zoom: number } | null = null;
 const STATIC_CACHE_OVERSCAN = 1.5;
 const MAX_STATIC_CACHE_DIMENSION = 4096;
 
-function staticSceneKey(input: WorldRenderInput, camera: { x: number; y: number; zoom: number }) {
-  // Source world culling is camera-relative. Refresh the retained mesh only
-  // when the camera crosses a generous tile, the viewport changes, or POIs
-  // (the only static input that can be authored at runtime) change.
+function staticContentKey(input: WorldRenderInput) {
+  // Camera position is deliberately excluded. The existing oversized cache
+  // remains correct until its real world-space coverage is exhausted.
   return JSON.stringify({
     viewport: [input.canvasWidth, input.canvasHeight],
-    cameraTile: [Math.floor(camera.x / 640), Math.floor(camera.y / 640), Math.round(camera.zoom * 20)],
     worldPois: input.worldPois ?? [],
     // Retained props redraw only when their observable state changes. Moving
     // cars belong to the dynamic mesh; including them here used to rebuild
@@ -28,6 +27,21 @@ function staticSceneKey(input: WorldRenderInput, camera: { x: number; y: number;
     occupancy: [input.localPlayer.interiorBuildingId ?? null, input.localPlayer.interiorFloor ?? 0],
     resourceNodes: input.resourceNodes.map((node) => [node.id, node.x, node.y, node.hp, node.type, node.scale]),
   });
+}
+
+function cameraFitsStaticCache(
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number }
+) {
+  if (!lastStaticCamera) return false;
+  const staticWidth = Math.min(MAX_STATIC_CACHE_DIMENSION, Math.ceil(input.canvasWidth * STATIC_CACHE_OVERSCAN));
+  const staticHeight = Math.min(MAX_STATIC_CACHE_DIMENSION, Math.ceil(input.canvasHeight * STATIC_CACHE_OVERSCAN));
+  const staticHalfWidth = staticWidth / lastStaticCamera.zoom / 2;
+  const staticHalfHeight = staticHeight / lastStaticCamera.zoom / 2;
+  const dynamicHalfWidth = input.canvasWidth / camera.zoom / 2;
+  const dynamicHalfHeight = input.canvasHeight / camera.zoom / 2;
+  return Math.abs(camera.x - lastStaticCamera.x) <= staticHalfWidth - dynamicHalfWidth
+    && Math.abs(camera.y - lastStaticCamera.y) <= staticHalfHeight - dynamicHalfHeight;
 }
 
 function staticCacheInput(input: WorldRenderInput): WorldRenderInput {
@@ -48,11 +62,15 @@ self.addEventListener('message', (event: MessageEvent<SceneCompileRequest>) => {
   }
   try {
     const dynamicScene = compileDynamicWorldScene(measurementContext, event.data.input);
-    const staticKey = staticSceneKey(event.data.input, dynamicScene.camera);
-    const staticScene = staticKey === lastStaticKey
+    const contentKey = staticContentKey(event.data.input);
+    const staticScene = contentKey === lastStaticContentKey
+      && cameraFitsStaticCache(event.data.input, dynamicScene.camera)
       ? undefined
       : compileStaticWorldScene(measurementContext, staticCacheInput(event.data.input), dynamicScene.camera);
-    lastStaticKey = staticKey;
+    if (staticScene) {
+      lastStaticContentKey = contentKey;
+      lastStaticCamera = dynamicScene.camera;
+    }
     self.postMessage({ id: event.data.id, staticScene, dynamicScene });
   } catch (error) {
     self.postMessage({

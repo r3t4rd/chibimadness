@@ -3,8 +3,8 @@ use std::{
     collections::HashMap,
     env, fs,
     sync::{
-        Arc, Condvar, Mutex,
         mpsc::{self, Receiver, TryRecvError},
+        Arc, Condvar, Mutex,
     },
     thread,
     time::Instant,
@@ -13,7 +13,7 @@ use std::{
 use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
-use yuyib::render::{RenderFrame, wgpu};
+use yuyib::render::{wgpu, RenderFrame};
 
 use crate::scene_executor;
 
@@ -679,6 +679,36 @@ struct DynamicSceneCompileResult {
 
 type LatestDynamicScene = Arc<(Mutex<Option<DynamicSceneCompileJob>>, Condvar)>;
 
+#[derive(Clone, Copy)]
+struct StaticSceneView {
+    viewport: [f32; 2],
+    position: [f32; 2],
+    zoom: f32,
+}
+
+impl From<&NativeRenderScene> for StaticSceneView {
+    fn from(scene: &NativeRenderScene) -> Self {
+        Self {
+            viewport: [scene.viewport.width, scene.viewport.height],
+            position: [scene.camera.x, scene.camera.y],
+            zoom: scene.camera.zoom,
+        }
+    }
+}
+
+struct StaticSceneCompileJob {
+    revision: u64,
+    scene: NativeRenderScene,
+}
+
+struct StaticSceneCompileResult {
+    revision: u64,
+    vertices: Vec<Vertex>,
+    view: StaticSceneView,
+}
+
+type LatestStaticScene = Arc<(Mutex<Option<StaticSceneCompileJob>>, Condvar)>;
+
 fn start_dynamic_scene_compiler(
     text_font: Option<FontArc>,
 ) -> (LatestDynamicScene, Receiver<DynamicSceneCompileResult>) {
@@ -692,11 +722,17 @@ fn start_dynamic_scene_compiler(
                 let (lock, ready) = &*worker_pending;
                 let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 while slot.is_none() {
-                    slot = ready.wait(slot).unwrap_or_else(|poisoned| poisoned.into_inner());
+                    slot = ready
+                        .wait(slot)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                 }
                 slot.take().expect("scene compiler notified without a job")
             };
-            let Some(vertices) = scene_vertices_for(&job.scene, SceneVertexSelection::Dynamic, text_font.as_ref()) else {
+            let Some(vertices) = scene_vertices_for(
+                &job.scene,
+                SceneVertexSelection::Dynamic,
+                text_font.as_ref(),
+            ) else {
                 continue;
             };
             let Some(overlay_vertices) = scene_vertices_for(
@@ -721,6 +757,49 @@ fn start_dynamic_scene_compiler(
     (pending, result_rx)
 }
 
+/// Static meshes can contain hundreds of thousands of triangles.  They must
+/// not be tessellated on the Winit/WebView thread when a camera cache rolls.
+fn start_static_scene_compiler(
+    text_font: Option<FontArc>,
+) -> (LatestStaticScene, Receiver<StaticSceneCompileResult>) {
+    let pending: LatestStaticScene = Arc::new((Mutex::new(None), Condvar::new()));
+    let worker_pending = Arc::clone(&pending);
+    let (result_tx, result_rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("native-world-static-compiler".to_owned())
+        .spawn(move || loop {
+            let job = {
+                let (lock, ready) = &*worker_pending;
+                let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                while slot.is_none() {
+                    slot = ready
+                        .wait(slot)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
+                slot.take()
+                    .expect("static scene compiler notified without a job")
+            };
+            let view = StaticSceneView::from(&job.scene);
+            let Some(vertices) =
+                scene_vertices_for(&job.scene, SceneVertexSelection::Static, text_font.as_ref())
+            else {
+                continue;
+            };
+            if result_tx
+                .send(StaticSceneCompileResult {
+                    revision: job.revision,
+                    vertices,
+                    view,
+                })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .expect("native static scene compiler thread must start");
+    (pending, result_rx)
+}
+
 pub struct NativeWorldRenderer {
     pipeline: Option<wgpu::RenderPipeline>,
     surface_format: Option<wgpu::TextureFormat>,
@@ -733,7 +812,9 @@ pub struct NativeWorldRenderer {
     static_vertex_capacity: usize,
     static_vertices: Vec<Vertex>,
     static_vertices_dirty: bool,
-    last_static_scene_revision: Option<u64>,
+    last_static_scene_submitted_revision: Option<u64>,
+    last_static_scene_applied_revision: Option<u64>,
+    static_scene_view: Option<StaticSceneView>,
     static_texture: Option<wgpu::Texture>,
     static_texture_view: Option<wgpu::TextureView>,
     static_texture_size: [u32; 2],
@@ -757,6 +838,8 @@ pub struct NativeWorldRenderer {
     last_dynamic_scene_applied_revision: Option<u64>,
     latest_dynamic_scene: LatestDynamicScene,
     dynamic_scene_results: Receiver<DynamicSceneCompileResult>,
+    latest_static_scene: LatestStaticScene,
+    static_scene_results: Receiver<StaticSceneCompileResult>,
     text_font: Option<FontArc>,
     last_presented_at: Option<Instant>,
     metrics_started_at: Instant,
@@ -798,6 +881,8 @@ impl Default for NativeWorldRenderer {
         let text_font = load_native_text_font();
         let (latest_dynamic_scene, dynamic_scene_results) =
             start_dynamic_scene_compiler(text_font.clone());
+        let (latest_static_scene, static_scene_results) =
+            start_static_scene_compiler(text_font.clone());
         Self {
             pipeline: None,
             surface_format: None,
@@ -810,7 +895,9 @@ impl Default for NativeWorldRenderer {
             static_vertex_capacity: 0,
             static_vertices: Vec::new(),
             static_vertices_dirty: false,
-            last_static_scene_revision: None,
+            last_static_scene_submitted_revision: None,
+            last_static_scene_applied_revision: None,
+            static_scene_view: None,
             static_texture: None,
             static_texture_view: None,
             static_texture_size: [0, 0],
@@ -834,6 +921,8 @@ impl Default for NativeWorldRenderer {
             last_dynamic_scene_applied_revision: None,
             latest_dynamic_scene,
             dynamic_scene_results,
+            latest_static_scene,
+            static_scene_results,
             text_font,
             last_presented_at: None,
             metrics_started_at: Instant::now(),
@@ -863,7 +952,9 @@ fn scene_vertices_for(
             SceneVertexSelection::All => true,
             SceneVertexSelection::Static => triangle.layer != scene_executor::SceneLayer::Dynamic,
             SceneVertexSelection::Dynamic => triangle.layer == scene_executor::SceneLayer::Dynamic,
-            SceneVertexSelection::DynamicOverlay => triangle.layer == scene_executor::SceneLayer::Screen,
+            SceneVertexSelection::DynamicOverlay => {
+                triangle.layer == scene_executor::SceneLayer::Screen
+            }
         };
         if !include {
             continue;
@@ -932,28 +1023,21 @@ impl NativeWorldRenderer {
     /// WebView uses this acknowledgement to hide its Canvas fallback safely.
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
         let mut retained_scene = None;
-        let mut retained_static_scene = None;
+        let mut rendering_retained_scene = false;
         let rendered_scene =
             if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
                 state.retained_scenes_with_revisions()
             {
-                if self.last_static_scene_revision != Some(static_revision) {
-                    let Some(vertices) =
-                        self.scene_vertices(static_scene, SceneVertexSelection::Static)
-                    else {
-                        return false;
-                    };
-                    self.static_vertices = vertices;
-                    self.static_vertices_dirty = true;
-                    self.static_texture_dirty = true;
-                    self.last_static_scene_revision = Some(static_revision);
+                if self.last_static_scene_submitted_revision != Some(static_revision) {
+                    self.submit_static_scene(static_revision, static_scene.clone());
+                    self.last_static_scene_submitted_revision = Some(static_revision);
                 }
                 if self.last_dynamic_scene_submitted_revision != Some(dynamic_revision) {
                     self.submit_dynamic_scene(dynamic_revision, dynamic_scene.clone());
                     self.last_dynamic_scene_submitted_revision = Some(dynamic_revision);
                 }
                 retained_scene = Some(dynamic_scene);
-                retained_static_scene = Some(static_scene);
+                rendering_retained_scene = true;
                 true
             } else if let Some((scene, revision)) = state.scene_with_revision() {
                 if self.last_scene_revision != Some(revision) {
@@ -977,16 +1061,24 @@ impl NativeWorldRenderer {
             } else {
                 false
             };
+        self.drain_static_scene_results();
         self.drain_dynamic_scene_results();
         if !rendered_scene {
+            return false;
+        }
+        // Keep the Canvas fallback visible until the first static cache is
+        // compiled. Subsequent cache revisions preserve the previous texture
+        // until their replacement is ready.
+        if rendering_retained_scene && self.static_scene_view.is_none() {
             return false;
         }
         if self.vertices.is_empty() && self.static_vertices.is_empty() {
             return false;
         }
         self.ensure_pipeline(frame);
-        if let Some(static_scene) = retained_static_scene {
-            self.ensure_static_cache(frame, static_scene);
+        let static_scene_view = self.static_scene_view;
+        if let Some(static_view) = static_scene_view {
+            self.ensure_static_cache(frame, static_view);
         }
         if let Some(scene) = retained_scene {
             self.write_camera(frame, scene);
@@ -1006,8 +1098,8 @@ impl NativeWorldRenderer {
         let static_vertex_count = self.static_vertices.len() as u32;
         let dynamic_vertex_count = self.vertices.len() as u32;
         let overlay_vertex_count = self.overlay_vertices.len() as u32;
-        let static_cached = if let Some(static_scene) = retained_static_scene {
-            self.rasterize_static_cache(frame, static_scene, static_vertex_count)
+        let static_cached = if let Some(static_view) = static_scene_view {
+            self.rasterize_static_cache(frame, static_view, static_vertex_count)
         } else {
             false
         };
@@ -1021,7 +1113,7 @@ impl NativeWorldRenderer {
             && self.prepare_static_composite(
                 frame,
                 retained_scene.expect("retained scene is present"),
-                retained_static_scene.expect("static scene is present"),
+                static_scene_view.expect("compiled static scene is present"),
             );
         let (Some(pipeline), Some(camera_bind_group)) = (&self.pipeline, &self.camera_bind_group)
         else {
@@ -1212,7 +1304,7 @@ impl NativeWorldRenderer {
         );
     }
 
-    fn write_static_camera(&self, frame: &RenderFrame<'_>, scene: &NativeRenderScene) {
+    fn write_static_camera(&self, frame: &RenderFrame<'_>, view: StaticSceneView) {
         let Some(buffer) = &self.static_camera_buffer else {
             return;
         };
@@ -1220,9 +1312,9 @@ impl NativeWorldRenderer {
             buffer,
             0,
             bytemuck::bytes_of(&CameraUniform {
-                viewport: [scene.viewport.width, scene.viewport.height],
-                position: [scene.camera.x, scene.camera.y],
-                zoom: scene.camera.zoom,
+                viewport: view.viewport,
+                position: view.position,
+                zoom: view.zoom,
                 _padding: [0.0; 3],
             }),
         );
@@ -1235,6 +1327,36 @@ impl NativeWorldRenderer {
         let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         *slot = Some(DynamicSceneCompileJob { revision, scene });
         ready.notify_one();
+    }
+
+    /// Static compilation uses the same latest-only hand-off as dynamic
+    /// geometry. A camera crossing can never queue a chain of expensive cache
+    /// rebuilds behind the currently visible world.
+    fn submit_static_scene(&self, revision: u64, scene: NativeRenderScene) {
+        let (lock, ready) = &*self.latest_static_scene;
+        let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *slot = Some(StaticSceneCompileJob { revision, scene });
+        ready.notify_one();
+    }
+
+    fn drain_static_scene_results(&mut self) {
+        loop {
+            match self.static_scene_results.try_recv() {
+                Ok(result) => {
+                    if self
+                        .last_static_scene_applied_revision
+                        .is_none_or(|revision| result.revision > revision)
+                    {
+                        self.static_vertices = result.vertices;
+                        self.static_vertices_dirty = true;
+                        self.static_texture_dirty = true;
+                        self.static_scene_view = Some(result.view);
+                        self.last_static_scene_applied_revision = Some(result.revision);
+                    }
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+            }
+        }
     }
 
     /// The WGPU/UI thread never tessellates a combat-rate display list. It
@@ -1260,10 +1382,10 @@ impl NativeWorldRenderer {
         }
     }
 
-    fn ensure_static_cache(&mut self, frame: &RenderFrame<'_>, static_scene: &NativeRenderScene) {
+    fn ensure_static_cache(&mut self, frame: &RenderFrame<'_>, static_view: StaticSceneView) {
         let size = [
-            static_scene.viewport.width.max(1.0).ceil() as u32,
-            static_scene.viewport.height.max(1.0).ceil() as u32,
+            static_view.viewport[0].max(1.0).ceil() as u32,
+            static_view.viewport[1].max(1.0).ceil() as u32,
         ];
         let format = frame.surface_format();
         if self.static_texture_view.is_some()
@@ -1299,7 +1421,7 @@ impl NativeWorldRenderer {
     fn rasterize_static_cache(
         &mut self,
         frame: &mut RenderFrame<'_>,
-        static_scene: &NativeRenderScene,
+        static_view: StaticSceneView,
         vertex_count: u32,
     ) -> bool {
         let (Some(view), Some(pipeline), Some(camera_bind_group), Some(vertex_buffer)) = (
@@ -1311,7 +1433,7 @@ impl NativeWorldRenderer {
             return false;
         };
         if self.static_texture_dirty {
-            self.write_static_camera(frame, static_scene);
+            self.write_static_camera(frame, static_view);
             frame.with_color_only_pass(
                 view,
                 wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -1448,7 +1570,7 @@ impl NativeWorldRenderer {
         &mut self,
         frame: &mut RenderFrame<'_>,
         dynamic_scene: &NativeRenderScene,
-        static_scene: &NativeRenderScene,
+        static_view: StaticSceneView,
     ) -> bool {
         if !self.ensure_composite_pipeline(frame) {
             return false;
@@ -1468,9 +1590,9 @@ impl NativeWorldRenderer {
                 dynamic_position: [dynamic_scene.camera.x, dynamic_scene.camera.y],
                 dynamic_zoom: dynamic_scene.camera.zoom,
                 _padding0: 0.0,
-                static_viewport: [static_scene.viewport.width, static_scene.viewport.height],
-                static_position: [static_scene.camera.x, static_scene.camera.y],
-                static_zoom: static_scene.camera.zoom,
+                static_viewport: static_view.viewport,
+                static_position: static_view.position,
+                static_zoom: static_view.zoom,
                 _padding1: 0.0,
             }),
         );
@@ -3241,12 +3363,10 @@ mod tests {
             Some("miku_twintails")
         );
         assert_eq!(entity.projectile_type, "magic_orb");
-        assert!(
-            entity
-                .animation
-                .as_ref()
-                .is_some_and(|animation| animation.is_sprinting)
-        );
+        assert!(entity
+            .animation
+            .as_ref()
+            .is_some_and(|animation| animation.is_sprinting));
     }
 
     #[test]
