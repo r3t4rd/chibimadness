@@ -17,7 +17,7 @@ use std::{
     io::{Cursor, Read},
     path::{Path, PathBuf},
     rc::Rc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -335,15 +335,7 @@ impl ApplicationHandler for GameDesktopApp {
             }
             event_loop.set_control_flow(ControlFlow::Poll);
         } else {
-            // WebView2 owns the Canvas presentation, but Winit's unbounded
-            // `Wait` can leave its message queue asleep past a browser frame
-            // deadline. Wake the host at most every 8 ms: this is frequent
-            // enough for a 60 Hz rAF callback to be dispatched on time while
-            // still yielding the thread instead of permanently busy-spinning
-            // with `Poll`.
-            event_loop.set_control_flow(ControlFlow::WaitUntil(
-                Instant::now() + Duration::from_millis(8),
-            ));
+            event_loop.set_control_flow(ControlFlow::Wait);
         }
     }
 }
