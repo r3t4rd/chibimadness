@@ -29,6 +29,11 @@ export type RenderScene = {
   commands: SceneCommand[];
 };
 
+export type SceneReplayResult = {
+  appliedCommands: number;
+  unsupportedCommands: SceneCommand[];
+};
+
 type ResourceTarget = CanvasGradient | CanvasPattern | CanvasImageSource;
 
 function isCanvasResource(value: unknown): value is ResourceTarget {
@@ -162,4 +167,61 @@ export function recordRenderScene<T>(
     result,
     scene: { version: 1, ...metadata, commands },
   };
+}
+
+function isSceneResourceRef(value: SceneValue): value is SceneResourceRef {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
+    && 'ref' in value
+    && 'kind' in value
+    && typeof value.ref === 'number';
+}
+
+function decodeValue(value: SceneValue, resources: Map<number, ResourceTarget>): unknown {
+  if (Array.isArray(value)) return value.map((entry) => decodeValue(entry, resources));
+  if (isSceneResourceRef(value)) return resources.get(value.ref) ?? null;
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, decodeValue(entry, resources)]));
+  }
+  return value;
+}
+
+/**
+ * Reference executor used for visual conformance testing.  It lets us compare
+ * a recorded scene with the original Canvas renderer before a WGPU operation
+ * is declared supported.  The WGPU executor will consume this same contract,
+ * not a second hand-authored world approximation.
+ */
+export function replayRenderScene(
+  context: CanvasRenderingContext2D,
+  scene: RenderScene
+): SceneReplayResult {
+  const resources = new Map<number, ResourceTarget>();
+  const unsupportedCommands: SceneCommand[] = [];
+  let appliedCommands = 0;
+
+  for (const command of scene.commands) {
+    try {
+      if (command.op === 'set') {
+        (context as unknown as Record<string, unknown>)[command.property] = decodeValue(command.value, resources);
+      } else if (command.op === 'resourceCall') {
+        const resource = resources.get(command.ref);
+        const method = resource && (resource as unknown as Record<string, unknown>)[command.method];
+        if (typeof method !== 'function') throw new Error('Unknown Canvas resource method');
+        Reflect.apply(method, resource, command.args.map((arg) => decodeValue(arg, resources)));
+      } else {
+        const method = (context as unknown as Record<string, unknown>)[command.method];
+        if (typeof method !== 'function') throw new Error('Unknown Canvas method');
+        const result = Reflect.apply(method, context, command.args.map((arg) => decodeValue(arg, resources)));
+        if (command.result && isCanvasResource(result)) resources.set(command.result.ref, result);
+      }
+      appliedCommands += 1;
+    } catch {
+      // Keep the reference executor diagnostic-only: one unsupported future
+      // Canvas API must not hide every later visual discrepancy.
+      unsupportedCommands.push(command);
+    }
+  }
+  return { appliedCommands, unsupportedCommands };
 }
