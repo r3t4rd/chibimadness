@@ -89,10 +89,11 @@ let nativeWorldRendererEnabled = false;
 let nativeWorldRendererReady = false;
 const nativeWorldRendererListeners = new Set<() => void>();
 let configurationRetryTimer: number | null = null;
+let configurationRequestActive = false;
 let nextBridgeMessageId = 1;
 
 function requestDesktopServerConfiguration() {
-  if (typeof window === 'undefined' || configuredServerUrl) return;
+  if (typeof window === 'undefined' || configuredServerUrl || configurationRequestActive) return;
   // `LocalPage` is served through Yuyib's local asset origin, whose scheme
   // is an implementation detail and has changed across WebView hosts. The
   // bridge object is the authoritative capability check: if it is present we
@@ -100,9 +101,14 @@ function requestDesktopServerConfiguration() {
   // `game.ready`, leaving a perfectly native process in WebGL fallback mode.
   if (!window.yuyib?.post) return;
 
+  configurationRequestActive = true;
   let attemptsRemaining = 20;
   const request = () => {
-    if (configuredServerUrl || attemptsRemaining-- <= 0) return;
+    if (configuredServerUrl || attemptsRemaining-- <= 0) {
+      configurationRequestActive = false;
+      configurationRetryTimer = null;
+      return;
+    }
     window.yuyib?.post({
       version: 1,
       id: nextBridgeMessageId++,
@@ -130,6 +136,11 @@ if (typeof window !== 'undefined') {
         dynamicTriangles?: unknown;
       };
     }>).detail;
+    // Yuyib injects `window.yuyib` after some local pages have already
+    // evaluated their entry module. Metrics are the first reliable proof that
+    // the bridge exists, so use that first event to start the one guarded
+    // configuration handshake instead of remaining in WebGL fallback.
+    if (detail?.event !== 'game.configuration') requestDesktopServerConfiguration();
     if (detail?.event === 'game.configuration') {
       const candidate = detail.payload?.server_url;
       configuredServerUrl = typeof candidate === 'string' && candidate.startsWith('wss://')
@@ -146,10 +157,11 @@ if (typeof window !== 'undefined') {
         nativeWorldRendererReady = false;
       }
       nativeWorldRendererEnabled = nativeRendererRequested;
-      if (configuredServerUrl && configurationRetryTimer !== null) {
+      if (configurationRetryTimer !== null) {
         window.clearTimeout(configurationRetryTimer);
         configurationRetryTimer = null;
       }
+      configurationRequestActive = false;
       serverConfigurationListeners.forEach((listener) => listener());
       contentBuildListeners.forEach((listener) => listener());
       nativeWorldRendererListeners.forEach((listener) => listener());
