@@ -7,6 +7,8 @@ import {
 type SceneCompileRequest = {
   id: number;
   input: WorldRenderInput;
+  staticOnly?: boolean;
+  camera?: { x: number; y: number; zoom: number };
 };
 
 const measurementContext = new OffscreenCanvas(1, 1).getContext('2d');
@@ -67,20 +69,27 @@ self.addEventListener('message', (event: MessageEvent<SceneCompileRequest>) => {
     return;
   }
   try {
-    const dynamicScene = compileDynamicWorldScene(measurementContext, event.data.input);
+    const dynamicScene = event.data.staticOnly
+      ? undefined
+      : compileDynamicWorldScene(measurementContext, event.data.input);
+    const camera = event.data.camera ?? dynamicScene?.camera;
+    if (!camera) {
+      throw new Error('Native static scene requires a camera');
+    }
     const contentKey = staticContentKey(event.data.input);
+    const cameraOutsideStaticCache = !cameraFitsStaticCache(event.data.input, camera);
     const staticRefreshRequired = contentKey !== lastStaticContentKey
-      || !cameraFitsStaticCache(event.data.input, dynamicScene.camera);
+      || cameraOutsideStaticCache;
     // A full static texture redraw is much more expensive than a dash. Keep
-    // the valid cached world during rapid movement and refresh it as soon as
-    // the camera settles; the native sampler clamps the tiny uncovered edge.
+    // the valid cache during ordinary rapid motion, but never stretch its
+    // edge over new screen space once the camera has actually left coverage.
     const staticScene = staticRefreshRequired
-      && !(lastStaticCamera && isRapidCameraMotion(event.data.input))
-      ? compileStaticWorldScene(measurementContext, staticCacheInput(event.data.input), dynamicScene.camera)
+      && (!lastStaticCamera || cameraOutsideStaticCache || !isRapidCameraMotion(event.data.input))
+      ? compileStaticWorldScene(measurementContext, staticCacheInput(event.data.input), camera)
       : undefined;
     if (staticScene) {
       lastStaticContentKey = contentKey;
-      lastStaticCamera = dynamicScene.camera;
+      lastStaticCamera = camera;
     }
     self.postMessage({ id: event.data.id, staticScene, dynamicScene });
   } catch (error) {

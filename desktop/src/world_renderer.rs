@@ -427,6 +427,7 @@ fn visual_recipe_is_bounded(recipe: &NativeChibiRecipe) -> bool {
 pub struct NativeWorldState {
     frame: Option<NativeRenderFrame>,
     received_at: Option<Instant>,
+    frame_revision: u64,
     // Legacy monolithic display-list endpoint. Kept so older content bundles
     // can still start while the retained protocol rolls out atomically.
     scene: Option<NativeRenderScene>,
@@ -531,6 +532,7 @@ impl NativeWorldState {
         frame.entities.sort_by_key(|entity| entity.layer);
         self.frame = Some(frame);
         self.received_at = Some(received_at);
+        self.frame_revision = self.frame_revision.wrapping_add(1);
     }
 
     /// Stages a canonical source-renderer display list.  It deliberately does
@@ -605,12 +607,18 @@ impl NativeWorldState {
             })
     }
 
+    pub fn static_scene_with_revision(&self) -> Option<(&NativeRenderScene, u64)> {
+        self.static_scene
+            .as_ref()
+            .map(|scene| (scene, self.static_scene_revision))
+    }
+
     #[cfg(test)]
     fn scene_command_count(&self) -> Option<usize> {
         self.scene.as_ref().map(|scene| scene.commands.len())
     }
 
-    fn frame_with_prediction(&self) -> Option<(&NativeRenderFrame, f32)> {
+    fn frame_with_prediction_and_revision(&self) -> Option<(&NativeRenderFrame, f32, u64)> {
         self.frame.as_ref().map(|frame| {
             let prediction_seconds = self
                 .received_at
@@ -620,7 +628,7 @@ impl NativeWorldState {
                         .clamp(0.0, MAX_PREDICTION_SECONDS)
                 })
                 .unwrap_or_default();
-            (frame, prediction_seconds)
+            (frame, prediction_seconds, self.frame_revision)
         })
     }
 }
@@ -834,6 +842,7 @@ pub struct NativeWorldRenderer {
     overlay_vertices: Vec<Vertex>,
     overlay_vertices_dirty: bool,
     last_scene_revision: Option<u64>,
+    last_frame_revision: Option<u64>,
     last_dynamic_scene_submitted_revision: Option<u64>,
     last_dynamic_scene_applied_revision: Option<u64>,
     latest_dynamic_scene: LatestDynamicScene,
@@ -917,6 +926,7 @@ impl Default for NativeWorldRenderer {
             overlay_vertices: Vec::new(),
             overlay_vertices_dirty: false,
             last_scene_revision: None,
+            last_frame_revision: None,
             last_dynamic_scene_submitted_revision: None,
             last_dynamic_scene_applied_revision: None,
             latest_dynamic_scene,
@@ -1024,44 +1034,82 @@ impl NativeWorldRenderer {
     /// WebView uses this acknowledgement to hide its Canvas fallback safely.
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
         let mut retained_scene = None;
+        let frame_scene: NativeRenderScene;
         let mut rendering_retained_scene = false;
-        let rendered_scene =
-            if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
-                state.retained_scenes_with_revisions()
-            {
-                if self.last_static_scene_submitted_revision != Some(static_revision) {
-                    self.submit_static_scene(static_revision, static_scene.clone());
-                    self.last_static_scene_submitted_revision = Some(static_revision);
-                }
-                if self.last_dynamic_scene_submitted_revision != Some(dynamic_revision) {
-                    self.submit_dynamic_scene(dynamic_revision, dynamic_scene.clone());
-                    self.last_dynamic_scene_submitted_revision = Some(dynamic_revision);
-                }
-                retained_scene = Some(dynamic_scene);
-                rendering_retained_scene = true;
-                true
-            } else if let Some((scene, revision)) = state.scene_with_revision() {
-                if self.last_scene_revision != Some(revision) {
-                    let Some(vertices) = self.scene_vertices(scene, SceneVertexSelection::All)
-                    else {
-                        return false;
-                    };
-                    self.vertices = vertices;
-                    self.last_scene_revision = Some(revision);
-                    self.vertices_dirty = true;
-                }
-                true
-            } else if let Some((world, prediction_seconds)) = state.frame_with_prediction() {
-                // Kept only during an upgrade from an older JS bundle. New clients
-                // always submit `world.scene`; the source display list is the
-                // presentable native path.
-                self.build_vertices(world, prediction_seconds);
-                self.last_scene_revision = None;
+        let rendered_scene = if let (
+            Some((static_scene, static_revision)),
+            Some((world, prediction_seconds, frame_revision)),
+        ) = (
+            state.static_scene_with_revision(),
+            state.frame_with_prediction_and_revision(),
+        ) {
+            // `world.frame` is a bounded presentation snapshot. It replaces
+            // the old JS Canvas dynamic display list in the gameplay hot path:
+            // WGPU owns actor geometry while the worker supplies only static
+            // cacheable map commands.
+            if self.last_static_scene_submitted_revision != Some(static_revision) {
+                self.submit_static_scene(static_revision, static_scene.clone());
+                self.last_static_scene_submitted_revision = Some(static_revision);
+            }
+            if self.last_frame_revision != Some(frame_revision) {
+                self.build_dynamic_frame_vertices(world, prediction_seconds);
+                self.last_frame_revision = Some(frame_revision);
                 self.vertices_dirty = true;
-                true
-            } else {
-                false
+            }
+            frame_scene = NativeRenderScene {
+                version: 1,
+                viewport: NativeSceneViewport {
+                    width: world.viewport_width,
+                    height: world.viewport_height,
+                },
+                camera: NativeSceneCamera {
+                    x: world.camera_x,
+                    y: world.camera_y,
+                    zoom: world.zoom,
+                },
+                time_seconds: world.time_seconds,
+                commands: Vec::new(),
             };
+            retained_scene = Some(&frame_scene);
+            rendering_retained_scene = true;
+            true
+        } else if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
+            state.retained_scenes_with_revisions()
+        {
+            if self.last_static_scene_submitted_revision != Some(static_revision) {
+                self.submit_static_scene(static_revision, static_scene.clone());
+                self.last_static_scene_submitted_revision = Some(static_revision);
+            }
+            if self.last_dynamic_scene_submitted_revision != Some(dynamic_revision) {
+                self.submit_dynamic_scene(dynamic_revision, dynamic_scene.clone());
+                self.last_dynamic_scene_submitted_revision = Some(dynamic_revision);
+            }
+            retained_scene = Some(dynamic_scene);
+            rendering_retained_scene = true;
+            true
+        } else if let Some((scene, revision)) = state.scene_with_revision() {
+            if self.last_scene_revision != Some(revision) {
+                let Some(vertices) = self.scene_vertices(scene, SceneVertexSelection::All) else {
+                    return false;
+                };
+                self.vertices = vertices;
+                self.last_scene_revision = Some(revision);
+                self.vertices_dirty = true;
+            }
+            true
+        } else if let Some((world, prediction_seconds, _)) =
+            state.frame_with_prediction_and_revision()
+        {
+            // Compatibility fallback for an older bundle which has not yet
+            // produced a retained static scene. It still owns the map
+            // geometry, unlike the `static scene + world.frame` path above.
+            self.build_vertices(world, prediction_seconds);
+            self.last_scene_revision = None;
+            self.vertices_dirty = true;
+            true
+        } else {
+            false
+        };
         self.drain_static_scene_results();
         self.drain_dynamic_scene_results();
         if !rendered_scene {
@@ -1664,6 +1712,16 @@ impl NativeWorldRenderer {
         // stays transparent and therefore cannot force WebView2 to composite
         // a full-screen Canvas2D texture every gameplay frame.
         self.add_source_world(world);
+        for entity in &world.entities {
+            let x = entity.x + entity.velocity_x * prediction_seconds;
+            let y = entity.y + entity.velocity_y * prediction_seconds;
+            self.add_entity(entity, x, y, world);
+        }
+    }
+
+    fn build_dynamic_frame_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
+        self.vertices.clear();
+        self.overlay_vertices.clear();
         for entity in &world.entities {
             let x = entity.x + entity.velocity_x * prediction_seconds;
             let y = entity.y + entity.velocity_y * prediction_seconds;

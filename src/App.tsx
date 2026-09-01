@@ -167,10 +167,15 @@ export function App() {
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lastNativeFrameAt = useRef(0);
+  const lastNativeSceneAt = useRef(0);
+  const lastNativeEntityFrameAt = useRef(0);
   const sceneWorkerRef = useRef<Worker | null>(null);
   const sceneCompileInFlightRef = useRef(false);
-  const pendingSceneInputRef = useRef<WorldRenderInput | null>(null);
+  const pendingSceneInputRef = useRef<{
+    input: WorldRenderInput;
+    staticOnly: boolean;
+    camera?: { x: number; y: number; zoom: number };
+  } | null>(null);
   const nextSceneJobIdRef = useRef(1);
 
   // Initialize game engine with created player or fallback
@@ -222,9 +227,9 @@ export function App() {
     if (!nativeWorldRendererRequested || typeof Worker === 'undefined') return;
     const worker = new Worker(new URL('./game/renderScene.worker.ts', import.meta.url), { type: 'module' });
     sceneWorkerRef.current = worker;
-    const submit = (input: WorldRenderInput) => {
+    const submit = (job: NonNullable<typeof pendingSceneInputRef.current>) => {
       sceneCompileInFlightRef.current = true;
-      worker.postMessage({ id: nextSceneJobIdRef.current++, input });
+      worker.postMessage({ id: nextSceneJobIdRef.current++, ...job });
     };
     worker.onmessage = (event: MessageEvent<{
       id: number;
@@ -287,9 +292,9 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      // A single complete input is shared by the Canvas source backend and
-      // the recorded RenderScene path. Do not rebuild a reduced visual entity
-      // protocol here: that was the reason native mode diverged.
+      // Canvas keeps the complete presentation input. Native mode splits it:
+      // only map state reaches the static compiler, while a bounded entity
+      // snapshot reaches Rust at its own cadence.
       const buildWorldRenderInput = (): WorldRenderInput => ({
         canvasWidth: viewportWidth,
         canvasHeight: viewportHeight,
@@ -310,49 +315,58 @@ export function App() {
         summons: curEngine.summons,
         gameTimePhase: curEngine.gameTimePhase,
       });
+      const buildStaticWorldRenderInput = (): WorldRenderInput => ({
+        canvasWidth: viewportWidth,
+        canvasHeight: viewportHeight,
+        localPlayer: curEngine.player,
+        players: {},
+        monsters: [],
+        resourceNodes: curEngine.resourceNodes,
+        dropItems: [],
+        projectiles: [],
+        particles: [],
+        damagePopups: [],
+        groundDecals: [],
+        time: timeInSeconds,
+        worldPois: curEngine.worldPois,
+        cars: [],
+        summons: [],
+        gameTimePhase: curEngine.gameTimePhase,
+      });
       if (nativeWorldRendererRequested) {
-        // The retained static layer can be composited at the presentation rate,
-        // but dynamic display-list vertices cannot: until a new scene reaches
-        // WGPU, every present repeats the previous positions. Keep the dynamic
-        // cadence high enough for motion to remain smooth, while the one-slot
-        // hand-off below still bounds worker and bridge pressure.
+        const camera = updateNativeCamera(curEngine.player, time);
+        // Desktop-native presentation owns actor geometry. The worker produces
+        // only cacheable map data once WGPU is ready; dynamic Canvas commands
+        // must never cross the WebView bridge in the gameplay hot path.
+        const staticOnly = nativeWorldRenderer;
         const denseNativeScene = curEngine.monsters.length >= 20
           || curEngine.particles.length >= 48
           || curEngine.projectiles.length >= 16;
-        const nativeSceneTargetHz = denseNativeScene ? 60 : 120;
+        const nativeSceneTargetHz = staticOnly ? 15 : denseNativeScene ? 60 : 120;
         const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
         perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
-        if (time - lastNativeFrameAt.current >= nativeSceneIntervalMs) {
-          lastNativeFrameAt.current = time;
-          const worldRenderInput = buildWorldRenderInput();
+        if (time - lastNativeSceneAt.current >= nativeSceneIntervalMs) {
+          lastNativeSceneAt.current = time;
+          const worldRenderInput = staticOnly
+            ? buildStaticWorldRenderInput()
+            : buildWorldRenderInput();
+          const sceneJob = { input: worldRenderInput, staticOnly, camera };
           if (sceneCompileInFlightRef.current) {
             // Keep at most one newest snapshot; a queue would recreate the
             // same long-task backlog after a dense horde arrives.
-            pendingSceneInputRef.current = worldRenderInput;
+            pendingSceneInputRef.current = sceneJob;
           } else {
             const worker = sceneWorkerRef.current;
             if (worker) {
               sceneCompileInFlightRef.current = true;
-              worker.postMessage({ id: nextSceneJobIdRef.current++, input: worldRenderInput });
+              worker.postMessage({ id: nextSceneJobIdRef.current++, ...sceneJob });
             }
           }
         }
-        if (nativeWorldRenderer) {
-          perfMonitor.setExtras({
-            monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
-            particles: curEngine.particles.length,
-            projectiles: curEngine.projectiles.length,
-            zoom: getCameraState().zoom,
-            canvasW: viewportWidth,
-            canvasH: viewportHeight,
-          });
-          perfMonitor.recordDraw(0);
-          perfMonitor.recordFrame(frameIntervalMs);
-          animationId = requestAnimationFrame(render);
-          return;
-        }
-        const camera = updateNativeCamera(curEngine.player, time);
-        const nativeViewPadding = 180;
+        const nativeEntityTargetHz = nativeWorldRenderer ? 60 : 30;
+        if (time - lastNativeEntityFrameAt.current >= 1000 / nativeEntityTargetHz) {
+          lastNativeEntityFrameAt.current = time;
+          const nativeViewPadding = 180;
         const nativeHalfWidth = viewportWidth / camera.zoom / 2 + nativeViewPadding;
         const nativeHalfHeight = viewportHeight / camera.zoom / 2 + nativeViewPadding;
         const inNativeView = (x: number, y: number, size = 0) => (
@@ -496,8 +510,6 @@ export function App() {
             layer: 8,
           })),
         ].slice(0, 128);
-        if (time - lastNativeFrameAt.current >= 1000 / 30) {
-          lastNativeFrameAt.current = time;
           sendNativeWorldRenderFrame({
             cameraX: camera.x,
             cameraY: camera.y,
@@ -505,8 +517,8 @@ export function App() {
             viewportWidth,
             viewportHeight,
             timeSeconds: timeInSeconds,
-            theme: curEngine.player.currentZone,
-            entities,
+          theme: curEngine.player.currentZone,
+          entities,
           });
         }
         perfMonitor.setExtras({
