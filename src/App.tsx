@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ChibiConfig, Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
-import { perfMonitor } from './game/performanceMonitor';
+import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
 import { CharacterCreator } from './components/CharacterCreator';
@@ -167,6 +167,7 @@ export function App() {
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
   const [nativeWorldRendererRequested, setNativeWorldRendererRequested] = useState(isNativeWorldRendererEnabled);
   const [nativeWorldRendererReady, setNativeWorldRendererReady] = useState(isNativeWorldRendererReady);
+  const [canvasProbeMode, setCanvasProbeMode] = useState<CanvasProbeMode>('normal');
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -220,6 +221,25 @@ export function App() {
     document.documentElement.classList.toggle('native-world', nativeWorldRenderer);
     document.body.classList.toggle('bg-transparent', nativeWorldRenderer);
     document.body.classList.toggle('bg-slate-950', !nativeWorldRenderer);
+  }, [nativeWorldRenderer]);
+
+  useEffect(() => {
+    const nextMode: Record<CanvasProbeMode, CanvasProbeMode> = {
+      normal: 'present-only',
+      'present-only': 'raf-only',
+      'raf-only': 'normal',
+    };
+    const cycleCanvasProbe = (event: KeyboardEvent) => {
+      if (event.code !== 'F8' || event.repeat || nativeWorldRenderer) return;
+      event.preventDefault();
+      setCanvasProbeMode((currentMode) => {
+        const next = nextMode[currentMode];
+        perfMonitor.setCanvasProbeMode(next);
+        return next;
+      });
+    };
+    window.addEventListener('keydown', cycleCanvasProbe);
+    return () => window.removeEventListener('keydown', cycleCanvasProbe);
   }, [nativeWorldRenderer]);
 
   // Scene compilation is intentionally outside the WebView's animation
@@ -565,13 +585,23 @@ export function App() {
         canvasH: viewportHeight,
       });
 
-      const worldRenderInput = buildWorldRenderInput();
       const drawStart = performance.now();
-      drawWorldInput(ctx, worldRenderInput);
+      if (canvasProbeMode === 'normal') {
+        drawWorldInput(ctx, buildWorldRenderInput());
+      } else if (canvasProbeMode === 'present-only') {
+        // Exercise the Canvas2D presentation path without constructing the
+        // game's display list. The slate page background stays visible.
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+      }
+      // raf-only intentionally performs no Canvas calls. It isolates WebView
+      // scheduling from Canvas command submission and compositing.
       const callbackFinishedAt = performance.now();
-      perfMonitor.recordDraw(callbackFinishedAt - drawStart);
-      perfMonitor.recordFrame(frameIntervalMs);
-      perfMonitor.recordWebViewFrame(callbackStartedAt, callbackFinishedAt);
+      perfMonitor.recordCanvasWebViewFrame(
+        frameIntervalMs,
+        callbackStartedAt,
+        drawStart,
+        callbackFinishedAt,
+      );
       animationId = requestAnimationFrame(render);
     };
 
@@ -581,7 +611,7 @@ export function App() {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
+  }, [createdPlayer, canvasProbeMode, nativeWorldRenderer, nativeWorldRendererRequested]);
 
   // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
   useEffect(() => {
