@@ -1,0 +1,278 @@
+{
+  "name": "accessories_halos_wings_atlas",
+  "texture": "accessories_halos_wings_atlas.png",
+  "width": 1104,
+  "height": 920,
+  "frames": {
+    "halo_star": {
+      "x": 12,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_circle": {
+      "x": 196,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_winged": {
+      "x": 380,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_crown": {
+      "x": 564,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_cross": {
+      "x": 748,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_cyber_hex": {
+      "x": 932,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_heart": {
+      "x": 12,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_floral": {
+      "x": 196,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_neon_rings": {
+      "x": 380,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_shuriken": {
+      "x": 564,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_diamond": {
+      "x": 748,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_infinity": {
+      "x": 932,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_saturn_rings": {
+      "x": 12,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_music_notes": {
+      "x": 196,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "halo_snowflake": {
+      "x": 380,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halo"
+    },
+    "wing_angel_feathers": {
+      "x": 564,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_devil_bat": {
+      "x": 748,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_cyber_thrusters": {
+      "x": 932,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_fairy_sparkle": {
+      "x": 12,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_dragon_drake": {
+      "x": 196,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_pixel_wings": {
+      "x": 380,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_mecha_wings": {
+      "x": 564,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_phoenix_fire": {
+      "x": 748,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_butterfly_prisma": {
+      "x": 932,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_crystal_shards": {
+      "x": 12,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_shadow_tendrils": {
+      "x": 196,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_bee_wings": {
+      "x": 380,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_steampunk_gears": {
+      "x": 564,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_ice_crystal_wings": {
+      "x": 748,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    },
+    "wing_void_portals": {
+      "x": 932,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wing"
+    }
+  }
+}

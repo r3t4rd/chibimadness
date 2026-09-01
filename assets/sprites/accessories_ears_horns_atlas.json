@@ -1,179 +1,188 @@
 {
-  "name": "world_environment_atlas",
-  "texture": "world_environment_atlas.png",
+  "name": "accessories_ears_horns_atlas",
+  "texture": "accessories_ears_horns_atlas.png",
   "width": 920,
   "height": 736,
   "frames": {
-    "tree_pine": {
+    "ear_cat": {
       "x": 12,
       "y": 12,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "foliage"
+      "category": "ears_horns"
     },
-    "tree_birch": {
+    "ear_bunny": {
       "x": 196,
       "y": 12,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "foliage"
+      "category": "ears_horns"
     },
-    "tree_oak": {
+    "ear_fox": {
       "x": 380,
       "y": 12,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "foliage"
+      "category": "ears_horns"
     },
-    "tree_autumn": {
+    "ear_wolf": {
       "x": 564,
       "y": 12,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "foliage"
+      "category": "ears_horns"
     },
-    "boulder_granite": {
+    "ear_bear": {
       "x": 748,
       "y": 12,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "terrain"
+      "category": "ears_horns"
     },
-    "mossy_log": {
+    "ear_mouse": {
       "x": 12,
       "y": 196,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "terrain"
+      "category": "ears_horns"
     },
-    "prop_server_rack": {
+    "ear_deer_antlers": {
       "x": 196,
       "y": 196,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_quantum_core": {
+    "ear_sheep_horns": {
       "x": 380,
       "y": 196,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_explosive_barrel": {
+    "ear_elf": {
       "x": 564,
       "y": 196,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_ammo_crate": {
+    "ear_dog_floppy": {
       "x": 748,
       "y": 196,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_security_turret": {
+    "ear_wings_head": {
       "x": 12,
       "y": 380,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_vending_machine": {
+    "ear_devil_wings": {
       "x": 196,
       "y": 380,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_streetlamp": {
+    "ear_devil_horns": {
       "x": 380,
       "y": 380,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_road_barrier": {
+    "ear_cyber_antennas": {
       "x": 564,
       "y": 380,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "prop_campfire": {
+    "ear_horns": {
       "x": 748,
       "y": 380,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "prop"
+      "category": "ears_horns"
     },
-    "rift_rift_crimson": {
+    "ear_dragon_horns": {
       "x": 12,
       "y": 564,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "rift"
+      "category": "ears_horns"
     },
-    "rift_rift_void": {
+    "ear_raccoon": {
       "x": 196,
       "y": 564,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "rift"
+      "category": "ears_horns"
     },
-    "rift_rift_cyan": {
+    "ear_bat": {
       "x": 380,
       "y": 564,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "rift"
+      "category": "ears_horns"
     },
-    "rift_rift_amber": {
+    "ear_cow_horns": {
       "x": 564,
       "y": 564,
       "w": 160,
       "h": 160,
       "pivotX": 0.5,
       "pivotY": 0.5,
-      "category": "rift"
+      "category": "ears_horns"
+    },
+    "ear_unicorn_horn": {
+      "x": 748,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears_horns"
     }
   }
 }

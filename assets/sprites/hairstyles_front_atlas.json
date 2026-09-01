@@ -1,0 +1,404 @@
+{
+  "name": "hairstyles_front_atlas",
+  "texture": "hairstyles_front_atlas.png",
+  "width": 1288,
+  "height": 1288,
+  "frames": {
+    "front_hair_straight_bangs": {
+      "x": 12,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_curtain_bangs": {
+      "x": 196,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_teto_arched_bangs": {
+      "x": 380,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_miku_fringe": {
+      "x": 564,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_anya_horns_bangs": {
+      "x": 748,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_bocchi_shaggy": {
+      "x": 932,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_sailor_crescent": {
+      "x": 1116,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_side_swept": {
+      "x": 12,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_hime_sidelocks": {
+      "x": 196,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_spiky_bangs": {
+      "x": 380,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_emo_fringe": {
+      "x": 564,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_short_parted": {
+      "x": 748,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_blunt_fringe": {
+      "x": 932,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_center_split": {
+      "x": 1116,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_chad_quiff": {
+      "x": 12,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_v_bangs": {
+      "x": 196,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_messy_curly": {
+      "x": 380,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_braided_headband": {
+      "x": 564,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_feathered_bangs": {
+      "x": 748,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_choppy_micro": {
+      "x": 932,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_wispy_bangs": {
+      "x": 1116,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_zigzag_bangs": {
+      "x": 12,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_twin_antenna": {
+      "x": 196,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_thick_eyebrow_bangs": {
+      "x": 380,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_ojou_ringlets": {
+      "x": 564,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_cirno_fringe": {
+      "x": 748,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_straight_bangs_short": {
+      "x": 932,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_teto_arched_bangs_short": {
+      "x": 1116,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_miku_fringe_short": {
+      "x": 12,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_curtain_bangs_short": {
+      "x": 196,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_v_bangs_short": {
+      "x": 380,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_blunt_fringe_short": {
+      "x": 564,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_wispy_bangs_short": {
+      "x": 748,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_side_swept_short": {
+      "x": 932,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_feathered_bangs_short": {
+      "x": 1116,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_hime_sidelocks_short": {
+      "x": 12,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_sailor_crescent_short": {
+      "x": 196,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_spiky_bangs_short": {
+      "x": 380,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_emo_fringe_short": {
+      "x": 564,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_messy_curly_short": {
+      "x": 748,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_forehead_peek": {
+      "x": 932,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_buzz_fringe": {
+      "x": 1116,
+      "y": 932,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_swept_back_bangs": {
+      "x": 12,
+      "y": 1116,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_none": {
+      "x": 196,
+      "y": 1116,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    }
+  }
+}

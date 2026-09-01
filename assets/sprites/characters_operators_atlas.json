@@ -1,0 +1,89 @@
+{
+  "name": "characters_operators_atlas",
+  "texture": "characters_operators_atlas.png",
+  "width": 672,
+  "height": 672,
+  "frames": {
+    "character_millennium_student": {
+      "x": 16,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_trinity_scholar": {
+      "x": 240,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_gehenna_rebel": {
+      "x": 464,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_cyber_shinobi": {
+      "x": 16,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_tactical_vanguard": {
+      "x": 240,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_idol_superstar": {
+      "x": 464,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_modern_onmyoji": {
+      "x": 16,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "vehicle_police_cruiser": {
+      "x": 240,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "vehicle"
+    },
+    "vehicle_cyber_muscle_car": {
+      "x": 464,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "vehicle"
+    }
+  }
+}

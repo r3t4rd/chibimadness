@@ -1,0 +1,161 @@
+{
+  "name": "enemies_factions_atlas",
+  "texture": "enemies_factions_atlas.png",
+  "width": 1120,
+  "height": 896,
+  "frames": {
+    "police_cop_officer": {
+      "x": 16,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "police"
+    },
+    "police_cop_swat": {
+      "x": 240,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "police"
+    },
+    "police_cop_enforcer": {
+      "x": 464,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "police"
+    },
+    "police_cop_marksman": {
+      "x": 688,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "police"
+    },
+    "punk_punk_grunt": {
+      "x": 912,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "punk"
+    },
+    "punk_punk_anarchist": {
+      "x": 16,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "punk"
+    },
+    "punk_punk_molotov": {
+      "x": 240,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "punk"
+    },
+    "bandit_bandit_grunt": {
+      "x": 464,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_scout": {
+      "x": 688,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_gunner": {
+      "x": 912,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_shotgunner": {
+      "x": 16,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_sniper": {
+      "x": 240,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "bandit_bandit_brawler": {
+      "x": 464,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "bandit"
+    },
+    "cadet_cadet_bat": {
+      "x": 688,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "cadet_cadet_gunner": {
+      "x": 912,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "cadet_cadet_mage": {
+      "x": 16,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    },
+    "cadet_human_target": {
+      "x": 240,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "cadet"
+    }
+  }
+}

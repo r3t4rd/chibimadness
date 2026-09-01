@@ -26,6 +26,14 @@ const OUTPUT_DIR = path.resolve(process.cwd(), 'assets/sprites');
 
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+} else {
+  // Clean old atlas files
+  const files = fs.readdirSync(OUTPUT_DIR);
+  for (const file of files) {
+    if (file.endsWith('.png') || file.endsWith('.json')) {
+      fs.unlinkSync(path.join(OUTPUT_DIR, file));
+    }
+  }
 }
 
 type FrameMetadata = {
@@ -71,7 +79,12 @@ function packGridAtlas(
     const x = col * step + padding;
     const y = row * step + padding;
 
+    // Strict boundary clipping to prevent any bleeding between cells
     ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, cellSize, cellSize);
+    ctx.clip();
+
     ctx.translate(x, y);
     item.draw(ctx as unknown as CanvasRenderingContext2D, cellSize);
     ctx.restore();
@@ -127,9 +140,9 @@ function makeDefaultPlayerStats() {
 }
 
 // =========================================================
-// 1. CHIBI CUSTOMIZATION ATLAS (ALL PARTS & ACCESSORIES)
+// 1. FRONT HAIR ATLAS
 // =========================================================
-function generateChibiCustomizationAtlas() {
+function generateFrontHairAtlas() {
   const frontHairStyles: NonNullable<ChibiConfig['frontHairStyle']>[] = [
     'straight_bangs',
     'curtain_bangs',
@@ -177,6 +190,21 @@ function generateChibiCustomizationAtlas() {
     'none',
   ];
 
+  const items = frontHairStyles.map((style) => ({
+    id: `front_hair_${style}`,
+    category: 'front_hair',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      drawFrontHairThumbnail(ctx, size, size, style, '#38BDF8', '#FFE4D6', '#F472B6');
+    },
+  }));
+
+  packGridAtlas('hairstyles_front_atlas', 160, 12, items);
+}
+
+// =========================================================
+// 2. BACK HAIR ATLAS
+// =========================================================
+function generateBackHairAtlas() {
   const backHairStyles: NonNullable<ChibiConfig['backHairStyle']>[] = [
     'teto_drills',
     'miku_twintails',
@@ -227,6 +255,21 @@ function generateChibiCustomizationAtlas() {
     'none_short',
   ];
 
+  const items = backHairStyles.map((style) => ({
+    id: `back_hair_${style}`,
+    category: 'back_hair',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      drawBackHairThumbnail(ctx, size, size, style, '#38BDF8', '#FFE4D6', '#F472B6');
+    },
+  }));
+
+  packGridAtlas('hairstyles_back_atlas', 160, 12, items);
+}
+
+// =========================================================
+// 3. FACES & EXPRESSIONS ATLAS
+// =========================================================
+function generateFacesAtlas() {
   const eyeTypes: NonNullable<ChibiConfig['eyeType']>[] = [
     'anya_smug',
     'aqua_crying',
@@ -274,6 +317,21 @@ function generateChibiCustomizationAtlas() {
     'sweat_nervous',
   ];
 
+  const items = eyeTypes.map((eye) => ({
+    id: `face_${eye}`,
+    category: 'face_expression',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      drawFaceThumbnail(ctx, size, size, eye, '#0284C7', '#FFE4D6');
+    },
+  }));
+
+  packGridAtlas('faces_expressions_atlas', 144, 10, items);
+}
+
+// =========================================================
+// 4. OUTFITS & CLOTHING ATLAS
+// =========================================================
+function generateOutfitsAtlas() {
   const outfits: { id: NonNullable<ChibiConfig['outfitType']>; coat: string; skirt: string; accent: string }[] = [
     { id: 'academy_blazer', coat: '#1E293B', skirt: '#0284C7', accent: '#38BDF8' },
     { id: 'cyber_hoodie', coat: '#0F172A', skirt: '#38BDF8', accent: '#00F0FF' },
@@ -305,6 +363,21 @@ function generateChibiCustomizationAtlas() {
     { id: 'winter_coat', coat: '#0284C7', skirt: '#F1F5F9', accent: '#38BDF8' },
   ];
 
+  const items = outfits.map((outfit) => ({
+    id: `outfit_${outfit.id}`,
+    category: 'outfit',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      drawOutfitThumbnail(ctx, size, size, outfit.id, outfit.coat, outfit.accent, outfit.skirt);
+    },
+  }));
+
+  packGridAtlas('outfits_clothing_atlas', 160, 12, items);
+}
+
+// =========================================================
+// 5. EARS & HORNS ATLAS
+// =========================================================
+function generateEarsHornsAtlas() {
   const earTypes: NonNullable<ChibiConfig['earType']>[] = [
     'cat',
     'bunny',
@@ -328,6 +401,26 @@ function generateChibiCustomizationAtlas() {
     'unicorn_horn',
   ];
 
+  const items = earTypes.map((ear) => ({
+    id: `ear_${ear}`,
+    category: 'ears_horns',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      ctx.save();
+      ctx.translate(size / 2, size / 2 + 22);
+      const scale = size / 80;
+      ctx.scale(scale, scale);
+      drawEarThumbnail(ctx, 80, 80, ear, '#2B272C', '#F472B6', '#FFE4D6');
+      ctx.restore();
+    },
+  }));
+
+  packGridAtlas('accessories_ears_horns_atlas', 160, 12, items);
+}
+
+// =========================================================
+// 6. HALOS & WINGS ATLAS
+// =========================================================
+function generateHalosWingsAtlas() {
   const haloTypes: NonNullable<ChibiConfig['haloType']>[] = [
     'star',
     'circle',
@@ -364,6 +457,31 @@ function generateChibiCustomizationAtlas() {
     'void_portals',
   ];
 
+  const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
+
+  haloTypes.forEach((halo) => {
+    items.push({
+      id: `halo_${halo}`,
+      category: 'halo',
+      draw: (ctx, size) => drawHaloThumbnail(ctx, size, size, halo, '#38BDF8'),
+    });
+  });
+
+  wingTypes.forEach((wing) => {
+    items.push({
+      id: `wing_${wing}`,
+      category: 'wing',
+      draw: (ctx, size) => drawWingThumbnail(ctx, size, size, wing, '#FFFFFF'),
+    });
+  });
+
+  packGridAtlas('accessories_halos_wings_atlas', 160, 12, items);
+}
+
+// =========================================================
+// 7. HATS & HEADWEAR ATLAS
+// =========================================================
+function generateHatsAtlas() {
   const hatTypes: NonNullable<ChibiConfig['hatType']>[] = [
     'cyber_cap',
     'combat_helmet',
@@ -393,92 +511,25 @@ function generateChibiCustomizationAtlas() {
     'military_cap',
   ];
 
-  const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
+  const items = hatTypes.map((hat) => ({
+    id: `hat_${hat}`,
+    category: 'hat',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      drawHatThumbnail(ctx, size, size, hat, '#1E293B');
+    },
+  }));
 
-  frontHairStyles.forEach((style) => {
-    items.push({
-      id: `front_hair_${style}`,
-      category: 'front_hair',
-      draw: (ctx, size) => drawFrontHairThumbnail(ctx, size, size, style, '#38BDF8', '#FFE4D6', '#F472B6'),
-    });
-  });
-
-  backHairStyles.forEach((style) => {
-    items.push({
-      id: `back_hair_${style}`,
-      category: 'back_hair',
-      draw: (ctx, size) => drawBackHairThumbnail(ctx, size, size, style, '#38BDF8', '#FFE4D6', '#F472B6'),
-    });
-  });
-
-  eyeTypes.forEach((eye) => {
-    items.push({
-      id: `eye_${eye}`,
-      category: 'eyes',
-      draw: (ctx, size) => drawFaceThumbnail(ctx, size, size, eye, '#0284C7', '#FFE4D6'),
-    });
-  });
-
-  outfits.forEach((outfit) => {
-    items.push({
-      id: `outfit_${outfit.id}`,
-      category: 'outfits',
-      draw: (ctx, size) => drawOutfitThumbnail(ctx, size, size, outfit.id, outfit.coat, outfit.accent, outfit.skirt),
-    });
-  });
-
-  earTypes.forEach((ear) => {
-    items.push({
-      id: `ear_${ear}`,
-      category: 'ears',
-      draw: (ctx, size) => {
-        ctx.save();
-        ctx.translate(size / 2, size / 2 + 18);
-        const scale = size / 75;
-        ctx.scale(scale, scale);
-        drawEarThumbnail(ctx, 75, 75, ear, '#2B272C', '#F472B6', '#FFE4D6');
-        ctx.restore();
-      },
-    });
-  });
-
-  haloTypes.forEach((halo) => {
-    items.push({
-      id: `halo_${halo}`,
-      category: 'halos',
-      draw: (ctx, size) => drawHaloThumbnail(ctx, size, size, halo, '#38BDF8'),
-    });
-  });
-
-  wingTypes.forEach((wing) => {
-    items.push({
-      id: `wing_${wing}`,
-      category: 'wings',
-      draw: (ctx, size) => drawWingThumbnail(ctx, size, size, wing, '#FFFFFF'),
-    });
-  });
-
-  hatTypes.forEach((hat) => {
-    items.push({
-      id: `hat_${hat}`,
-      category: 'hats',
-      draw: (ctx, size) => drawHatThumbnail(ctx, size, size, hat, '#1E293B'),
-    });
-  });
-
-  packGridAtlas('chibi_customization_atlas', 128, 8, items);
+  packGridAtlas('accessories_hats_headwear_atlas', 160, 12, items);
 }
 
 // =========================================================
-// 2. CHIBI ENTITIES, POLICE, PUNKS & BOSSES ATLAS
+// 8. CHARACTERS & OPERATORS ATLAS
 // =========================================================
-function generateChibiEntitiesAtlas() {
-  const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
-
-  // A. Operator Classes & Presets
-  const operatorPresets: { id: string; chibi: ChibiConfig; weapon: GunType }[] = [
+function generateCharactersAtlas() {
+  const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
     {
       id: 'millennium_student',
+      name: 'Millennium Student',
       weapon: 'mac10',
       chibi: {
         frontHairStyle: 'straight_bangs',
@@ -499,6 +550,7 @@ function generateChibiEntitiesAtlas() {
     },
     {
       id: 'trinity_scholar',
+      name: 'Trinity Scholar',
       weapon: 'cheytac',
       chibi: {
         frontHairStyle: 'curtain_bangs',
@@ -520,6 +572,7 @@ function generateChibiEntitiesAtlas() {
     },
     {
       id: 'gehenna_rebel',
+      name: 'Gehenna Rebel',
       weapon: 'ak47',
       chibi: {
         frontHairStyle: 'side_swept',
@@ -540,6 +593,7 @@ function generateChibiEntitiesAtlas() {
     },
     {
       id: 'cyber_shinobi',
+      name: 'Cyber Shinobi',
       weapon: 'katana',
       chibi: {
         frontHairStyle: 'spiky_bangs',
@@ -559,6 +613,7 @@ function generateChibiEntitiesAtlas() {
     },
     {
       id: 'tactical_vanguard',
+      name: 'Tactical Vanguard',
       weapon: 'shotgun',
       chibi: {
         frontHairStyle: 'chad_quiff',
@@ -578,6 +633,7 @@ function generateChibiEntitiesAtlas() {
     },
     {
       id: 'idol_superstar',
+      name: 'Idol Superstar',
       weapon: 'wand',
       chibi: {
         frontHairStyle: 'teto_arched_bangs',
@@ -595,237 +651,111 @@ function generateChibiEntitiesAtlas() {
         earColor: '#FFFFFF',
       },
     },
+    {
+      id: 'modern_onmyoji',
+      name: 'Modern Onmyoji',
+      weapon: 'grimoire',
+      chibi: {
+        frontHairStyle: 'hime_sidelocks',
+        backHairStyle: 'hime_cut',
+        hairColor: '#18181B',
+        skinTone: '#FFE4D6',
+        eyeType: 'fox' as any,
+        eyeColor: '#E11D48',
+        earType: 'fox',
+        haloType: 'floral',
+        haloColor: '#F43F5E',
+        outfitType: 'shrine_miko',
+        coatColor: '#FFFFFF',
+        skirtColor: '#DC2626',
+        hatType: 'kitsune_mask',
+        hatColor: '#FFFFFF',
+        earColor: '#FFFFFF',
+      },
+    },
   ];
 
-  operatorPresets.forEach((op) => {
-    items.push({
-      id: `operator_${op.id}`,
-      category: 'operator',
-      draw: (ctx, size) => {
-        const mockPlayer: Player = {
-          id: op.id,
-          name: op.id,
-          x: 0,
-          y: 0,
-          vx: 0,
-          vy: 0,
-          facing: 'right',
-          state: 'idle',
-          characterClass: 'gunslinger',
-          stats: makeDefaultPlayerStats(),
-          stamina: 100,
-          maxStamina: 100,
-          isSprinting: false,
-          jumpZ: 0,
-          jumpVz: 0,
-          isJumping: false,
-          bhopStreak: 0,
-          bhopTimer: 0,
-          bhopSpeedMult: 1,
-          gold: 0,
-          inventory: [],
-          equipment: { weapon: { id: op.weapon, gunType: op.weapon } as any, headwear: null, outfit: null, vehicle: null, accessory: null },
-          skills: [],
-          activeVehicleId: null,
-          isRiding: false,
-          spawnBounce: 1,
-          attackTimer: 0,
-          dodgeTimer: 0,
-          combo: 0,
-          lastAttackTime: 0,
-          activeQuests: {},
-          completedQuestIds: [],
-          currentZone: 'academy_square',
-          activeBuffs: [],
-          chibi: op.chibi,
-        };
-        ctx.save();
-        ctx.translate(size / 2, size / 2 + 25);
-        ctx.scale(1.1, 1.1);
-        drawChibiCharacter(ctx, mockPlayer, 0, false, { bodyOnly: false });
-        ctx.restore();
-      },
-    });
+  const items = operatorPresets.map((op) => ({
+    id: `character_${op.id}`,
+    category: 'character_operator',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      const mockPlayer: Player = {
+        id: op.id,
+        name: op.name,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        facing: 'right',
+        state: 'idle',
+        characterClass: 'gunslinger',
+        stats: makeDefaultPlayerStats(),
+        stamina: 100,
+        maxStamina: 100,
+        isSprinting: false,
+        jumpZ: 0,
+        jumpVz: 0,
+        isJumping: false,
+        bhopStreak: 0,
+        bhopTimer: 0,
+        bhopSpeedMult: 1,
+        gold: 0,
+        inventory: [],
+        equipment: { weapon: { id: op.weapon, gunType: op.weapon } as any, headwear: null, outfit: null, vehicle: null, accessory: null },
+        skills: [],
+        activeVehicleId: null,
+        isRiding: false,
+        spawnBounce: 1,
+        attackTimer: 0,
+        dodgeTimer: 0,
+        combo: 0,
+        lastAttackTime: 0,
+        activeQuests: {},
+        completedQuestIds: [],
+        currentZone: 'academy_square',
+        activeBuffs: [],
+        chibi: op.chibi,
+      };
+      ctx.save();
+      ctx.translate(size / 2, size / 2 + 25);
+      ctx.scale(1.15, 1.15);
+      drawChibiCharacter(ctx, mockPlayer, 0, false, { bodyOnly: false });
+      ctx.restore();
+    },
+  }));
+
+  // Vehicles
+  items.push({
+    id: 'vehicle_police_cruiser',
+    category: 'vehicle',
+    draw: (ctx, size) => {
+      ctx.save();
+      ctx.translate(size / 2, size / 2);
+      ctx.scale(0.85, 0.85);
+      drawPoliceCruiser(ctx, 0, 0, 0);
+      ctx.restore();
+    },
   });
 
-  // B. Police Units & SWAT
-  const policeUnits: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; hasShield?: boolean; name: string }[] = [
-    { type: 'cop_officer', weapon: 'pistol', name: 'Police Officer' },
-    { type: 'cop_swat', weapon: 'mac10', hasShield: true, name: 'SWAT Operator' },
-    { type: 'cop_enforcer', weapon: 'baton', hasShield: true, name: 'Heavy Enforcer' },
-    { type: 'cop_marksman', weapon: 'cheytac', name: 'Police Sniper' },
-    { type: 'cop_juggernaut', weapon: 'shotgun', hasShield: true, name: 'Police Juggernaut' },
-  ];
-
-  policeUnits.forEach((u) => {
-    items.push({
-      id: `police_${u.type}`,
-      category: 'police',
-      draw: (ctx, size) => {
-        const monster: Monster = {
-          id: u.type,
-          name: u.name,
-          type: u.type,
-          zone: 'police_hq',
-          x: 0,
-          y: 0,
-          spawnX: 0,
-          spawnY: 0,
-          hp: 120,
-          maxHp: 120,
-          atk: 14,
-          def: 8,
-          speed: 85,
-          expReward: 25,
-          goldReward: 15,
-          targetPlayerId: null,
-          attackCooldown: 0,
-          specialCooldown: 0,
-          isBoss: u.type === 'cop_juggernaut',
-          state: 'idle',
-          facing: 'right',
-          weaponType: u.weapon,
-          hasShield: u.hasShield,
-          faction: 'police',
-          humanChibi: {
-            frontHairStyle: 'short_parted',
-            backHairStyle: 'short_messy',
-            hairColor: '#1E293B',
-            skinTone: '#FFE4D6',
-            eyeType: 'determined',
-            earType: 'none',
-            haloType: 'cross',
-            haloColor: '#38BDF8',
-            outfitType: 'military_officer',
-            coatColor: '#1E3A8A',
-            skirtColor: '#0F172A',
-            hatType: u.type === 'cop_officer' ? 'police_cap' : 'combat_helmet',
-            hatColor: '#1E293B',
-            earColor: '#18181B',
-          },
-        };
-        ctx.save();
-        ctx.translate(size / 2, size / 2 + 20);
-        ctx.scale(1.1, 1.1);
-        drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
-        ctx.restore();
-      },
-    });
+  items.push({
+    id: 'vehicle_cyber_muscle_car',
+    category: 'vehicle',
+    draw: (ctx, size) => {
+      ctx.save();
+      ctx.translate(size / 2, size / 2);
+      ctx.scale(0.85, 0.85);
+      drawCyberMuscleCar(ctx, 0, 0, 0);
+      ctx.restore();
+    },
   });
 
-  // C. Punk Gang Units
-  const punkUnits: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; name: string }[] = [
-    { type: 'punk_grunt', weapon: 'bat', name: 'Punk Grunt' },
-    { type: 'punk_anarchist', weapon: 'mac10', name: 'Punk Anarchist' },
-    { type: 'punk_molotov', weapon: 'molotov', name: 'Punk Bomber' },
-    { type: 'punk_juggernaut', weapon: 'sledgehammer', name: 'Punk Juggernaut' },
-  ];
+  packGridAtlas('characters_operators_atlas', 192, 16, items);
+}
 
-  punkUnits.forEach((u) => {
-    items.push({
-      id: `punk_${u.type}`,
-      category: 'punk',
-      draw: (ctx, size) => {
-        const monster: Monster = {
-          id: u.type,
-          name: u.name,
-          type: u.type,
-          zone: 'punk_district',
-          x: 0,
-          y: 0,
-          spawnX: 0,
-          spawnY: 0,
-          hp: 110,
-          maxHp: 110,
-          atk: 15,
-          def: 6,
-          speed: 95,
-          expReward: 25,
-          goldReward: 15,
-          targetPlayerId: null,
-          attackCooldown: 0,
-          specialCooldown: 0,
-          isBoss: u.type === 'punk_juggernaut',
-          state: 'idle',
-          facing: 'right',
-          weaponType: u.weapon,
-          faction: 'punk_demon',
-          humanChibi: {
-            frontHairStyle: 'spiky_bangs',
-            backHairStyle: 'pompadour_chad',
-            hairColor: '#EA580C',
-            skinTone: '#FFE4D6',
-            eyeType: 'rage_fire',
-            earType: 'devil_horns',
-            haloType: 'circle',
-            haloColor: '#EA580C',
-            outfitType: 'streetwear',
-            coatColor: '#18181B',
-            skirtColor: '#451A03',
-            hatType: 'bandana',
-            hatColor: '#DC2626',
-            earColor: '#EA580C',
-          },
-        };
-        ctx.save();
-        ctx.translate(size / 2, size / 2 + 20);
-        ctx.scale(1.1, 1.1);
-        drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
-        ctx.restore();
-      },
-    });
-  });
-
-  // D. Bandits & Outlaws
-  const bandits: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; name: string }[] = [
-    { type: 'bandit_grunt', weapon: 'pistol', name: 'Bandit Grunt' },
-    { type: 'bandit_scout', weapon: 'mac10', name: 'Bandit Scout' },
-    { type: 'bandit_gunner', weapon: 'ak47', name: 'Bandit Gunner' },
-    { type: 'bandit_shotgunner', weapon: 'shotgun', name: 'Bandit Shotgunner' },
-    { type: 'bandit_sniper', weapon: 'cheytac', name: 'Bandit Sniper' },
-    { type: 'bandit_brawler', weapon: 'sledgehammer', name: 'Bandit Brawler' },
-  ];
-
-  bandits.forEach((u) => {
-    items.push({
-      id: `bandit_${u.type}`,
-      category: 'bandit',
-      draw: (ctx, size) => {
-        const monster: Monster = {
-          id: u.type,
-          name: u.name,
-          type: u.type,
-          zone: 'wasteland',
-          x: 0,
-          y: 0,
-          spawnX: 0,
-          spawnY: 0,
-          hp: 90,
-          maxHp: 90,
-          atk: 12,
-          def: 4,
-          speed: 90,
-          expReward: 20,
-          goldReward: 12,
-          targetPlayerId: null,
-          attackCooldown: 0,
-          specialCooldown: 0,
-          isBoss: false,
-          state: 'idle',
-          facing: 'right',
-          weaponType: u.weapon,
-          faction: 'bandit',
-        };
-        ctx.save();
-        ctx.translate(size / 2, size / 2 + 20);
-        ctx.scale(1.1, 1.1);
-        drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
-        ctx.restore();
-      },
-    });
-  });
-
-  // E. MAJOR BOSSES
+// =========================================================
+// 9. BOSSES ATLAS
+// =========================================================
+function generateBossesAtlas() {
   const bosses: { id: string; name: string; type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; chibi?: ChibiConfig }[] = [
     {
       id: 'boss_welder',
@@ -877,49 +807,275 @@ function generateChibiEntitiesAtlas() {
       type: 'bandit_boss',
       weapon: 'blade',
     },
+    {
+      id: 'boss_police_juggernaut',
+      name: 'Armored Police Juggernaut',
+      type: 'cop_juggernaut',
+      weapon: 'shotgun',
+      chibi: {
+        frontHairStyle: 'short_parted',
+        backHairStyle: 'short_messy',
+        hairColor: '#0F172A',
+        skinTone: '#FFE4D6',
+        eyeType: 'determined',
+        earType: 'none',
+        haloType: 'cross',
+        haloColor: '#38BDF8',
+        outfitType: 'military_officer',
+        coatColor: '#1E3A8A',
+        skirtColor: '#0F172A',
+        hatType: 'combat_helmet',
+        hatColor: '#0F172A',
+        earColor: '#0F172A',
+      },
+    },
+    {
+      id: 'boss_punk_juggernaut',
+      name: 'Punk Heavy Juggernaut',
+      type: 'punk_juggernaut',
+      weapon: 'sledgehammer',
+      chibi: {
+        frontHairStyle: 'spiky_bangs',
+        backHairStyle: 'pompadour_chad',
+        hairColor: '#EA580C',
+        skinTone: '#FFE4D6',
+        eyeType: 'rage_fire',
+        earType: 'devil_horns',
+        haloType: 'circle',
+        haloColor: '#EA580C',
+        outfitType: 'streetwear',
+        coatColor: '#18181B',
+        skirtColor: '#451A03',
+        hatType: 'bandana',
+        hatColor: '#DC2626',
+        earColor: '#EA580C',
+      },
+    },
   ];
 
-  bosses.forEach((b) => {
+  const items = bosses.map((b) => ({
+    id: `boss_${b.id}`,
+    category: 'boss',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      const monster: Monster = {
+        id: b.id,
+        name: b.name,
+        type: b.type,
+        zone: 'boss_arena',
+        x: 0,
+        y: 0,
+        spawnX: 0,
+        spawnY: 0,
+        hp: 2500,
+        maxHp: 2500,
+        atk: 40,
+        def: 25,
+        speed: 70,
+        expReward: 600,
+        goldReward: 300,
+        targetPlayerId: null,
+        attackCooldown: 0,
+        specialCooldown: 0,
+        isBoss: true,
+        isJuggernaut: true,
+        state: 'idle',
+        facing: 'right',
+        weaponType: b.weapon,
+        humanChibi: b.chibi,
+      };
+      ctx.save();
+      ctx.translate(size / 2, size / 2 + 30);
+      ctx.scale(1.2, 1.2);
+      drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
+      ctx.restore();
+    },
+  }));
+
+  packGridAtlas('bosses_atlas', 224, 16, items);
+}
+
+// =========================================================
+// 10. ENEMIES & FACTIONS ATLAS
+// =========================================================
+function generateEnemiesAtlas() {
+  const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
+
+  // Police
+  const policeUnits: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; hasShield?: boolean; name: string }[] = [
+    { type: 'cop_officer', weapon: 'pistol', name: 'Police Officer' },
+    { type: 'cop_swat', weapon: 'mac10', hasShield: true, name: 'SWAT Operator' },
+    { type: 'cop_enforcer', weapon: 'baton', hasShield: true, name: 'Heavy Enforcer' },
+    { type: 'cop_marksman', weapon: 'cheytac', name: 'Police Sniper' },
+  ];
+
+  policeUnits.forEach((u) => {
     items.push({
-      id: `boss_${b.id}`,
-      category: 'boss',
+      id: `police_${u.type}`,
+      category: 'police',
       draw: (ctx, size) => {
         const monster: Monster = {
-          id: b.id,
-          name: b.name,
-          type: b.type,
-          zone: 'boss_arena',
+          id: u.type,
+          name: u.name,
+          type: u.type,
+          zone: 'police_hq',
           x: 0,
           y: 0,
           spawnX: 0,
           spawnY: 0,
-          hp: 2000,
-          maxHp: 2000,
-          atk: 35,
-          def: 20,
-          speed: 70,
-          expReward: 500,
-          goldReward: 250,
+          hp: 120,
+          maxHp: 120,
+          atk: 14,
+          def: 8,
+          speed: 85,
+          expReward: 25,
+          goldReward: 15,
           targetPlayerId: null,
           attackCooldown: 0,
           specialCooldown: 0,
-          isBoss: true,
-          isJuggernaut: true,
+          isBoss: false,
           state: 'idle',
           facing: 'right',
-          weaponType: b.weapon,
-          humanChibi: b.chibi,
+          weaponType: u.weapon,
+          hasShield: u.hasShield,
+          faction: 'police',
+          humanChibi: {
+            frontHairStyle: 'short_parted',
+            backHairStyle: 'short_messy',
+            hairColor: '#1E293B',
+            skinTone: '#FFE4D6',
+            eyeType: 'determined',
+            earType: 'none',
+            haloType: 'cross',
+            haloColor: '#38BDF8',
+            outfitType: 'military_officer',
+            coatColor: '#1E3A8A',
+            skirtColor: '#0F172A',
+            hatType: u.type === 'cop_officer' ? 'police_cap' : 'combat_helmet',
+            hatColor: '#1E293B',
+            earColor: '#18181B',
+          },
         };
         ctx.save();
         ctx.translate(size / 2, size / 2 + 25);
-        ctx.scale(1.2, 1.2);
+        ctx.scale(1.15, 1.15);
         drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
         ctx.restore();
       },
     });
   });
 
-  // F. Cadets, Targets & Wolves
+  // Punks
+  const punkUnits: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; name: string }[] = [
+    { type: 'punk_grunt', weapon: 'bat', name: 'Punk Grunt' },
+    { type: 'punk_anarchist', weapon: 'mac10', name: 'Punk Anarchist' },
+    { type: 'punk_molotov', weapon: 'molotov', name: 'Punk Bomber' },
+  ];
+
+  punkUnits.forEach((u) => {
+    items.push({
+      id: `punk_${u.type}`,
+      category: 'punk',
+      draw: (ctx, size) => {
+        const monster: Monster = {
+          id: u.type,
+          name: u.name,
+          type: u.type,
+          zone: 'punk_district',
+          x: 0,
+          y: 0,
+          spawnX: 0,
+          spawnY: 0,
+          hp: 110,
+          maxHp: 110,
+          atk: 15,
+          def: 6,
+          speed: 95,
+          expReward: 25,
+          goldReward: 15,
+          targetPlayerId: null,
+          attackCooldown: 0,
+          specialCooldown: 0,
+          isBoss: false,
+          state: 'idle',
+          facing: 'right',
+          weaponType: u.weapon,
+          faction: 'punk_demon',
+          humanChibi: {
+            frontHairStyle: 'spiky_bangs',
+            backHairStyle: 'pompadour_chad',
+            hairColor: '#EA580C',
+            skinTone: '#FFE4D6',
+            eyeType: 'rage_fire',
+            earType: 'devil_horns',
+            haloType: 'circle',
+            haloColor: '#EA580C',
+            outfitType: 'streetwear',
+            coatColor: '#18181B',
+            skirtColor: '#451A03',
+            hatType: 'bandana',
+            hatColor: '#DC2626',
+            earColor: '#EA580C',
+          },
+        };
+        ctx.save();
+        ctx.translate(size / 2, size / 2 + 25);
+        ctx.scale(1.15, 1.15);
+        drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
+        ctx.restore();
+      },
+    });
+  });
+
+  // Bandits
+  const bandits: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; name: string }[] = [
+    { type: 'bandit_grunt', weapon: 'pistol', name: 'Bandit Grunt' },
+    { type: 'bandit_scout', weapon: 'mac10', name: 'Bandit Scout' },
+    { type: 'bandit_gunner', weapon: 'ak47', name: 'Bandit Gunner' },
+    { type: 'bandit_shotgunner', weapon: 'shotgun', name: 'Bandit Shotgunner' },
+    { type: 'bandit_sniper', weapon: 'cheytac', name: 'Bandit Sniper' },
+    { type: 'bandit_brawler', weapon: 'sledgehammer', name: 'Bandit Brawler' },
+  ];
+
+  bandits.forEach((u) => {
+    items.push({
+      id: `bandit_${u.type}`,
+      category: 'bandit',
+      draw: (ctx, size) => {
+        const monster: Monster = {
+          id: u.type,
+          name: u.name,
+          type: u.type,
+          zone: 'wasteland',
+          x: 0,
+          y: 0,
+          spawnX: 0,
+          spawnY: 0,
+          hp: 90,
+          maxHp: 90,
+          atk: 12,
+          def: 4,
+          speed: 90,
+          expReward: 20,
+          goldReward: 12,
+          targetPlayerId: null,
+          attackCooldown: 0,
+          specialCooldown: 0,
+          isBoss: false,
+          state: 'idle',
+          facing: 'right',
+          weaponType: u.weapon,
+          faction: 'bandit',
+        };
+        ctx.save();
+        ctx.translate(size / 2, size / 2 + 25);
+        ctx.scale(1.15, 1.15);
+        drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
+        ctx.restore();
+      },
+    });
+  });
+
+  // Cadets & Targets
   const cadets: { type: Monster['type']; weapon: NonNullable<Monster['weaponType']>; name: string }[] = [
     { type: 'cadet_bat', weapon: 'bat', name: 'Cadet Bat' },
     { type: 'cadet_gunner', weapon: 'pistol', name: 'Cadet Gunner' },
@@ -957,68 +1113,19 @@ function generateChibiEntitiesAtlas() {
           weaponType: c.weapon,
         };
         ctx.save();
-        ctx.translate(size / 2, size / 2 + 20);
-        ctx.scale(1.1, 1.1);
+        ctx.translate(size / 2, size / 2 + 25);
+        ctx.scale(1.15, 1.15);
         drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
         ctx.restore();
       },
     });
   });
 
-  // G. Vehicles
-  items.push({
-    id: 'vehicle_police_cruiser',
-    category: 'vehicle',
-    draw: (ctx, size) => {
-      ctx.save();
-      ctx.translate(size / 2, size / 2);
-      ctx.scale(0.85, 0.85);
-      drawPoliceCruiser(ctx, 0, 0, 0);
-      ctx.restore();
-    },
-  });
-
-  items.push({
-    id: 'vehicle_cyber_muscle_car',
-    category: 'vehicle',
-    draw: (ctx, size) => {
-      ctx.save();
-      ctx.translate(size / 2, size / 2);
-      ctx.scale(0.85, 0.85);
-      drawCyberMuscleCar(ctx, 0, 0, 0);
-      ctx.restore();
-    },
-  });
-
-  packGridAtlas('chibi_entities_atlas', 160, 10, items);
+  packGridAtlas('enemies_factions_atlas', 192, 16, items);
 }
 
 // =========================================================
-// 3. HORDE MOBS & RIFT BOSSES ATLAS
-// =========================================================
-function generateHordeMobsAtlas() {
-  const sprites = getHordeMobAtlasSprites();
-  const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
-
-  sprites.forEach((sprite) => {
-    items.push({
-      id: `horde_${sprite.kind}${sprite.boss ? '_boss' : ''}`,
-      category: 'horde_mob',
-      draw: (ctx, size) => {
-        ctx.save();
-        ctx.translate(size / 2, size / 2);
-        ctx.scale(1.5, 1.5);
-        drawHordeMobAtlasSprite(ctx, sprite);
-        ctx.restore();
-      },
-    });
-  });
-
-  packGridAtlas('horde_mobs_atlas', 128, 8, items);
-}
-
-// =========================================================
-// 4. WEAPONS, ATTACHMENTS & MELEE ATLAS
+// 11. WEAPONS & ATTACHMENTS ATLAS
 // =========================================================
 function generateWeaponsAtlas() {
   const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
@@ -1136,16 +1243,36 @@ function generateWeaponsAtlas() {
     });
   });
 
-  packGridAtlas('weapons_atlas', 128, 8, items);
+  packGridAtlas('weapons_attachments_atlas', 160, 12, items);
 }
 
 // =========================================================
-// 5. WORLD ENVIRONMENT, TREES, RIFTS & PROPS ATLAS
+// 12. HORDE MOBS ATLAS
+// =========================================================
+function generateHordeMobsAtlas() {
+  const sprites = getHordeMobAtlasSprites();
+  const items = sprites.map((sprite) => ({
+    id: `horde_${sprite.kind}${sprite.boss ? '_boss' : ''}`,
+    category: 'horde_mob',
+    draw: (ctx: CanvasRenderingContext2D, size: number) => {
+      ctx.save();
+      ctx.translate(size / 2, size / 2);
+      ctx.scale(1.5, 1.5);
+      drawHordeMobAtlasSprite(ctx, sprite);
+      ctx.restore();
+    },
+  }));
+
+  packGridAtlas('horde_mobs_atlas', 144, 10, items);
+}
+
+// =========================================================
+// 13. WORLD ENVIRONMENT, TREES & RIFTS ATLAS
 // =========================================================
 function generateWorldEnvironmentAtlas() {
   const items: { id: string; category: string; draw: (ctx: CanvasRenderingContext2D, size: number) => void }[] = [];
 
-  // A. Foliage / Trees
+  // Trees
   items.push({
     id: 'tree_pine',
     category: 'foliage',
@@ -1153,10 +1280,8 @@ function generateWorldEnvironmentAtlas() {
       ctx.save();
       ctx.translate(size / 2, size / 2 + 25);
       ctx.scale(1.4, 1.4);
-      // Trunk
       ctx.fillStyle = '#451A03';
       ctx.fillRect(-5, 0, 10, 24);
-      // Foliage tiers
       const tiers = [
         { y: 6, h: 26, w: 26, col: '#064E3B' },
         { y: -10, h: 26, w: 22, col: '#047857' },
@@ -1182,7 +1307,6 @@ function generateWorldEnvironmentAtlas() {
       ctx.save();
       ctx.translate(size / 2, size / 2 + 25);
       ctx.scale(1.4, 1.4);
-      // Pale trunk
       ctx.fillStyle = '#F8FAFC';
       ctx.fillRect(-5, -6, 10, 30);
       const layers = [
@@ -1250,7 +1374,7 @@ function generateWorldEnvironmentAtlas() {
     },
   });
 
-  // B. Rocks & Obstacles
+  // Rocks & Terrain
   items.push({
     id: 'boulder_granite',
     category: 'terrain',
@@ -1294,7 +1418,7 @@ function generateWorldEnvironmentAtlas() {
     },
   });
 
-  // C. Interactive World Props
+  // Props
   const interactiveProps = [
     { id: 'server_rack', label: 'SERVER', color: '#0F172A', border: '#0284C7' },
     { id: 'quantum_core', label: 'Q-CORE', color: '#020617', border: '#06B6D4' },
@@ -1332,7 +1456,7 @@ function generateWorldEnvironmentAtlas() {
     });
   });
 
-  // D. Boss Rift Portals & Sigils
+  // Boss Rifts
   const rifts = [
     { id: 'rift_crimson', color: '#FB7185', label: 'CRIMSON' },
     { id: 'rift_void', color: '#A78BFA', label: 'VOID' },
@@ -1375,20 +1499,28 @@ function generateWorldEnvironmentAtlas() {
     });
   });
 
-  packGridAtlas('world_environment_atlas', 128, 8, items);
+  packGridAtlas('world_environment_atlas', 160, 12, items);
 }
 
 // =========================================================
-// MAIN GENERATOR PIPELINE
+// MAIN PIPELINE
 // =========================================================
 function main() {
-  console.log('🚀 Starting Complete TS Vector Graphics Sprite Atlas Generation...');
-  generateChibiCustomizationAtlas();
-  generateChibiEntitiesAtlas();
-  generateHordeMobsAtlas();
+  console.log('🚀 Generating Segregated, Non-overlapping Sprite Atlases...');
+  generateFrontHairAtlas();
+  generateBackHairAtlas();
+  generateFacesAtlas();
+  generateOutfitsAtlas();
+  generateEarsHornsAtlas();
+  generateHalosWingsAtlas();
+  generateHatsAtlas();
+  generateCharactersAtlas();
+  generateBossesAtlas();
+  generateEnemiesAtlas();
   generateWeaponsAtlas();
+  generateHordeMobsAtlas();
   generateWorldEnvironmentAtlas();
-  console.log('🎉 100% of all TS vector graphics assets successfully extracted into 5 Sprite Atlases!');
+  console.log('🎉 All 13 Dedicated Sprite Atlases generated with 0 overlap!');
 }
 
 main();

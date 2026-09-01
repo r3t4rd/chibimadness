@@ -1,0 +1,260 @@
+{
+  "name": "outfits_clothing_atlas",
+  "texture": "outfits_clothing_atlas.png",
+  "width": 1104,
+  "height": 920,
+  "frames": {
+    "outfit_academy_blazer": {
+      "x": 12,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_cyber_hoodie": {
+      "x": 196,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_tactical_shinobi": {
+      "x": 380,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_maid_idol": {
+      "x": 564,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_streetwear": {
+      "x": 748,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_magic_robe": {
+      "x": 932,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_kimono_yukata": {
+      "x": 12,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_mecha_pilot": {
+      "x": 196,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_goth_lolita": {
+      "x": 380,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_military_officer": {
+      "x": 564,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_gym_bloomer": {
+      "x": 748,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_swimsuit_sailor": {
+      "x": 932,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_bunny_suit": {
+      "x": 12,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_shrine_miko": {
+      "x": 196,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_cyber_ninja": {
+      "x": 380,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_techwear_poncho": {
+      "x": 564,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_magical_girl": {
+      "x": 748,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_kigurumi_onesie": {
+      "x": 932,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_vampire_noble": {
+      "x": 12,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_combat_commando": {
+      "x": 196,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_sukeban_trench": {
+      "x": 380,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_work_overalls": {
+      "x": 564,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_sailor_uniform": {
+      "x": 748,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_nurse_outfit": {
+      "x": 932,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_china_dress": {
+      "x": 12,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_detective_coat": {
+      "x": 196,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_idol_stage": {
+      "x": 380,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    },
+    "outfit_winter_coat": {
+      "x": 564,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfit"
+    }
+  }
+}

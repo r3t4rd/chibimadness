@@ -1,0 +1,404 @@
+{
+  "name": "faces_expressions_atlas",
+  "texture": "faces_expressions_atlas.png",
+  "width": 1148,
+  "height": 1148,
+  "frames": {
+    "face_anya_smug": {
+      "x": 10,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_aqua_crying": {
+      "x": 174,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_bocchi_panic": {
+      "x": 338,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_sparkle_stars": {
+      "x": 502,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_heart_eyes": {
+      "x": 666,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_owo": {
+      "x": 830,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_pout": {
+      "x": 994,
+      "y": 10,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_giga_chad": {
+      "x": 10,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_cat_w": {
+      "x": 174,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_happy": {
+      "x": 338,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_determined": {
+      "x": 502,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_wink": {
+      "x": 666,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_sparkle": {
+      "x": 830,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_smug": {
+      "x": 994,
+      "y": 174,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_sleepy": {
+      "x": 10,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_blush": {
+      "x": 174,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_glasses": {
+      "x": 338,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_dot": {
+      "x": 502,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_teary": {
+      "x": 666,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_dizzy_spiral": {
+      "x": 830,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_deadpan": {
+      "x": 994,
+      "y": 338,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_starry_tears": {
+      "x": 10,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_rage_fire": {
+      "x": 174,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_derp": {
+      "x": 338,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_hypno_spiral": {
+      "x": 502,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_sleepy_closed": {
+      "x": 666,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_wink_star": {
+      "x": 830,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_nya_cat": {
+      "x": 994,
+      "y": 502,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_dead_x": {
+      "x": 10,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_sparkle_hearts": {
+      "x": 174,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_waterfall_cry": {
+      "x": 338,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_smug_cat_face": {
+      "x": 502,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_yandere_glow": {
+      "x": 666,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_anime_shades": {
+      "x": 830,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_laser_eyes": {
+      "x": 994,
+      "y": 666,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_pog_shock": {
+      "x": 10,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_drool_sleepy": {
+      "x": 174,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_diamond_shoujo": {
+      "x": 338,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_heterochromia": {
+      "x": 502,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_9ball": {
+      "x": 666,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_tsurime_sharp": {
+      "x": 830,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_tareme_soft": {
+      "x": 994,
+      "y": 830,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_closed_smile": {
+      "x": 10,
+      "y": 994,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    },
+    "face_sweat_nervous": {
+      "x": 174,
+      "y": 994,
+      "w": 144,
+      "h": 144,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "face_expression"
+    }
+  }
+}
