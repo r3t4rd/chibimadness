@@ -40,6 +40,11 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
               native {stats.nativeFps} FPS {stats.nativeFrameMs.toFixed(1)} ms
             </div>
           )}
+          {stats.nativeStaticCacheRedraws !== null && (
+            <div className="text-slate-400">
+              cache {stats.nativeStaticCacheRedraws}/0.5s · static {(stats.nativeStaticTriangles ?? 0).toLocaleString()} △ · dyn {(stats.nativeDynamicTriangles ?? 0).toLocaleString()} △
+            </div>
+          )}
           <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
             world {nativeWorldActive ? 'native active' : 'canvas fallback'}
           </div>

@@ -127,7 +127,10 @@ fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let pixel = vec2<f32>(position.x, camera.output_viewport.y - position.y);
+    // `@builtin(position)` is already expressed from the top-left in a WGPU
+    // fragment shader. Flipping it here mirrored the retained texture and
+    // made it move in the wrong direction when the camera panned.
+    let pixel = vec2<f32>(position.x, position.y);
     let world = (pixel - camera.output_viewport * 0.5) / camera.dynamic_zoom + camera.dynamic_position;
     let static_pixel = (world - camera.static_position) * camera.static_zoom + camera.static_viewport * 0.5;
     let uv = static_pixel / camera.static_viewport;
@@ -685,6 +688,7 @@ pub struct NativeWorldRenderer {
     metrics_started_at: Instant,
     metrics_frame_count: u32,
     metrics_total_ms: f32,
+    static_cache_redraws: u32,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -692,6 +696,9 @@ pub struct NativeWorldRenderer {
 pub struct NativeRendererMetrics {
     pub fps: u32,
     pub frame_ms: f32,
+    pub static_cache_redraws: u32,
+    pub static_triangles: u32,
+    pub dynamic_triangles: u32,
 }
 
 /// Canvas uses the user's installed font stack, so the native Windows client
@@ -748,6 +755,7 @@ impl Default for NativeWorldRenderer {
             metrics_started_at: Instant::now(),
             metrics_frame_count: 0,
             metrics_total_ms: 0.0,
+            static_cache_redraws: 0,
         }
     }
 }
@@ -771,10 +779,14 @@ impl NativeWorldRenderer {
         let metrics = NativeRendererMetrics {
             fps: (self.metrics_frame_count as f32 / elapsed.as_secs_f32()).round() as u32,
             frame_ms: self.metrics_total_ms / self.metrics_frame_count as f32,
+            static_cache_redraws: self.static_cache_redraws,
+            static_triangles: (self.static_vertices.len() / 3) as u32,
+            dynamic_triangles: (self.vertices.len() / 3) as u32,
         };
         self.metrics_started_at = now;
         self.metrics_frame_count = 0;
         self.metrics_total_ms = 0.0;
+        self.static_cache_redraws = 0;
         Some(metrics)
     }
 
@@ -1118,6 +1130,7 @@ impl NativeWorldRenderer {
                 },
             );
             self.static_texture_dirty = false;
+            self.static_cache_redraws = self.static_cache_redraws.saturating_add(1);
         }
         true
     }

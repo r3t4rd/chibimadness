@@ -118,6 +118,9 @@ if (typeof window !== 'undefined') {
         native_renderer?: unknown;
         fps?: unknown;
         frameMs?: unknown;
+        staticCacheRedraws?: unknown;
+        staticTriangles?: unknown;
+        dynamicTriangles?: unknown;
       };
     }>).detail;
     if (detail?.event === 'game.configuration') {
@@ -147,7 +150,13 @@ if (typeof window !== 'undefined') {
       nativeWorldRendererReady = true;
       nativeWorldRendererListeners.forEach((listener) => listener());
     } else if (detail?.event === 'world.renderer_metrics') {
-      perfMonitor.recordNativePresentation(detail.payload?.fps, detail.payload?.frameMs);
+      perfMonitor.recordNativePresentation(
+        detail.payload?.fps,
+        detail.payload?.frameMs,
+        detail.payload?.staticCacheRedraws,
+        detail.payload?.staticTriangles,
+        detail.payload?.dynamicTriangles
+      );
     }
   });
 

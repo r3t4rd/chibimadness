@@ -5,6 +5,9 @@ export type PerfSnapshot = {
   drawMs: number;
   nativeFps: number | null;
   nativeFrameMs: number | null;
+  nativeStaticCacheRedraws: number | null;
+  nativeStaticTriangles: number | null;
+  nativeDynamicTriangles: number | null;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -22,6 +25,9 @@ class PerformanceMonitor {
   private drawMs = 0;
   private nativeFps: number | null = null;
   private nativeFrameMs: number | null = null;
+  private nativeStaticCacheRedraws: number | null = null;
+  private nativeStaticTriangles: number | null = null;
+  private nativeDynamicTriangles: number | null = null;
   private fogMs = 0;
   private extras: Partial<PerfSnapshot> = {};
 
@@ -35,12 +41,27 @@ class PerformanceMonitor {
     this.drawMs = ms;
   }
 
-  recordNativePresentation(fps: unknown, frameMs: unknown) {
+  recordNativePresentation(
+    fps: unknown,
+    frameMs: unknown,
+    staticCacheRedraws?: unknown,
+    staticTriangles?: unknown,
+    dynamicTriangles?: unknown
+  ) {
     this.nativeFps = typeof fps === 'number' && Number.isFinite(fps)
       ? Math.max(0, Math.round(fps))
       : null;
     this.nativeFrameMs = typeof frameMs === 'number' && Number.isFinite(frameMs)
       ? Math.max(0, frameMs)
+      : null;
+    this.nativeStaticCacheRedraws = typeof staticCacheRedraws === 'number' && Number.isFinite(staticCacheRedraws)
+      ? Math.max(0, Math.round(staticCacheRedraws))
+      : null;
+    this.nativeStaticTriangles = typeof staticTriangles === 'number' && Number.isFinite(staticTriangles)
+      ? Math.max(0, Math.round(staticTriangles))
+      : null;
+    this.nativeDynamicTriangles = typeof dynamicTriangles === 'number' && Number.isFinite(dynamicTriangles)
+      ? Math.max(0, Math.round(dynamicTriangles))
       : null;
   }
 
@@ -61,6 +82,9 @@ class PerformanceMonitor {
       drawMs: this.drawMs,
       nativeFps: this.nativeFps,
       nativeFrameMs: this.nativeFrameMs,
+      nativeStaticCacheRedraws: this.nativeStaticCacheRedraws,
+      nativeStaticTriangles: this.nativeStaticTriangles,
+      nativeDynamicTriangles: this.nativeDynamicTriangles,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
