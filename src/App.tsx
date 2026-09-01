@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera } from './game/worldRenderer';
+import { compileWorldScene, drawWorldInput, screenToWorld, getCameraState, updateNativeCamera } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -27,6 +27,7 @@ import {
   isNativeWorldRendererEnabled,
   isNativeWorldRendererReady,
   net,
+  sendNativeRenderScene,
   sendNativeWorldRenderFrame,
   subscribeContentBuildInfo,
   subscribeNativeWorldRenderer,
@@ -216,7 +217,13 @@ export function App() {
     if (!createdPlayer || (!nativeWorldRenderer && !canvas)) return;
 
     const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
+    // Native mode has no visible Canvas, but the canonical compiler still
+    // needs browser font metrics for the exact source layout.
+    const measurementContext = nativeWorldRenderer
+      ? document.createElement('canvas').getContext('2d')
+      : ctx;
     if (!nativeWorldRenderer && !ctx) return;
+    if (!measurementContext) return;
     let viewportWidth = window.innerWidth;
     let viewportHeight = window.innerHeight;
 
@@ -261,6 +268,24 @@ export function App() {
         gameTimePhase: curEngine.gameTimePhase,
       };
       if (nativeWorldRendererRequested) {
+        if (time - lastNativeFrameAt.current >= 1000 / 30) {
+          lastNativeFrameAt.current = time;
+          sendNativeRenderScene(compileWorldScene(measurementContext, worldRenderInput));
+        }
+        if (nativeWorldRenderer) {
+          perfMonitor.setExtras({
+            monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
+            particles: curEngine.particles.length,
+            projectiles: curEngine.projectiles.length,
+            zoom: getCameraState().zoom,
+            canvasW: viewportWidth,
+            canvasH: viewportHeight,
+          });
+          perfMonitor.recordDraw(0);
+          perfMonitor.recordFrame(frameIntervalMs);
+          animationId = requestAnimationFrame(render);
+          return;
+        }
         const camera = updateNativeCamera(curEngine.player, time);
         const nativeViewPadding = 180;
         const nativeHalfWidth = viewportWidth / camera.zoom / 2 + nativeViewPadding;

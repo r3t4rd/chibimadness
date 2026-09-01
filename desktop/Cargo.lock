@@ -292,6 +292,7 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 name = "chibimadness-desktop"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "bytemuck",
  "lyon_path",
  "lyon_tessellation",

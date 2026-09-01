@@ -1,8 +1,11 @@
-use std::{borrow::Cow, collections::HashMap, time::Instant};
+use std::{borrow::Cow, collections::HashMap, env, fs, time::Instant};
 
+use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
-use yuyib::render::{RenderFrame, wgpu};
+use yuyib::render::{wgpu, RenderFrame};
+
+use crate::scene_executor;
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
 // The display list crosses the WebView bridge, so it is untrusted input even
@@ -241,7 +244,11 @@ pub struct NativeSceneResourceRef {
     pub kind: String,
 }
 
-fn scene_value_is_bounded(value: &serde_json::Value, depth: usize, item_budget: &mut usize) -> bool {
+fn scene_value_is_bounded(
+    value: &serde_json::Value,
+    depth: usize,
+    item_budget: &mut usize,
+) -> bool {
     if depth > MAX_SCENE_VALUE_DEPTH || *item_budget == 0 {
         return false;
     }
@@ -262,7 +269,9 @@ fn scene_value_is_bounded(value: &serde_json::Value, depth: usize, item_budget: 
 
 fn scene_command_is_bounded(command: &NativeSceneCommand) -> bool {
     let (name, args, resource) = match command {
-        NativeSceneCommand::Set { property, value } => (property, std::slice::from_ref(value), None),
+        NativeSceneCommand::Set { property, value } => {
+            (property, std::slice::from_ref(value), None)
+        }
         NativeSceneCommand::Call {
             method,
             args,
@@ -283,10 +292,7 @@ fn scene_command_is_bounded(command: &NativeSceneCommand) -> bool {
         return false;
     }
     if let Some(result) = resource {
-        if result.resource_ref == 0
-            || result.kind.is_empty()
-            || result.kind.len() > 32
-        {
+        if result.resource_ref == 0 || result.kind.is_empty() || result.kind.len() > 32 {
             return false;
         }
     }
@@ -462,6 +468,10 @@ impl NativeWorldState {
         self.scene_received_at = Some(Instant::now());
     }
 
+    pub fn scene(&self) -> Option<&NativeRenderScene> {
+        self.scene.as_ref()
+    }
+
     #[cfg(test)]
     fn scene_command_count(&self) -> Option<usize> {
         self.scene.as_ref().map(|scene| scene.commands.len())
@@ -495,6 +505,7 @@ pub struct NativeWorldRenderer {
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
+    text_font: Option<FontArc>,
     last_presented_at: Option<Instant>,
     metrics_started_at: Instant,
     metrics_frame_count: u32,
@@ -508,6 +519,24 @@ pub struct NativeRendererMetrics {
     pub frame_ms: f32,
 }
 
+/// Canvas uses the user's installed font stack, so the native Windows client
+/// does the same instead of shipping an unrelated embedded face. Segoe UI is
+/// the first choice because it also covers the glyphs used in the HUD; Arial
+/// is a conservative fallback on reduced Windows installations.
+fn load_native_text_font() -> Option<FontArc> {
+    let fonts = env::var_os("WINDIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
+        .join("Fonts");
+    ["segoeui.ttf", "arial.ttf", "calibri.ttf"]
+        .into_iter()
+        .find_map(|name| {
+            fs::read(fonts.join(name))
+                .ok()
+                .and_then(|bytes| FontArc::try_from_vec(bytes).ok())
+        })
+}
+
 impl Default for NativeWorldRenderer {
     fn default() -> Self {
         Self {
@@ -516,6 +545,7 @@ impl Default for NativeWorldRenderer {
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
+            text_font: load_native_text_font(),
             last_presented_at: None,
             metrics_started_at: Instant::now(),
             metrics_frame_count: 0,
@@ -553,10 +583,20 @@ impl NativeWorldRenderer {
     /// Returns true only after the frame reached the native surface. The
     /// WebView uses this acknowledgement to hide its Canvas fallback safely.
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
-        let Some((world, prediction_seconds)) = state.frame_with_prediction() else {
-            return false;
+        let rendered_scene = if let Some(scene) = state.scene() {
+            self.build_scene_vertices(scene)
+        } else if let Some((world, prediction_seconds)) = state.frame_with_prediction() {
+            // Kept only during an upgrade from an older JS bundle. New clients
+            // always submit `world.scene`; the source display list is the
+            // presentable native path.
+            self.build_vertices(world, prediction_seconds);
+            true
+        } else {
+            false
         };
-        self.build_vertices(world, prediction_seconds);
+        if !rendered_scene {
+            return false;
+        }
         if self.vertices.is_empty() {
             return false;
         }
@@ -661,6 +701,31 @@ impl NativeWorldRenderer {
             let y = entity.y + entity.velocity_y * prediction_seconds;
             self.add_entity(entity, x, y, world);
         }
+    }
+
+    fn build_scene_vertices(&mut self, scene: &NativeRenderScene) -> bool {
+        let tessellation = scene_executor::tessellate(scene, self.text_font.as_ref());
+        if tessellation.unsupported_commands != 0 || tessellation.truncated {
+            eprintln!(
+                "native scene held on Canvas fallback: {} unsupported command(s), truncated={}",
+                tessellation.unsupported_commands, tessellation.truncated,
+            );
+            return false;
+        }
+        self.vertices.clear();
+        self.vertices.reserve(tessellation.triangles.len() * 3);
+        for triangle in tessellation.triangles {
+            for index in 0..3 {
+                self.vertices.push(Vertex {
+                    position: [
+                        triangle.positions[index][0] / scene.viewport.width * 2.0 - 1.0,
+                        1.0 - triangle.positions[index][1] / scene.viewport.height * 2.0,
+                    ],
+                    color: triangle.colors[index],
+                });
+            }
+        }
+        !self.vertices.is_empty()
     }
 
     /// Faithful fixed-layout base layer mirrored from `worldRenderer.ts`.
@@ -2348,12 +2413,10 @@ mod tests {
             Some("miku_twintails")
         );
         assert_eq!(entity.projectile_type, "magic_orb");
-        assert!(
-            entity
-                .animation
-                .as_ref()
-                .is_some_and(|animation| animation.is_sprinting)
-        );
+        assert!(entity
+            .animation
+            .as_ref()
+            .is_some_and(|animation| animation.is_sprinting));
     }
 
     #[test]
