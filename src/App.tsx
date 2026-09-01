@@ -288,6 +288,7 @@ export function App() {
     window.addEventListener('resize', handleResize);
 
     const render = (time: number) => {
+      const callbackStartedAt = performance.now();
       const frameIntervalMs = lastRenderedAt === null ? 1000 / 60 : time - lastRenderedAt;
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
@@ -549,8 +550,10 @@ export function App() {
       const worldRenderInput = buildWorldRenderInput();
       const drawStart = performance.now();
       drawWorldInput(ctx, worldRenderInput);
-      perfMonitor.recordDraw(performance.now() - drawStart);
+      const callbackFinishedAt = performance.now();
+      perfMonitor.recordDraw(callbackFinishedAt - drawStart);
       perfMonitor.recordFrame(frameIntervalMs);
+      perfMonitor.recordWebViewFrame(callbackStartedAt, callbackFinishedAt);
       animationId = requestAnimationFrame(render);
     };
 

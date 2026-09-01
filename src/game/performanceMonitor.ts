@@ -3,6 +3,20 @@ export type PerfSnapshot = {
   frameMs: number;
   avgFrameMs: number;
   drawMs: number;
+  /** CPU time spent inside the Canvas rAF callback. */
+  frameCpuMs: number;
+  /** Time after the previous callback finished until the next rAF began. */
+  rafWaitMs: number;
+  rafWaitP95Ms: number;
+  /** Actual cadence of a 16 ms timer; distinguishes rAF pacing from host throttling. */
+  timerPulseMs: number;
+  timerPulseAvgMs: number;
+  longTaskCount: number;
+  longTaskMaxMs: number;
+  pageVisible: boolean;
+  pageFocused: boolean;
+  devicePixelRatio: number;
+  hardwareConcurrency: number | null;
   nativeFps: number | null;
   nativeFrameMs: number | null;
   nativeStaticCacheRedraws: number | null;
@@ -21,11 +35,24 @@ export type PerfSnapshot = {
 };
 
 const ROLLING = 60;
+const LONG_TASK_WINDOW_MS = 5_000;
+
+type LongTask = { startedAt: number; duration: number };
 
 class PerformanceMonitor {
   private frameTimes: number[] = [];
+  private rafWaitTimes: number[] = [];
+  private timerPulseTimes: number[] = [];
+  private longTasks: LongTask[] = [];
   private frameMs = 0;
   private drawMs = 0;
+  private frameCpuMs = 0;
+  private rafWaitMs = 0;
+  private timerPulseMs = 0;
+  private lastFrameFinishedAt: number | null = null;
+  private lastTimerAt: number | null = null;
+  private pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+  private pageFocused = typeof document === 'undefined' || document.hasFocus();
   private nativeFps: number | null = null;
   private nativeFrameMs: number | null = null;
   private nativeStaticCacheRedraws: number | null = null;
@@ -37,6 +64,56 @@ class PerformanceMonitor {
   private fogMs = 0;
   private extras: Partial<PerfSnapshot> = {};
 
+  constructor() {
+    if (typeof window === 'undefined' || typeof performance === 'undefined') return;
+
+    // Timers and rAF use different schedulers in WebView2. A regular 16 ms
+    // pulse distinguishes a compositor/rAF cadence issue from a host event
+    // loop that is not waking the WebView promptly at all.
+    this.lastTimerAt = performance.now();
+    window.setInterval(() => {
+      const now = performance.now();
+      if (this.lastTimerAt !== null) {
+        this.timerPulseMs = now - this.lastTimerAt;
+        this.pushRolling(this.timerPulseTimes, this.timerPulseMs);
+      }
+      this.lastTimerAt = now;
+    }, 16);
+
+    const refreshPageState = () => {
+      this.pageVisible = document.visibilityState === 'visible';
+      this.pageFocused = document.hasFocus();
+    };
+    document.addEventListener('visibilitychange', refreshPageState);
+    window.addEventListener('focus', refreshPageState);
+    window.addEventListener('blur', refreshPageState);
+
+    if (typeof PerformanceObserver !== 'undefined') {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          const now = performance.now();
+          for (const entry of list.getEntries()) {
+            this.longTasks.push({ startedAt: now, duration: entry.duration });
+          }
+          this.pruneLongTasks(now);
+        });
+        observer.observe({ type: 'longtask', buffered: true });
+      } catch {
+        // Long Tasks is Chromium-specific and optional. The probe remains
+        // useful when a WebView runtime does not expose this entry type.
+      }
+    }
+  }
+
+  private pushRolling(values: number[], value: number) {
+    values.push(value);
+    if (values.length > ROLLING) values.shift();
+  }
+
+  private pruneLongTasks(now: number) {
+    this.longTasks = this.longTasks.filter((task) => now - task.startedAt <= LONG_TASK_WINDOW_MS);
+  }
+
   recordFrame(totalMs: number) {
     this.frameMs = totalMs;
     this.frameTimes.push(totalMs);
@@ -45,6 +122,23 @@ class PerformanceMonitor {
 
   recordDraw(ms: number) {
     this.drawMs = ms;
+  }
+
+  /**
+   * Canvas2D exposes no portable GPU-present fence. `rafWaitMs` is therefore
+   * intentionally only the observable gap after JS yields until WebView
+   * schedules the next animation callback.
+   */
+  recordWebViewFrame(callbackStartedAt: number, callbackFinishedAt: number) {
+    this.frameCpuMs = Math.max(0, callbackFinishedAt - callbackStartedAt);
+    this.rafWaitMs = this.lastFrameFinishedAt === null
+      ? 0
+      : Math.max(0, callbackStartedAt - this.lastFrameFinishedAt);
+    if (this.lastFrameFinishedAt !== null) {
+      this.pushRolling(this.rafWaitTimes, this.rafWaitMs);
+    }
+    this.lastFrameFinishedAt = callbackFinishedAt;
+    this.pruneLongTasks(callbackFinishedAt);
   }
 
   recordNativePresentation(
@@ -90,11 +184,25 @@ class PerformanceMonitor {
 
   getSnapshot(): PerfSnapshot {
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / (this.frameTimes.length || 1);
+    const rafWaitP95Ms = percentile(this.rafWaitTimes, 0.95);
+    const timerPulseAvgMs = average(this.timerPulseTimes);
+    const longTaskMaxMs = this.longTasks.reduce((max, task) => Math.max(max, task.duration), 0);
     return {
       fps: Math.round(1000 / Math.max(1, avg)),
       frameMs: this.frameMs,
       avgFrameMs: avg,
       drawMs: this.drawMs,
+      frameCpuMs: this.frameCpuMs,
+      rafWaitMs: this.rafWaitMs,
+      rafWaitP95Ms,
+      timerPulseMs: this.timerPulseMs,
+      timerPulseAvgMs,
+      longTaskCount: this.longTasks.length,
+      longTaskMaxMs,
+      pageVisible: this.pageVisible,
+      pageFocused: this.pageFocused,
+      devicePixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+      hardwareConcurrency: typeof navigator === 'undefined' ? null : navigator.hardwareConcurrency ?? null,
       nativeFps: this.nativeFps,
       nativeFrameMs: this.nativeFrameMs,
       nativeStaticCacheRedraws: this.nativeStaticCacheRedraws,
@@ -112,6 +220,16 @@ class PerformanceMonitor {
       canvasH: this.extras.canvasH ?? 0,
     };
   }
+}
+
+function average(values: number[]) {
+  return values.reduce((total, value) => total + value, 0) / (values.length || 1);
+}
+
+function percentile(values: number[], ratio: number) {
+  if (values.length === 0) return 0;
+  const index = Math.min(values.length - 1, Math.floor((values.length - 1) * ratio));
+  return [...values].sort((a, b) => a - b)[index];
 }
 
 export const perfMonitor = new PerformanceMonitor();
