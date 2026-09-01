@@ -36,9 +36,10 @@ const FRAGMENT_SHADER = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
 uniform sampler2D u_atlas;
+uniform float u_probe_solid;
 out vec4 out_color;
 void main() {
-  out_color = texture(u_atlas, v_uv);
+  out_color = mix(texture(u_atlas, v_uv), vec4(0.15, 1.0, 0.3, 1.0), u_probe_solid);
 }`;
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
@@ -201,7 +202,7 @@ export class WebglHordeMobRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
-  private drawVertices(vertices: number[]) {
+  private drawVertices(vertices: number[], probeSolid = false) {
     if (vertices.length === 0) return 0;
     const gl = this.gl;
     gl.useProgram(this.program);
@@ -215,6 +216,8 @@ export class WebglHordeMobRenderer {
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
     const sampler = gl.getUniformLocation(this.program, 'u_atlas');
     gl.uniform1i(sampler, 0);
+    const probeSolidUniform = gl.getUniformLocation(this.program, 'u_probe_solid');
+    gl.uniform1f(probeSolidUniform, probeSolid ? 1 : 0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 4);
@@ -299,7 +302,7 @@ export class WebglHordeMobRenderer {
         left, top, slot.u0, slot.v0, right, bottom, slot.u1, slot.v1, left, bottom, slot.u0, slot.v1,
       );
     }
-    return this.drawVertices(vertices);
+    return this.drawVertices(vertices, true);
   }
 
   destroy() {
