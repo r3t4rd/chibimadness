@@ -2577,7 +2577,31 @@ impl NativeWorldRenderer {
                 }
             }
             let wing = recipe_color(&style.wing_color, [0.38, 0.76, 1.0, 1.0]);
-            if style.wing_type != "none" && !style.wing_type.is_empty() {
+            if style.wing_type == "pixel_wings" {
+                // Miku's preset has pixel wings, not the generic angel
+                // triangles. Keep the stepped silhouette from the source
+                // asset recipe so it remains recognisable at gameplay scale.
+                for side in [-1.0_f32, 1.0] {
+                    for (index, (offset_x, offset_y, scale)) in [
+                        (0.25_f32, -0.10_f32, 0.12_f32),
+                        (0.39_f32, -0.02_f32, 0.10_f32),
+                        (0.51_f32, 0.10_f32, 0.08_f32),
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let alpha = 0.92 - index as f32 * 0.16;
+                        self.add_world_rect(
+                            x + side * size * *offset_x,
+                            y + size * *offset_y,
+                            size * *scale,
+                            size * *scale,
+                            [wing[0], wing[1], wing[2], alpha],
+                            world,
+                        );
+                    }
+                }
+            } else if style.wing_type != "none" && !style.wing_type.is_empty() {
                 self.add_world_triangle(
                     [x - size * 0.16, y - size * 0.08],
                     [x - size * 0.68, y - size * 0.36],
@@ -2599,7 +2623,48 @@ impl NativeWorldRenderer {
                 style.back_hair_style.as_str()
             };
             match back_hair {
-                "twintails" | "miku_twintails" | "low_twintails" | "twin_bubble_tails"
+                "miku_twintails" => {
+                    let clip = recipe_color(&style.ribbon_color, hex("#EC4899"));
+                    for side in [-1.0_f32, 1.0] {
+                        // Long, tapered tails: the source reaches below the
+                        // waist rather than stopping in two round puffs.
+                        self.add_world_ellipse(
+                            x + side * size * 0.34,
+                            y + size * 0.03,
+                            size * 0.17,
+                            size * 0.52,
+                            outline,
+                            14,
+                            world,
+                        );
+                        self.add_world_ellipse(
+                            x + side * size * 0.34,
+                            y + size * 0.02,
+                            size * 0.135,
+                            size * 0.48,
+                            hair,
+                            14,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x + side * size * 0.29,
+                            y - size * 0.47,
+                            size * 0.13,
+                            size * 0.11,
+                            outline,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x + side * size * 0.29,
+                            y - size * 0.47,
+                            size * 0.090,
+                            size * 0.066,
+                            clip,
+                            world,
+                        );
+                    }
+                }
+                "twintails" | "low_twintails" | "twin_bubble_tails"
                 | "twin_drill_tails" => {
                     self.add_world_circle(
                         x - size * 0.36,
@@ -2782,7 +2847,29 @@ impl NativeWorldRenderer {
         );
         if let Some(style) = recipe {
             match style.front_hair_style.as_str() {
-                "miku_fringe" | "straight_bangs" | "blunt_fringe" => {
+                "miku_fringe" | "miku_twintails" => {
+                    // Center notch plus two long sidelocks, matching the
+                    // Miku-specific source path rather than four bob bangs.
+                    self.add_world_triangle(
+                        [x - size * 0.29, y - size * 0.53],
+                        [x, y - size * 0.25],
+                        [x + size * 0.29, y - size * 0.53],
+                        hair,
+                        world,
+                    );
+                    for side in [-1.0_f32, 1.0] {
+                        self.add_world_ellipse(
+                            x + side * size * 0.26,
+                            y - size * 0.26,
+                            size * 0.065,
+                            size * 0.24,
+                            hair,
+                            9,
+                            world,
+                        );
+                    }
+                }
+                "straight_bangs" | "blunt_fringe" => {
                     for offset in [-0.18_f32, -0.06, 0.06, 0.18] {
                         self.add_world_ellipse(
                             x + size * offset,
@@ -2952,8 +3039,69 @@ impl NativeWorldRenderer {
                     world,
                 );
             }
-            if style.hat_type != "none" && !style.hat_type.is_empty() {
-                let hat = recipe_color(&style.hat_color, hair);
+            let hat = recipe_color(&style.hat_color, hair);
+            if style.hat_type == "headphones" {
+                // The preset's headphones are an identifying part of its
+                // silhouette. Build the band and padded cups as native mesh
+                // pieces instead of collapsing them into a generic cap.
+                let cup = hex("#0F172A");
+                for side in [-1.0_f32, 1.0] {
+                    self.add_world_ellipse(
+                        x + side * size * 0.37,
+                        y - size * 0.39,
+                        size * 0.090,
+                        size * 0.19,
+                        outline,
+                        10,
+                        world,
+                    );
+                    self.add_world_ellipse(
+                        x + side * size * 0.37,
+                        y - size * 0.39,
+                        size * 0.060,
+                        size * 0.145,
+                        cup,
+                        10,
+                        world,
+                    );
+                    self.add_world_ellipse(
+                        x + side * size * 0.37,
+                        y - size * 0.39,
+                        size * 0.025,
+                        size * 0.095,
+                        hat,
+                        8,
+                        world,
+                    );
+                }
+                let band_points = [
+                    (-0.34_f32, -0.48_f32),
+                    (-0.22_f32, -0.67_f32),
+                    (0.0_f32, -0.74_f32),
+                    (0.22_f32, -0.67_f32),
+                    (0.34_f32, -0.48_f32),
+                ];
+                for pair in band_points.windows(2) {
+                    self.add_world_line(
+                        x + size * pair[0].0,
+                        y + size * pair[0].1,
+                        x + size * pair[1].0,
+                        y + size * pair[1].1,
+                        size * 0.060,
+                        outline,
+                        world,
+                    );
+                    self.add_world_line(
+                        x + size * pair[0].0,
+                        y + size * pair[0].1,
+                        x + size * pair[1].0,
+                        y + size * pair[1].1,
+                        size * 0.030,
+                        hat,
+                        world,
+                    );
+                }
+            } else if style.hat_type != "none" && !style.hat_type.is_empty() {
                 self.add_world_ellipse(
                     x,
                     y - size * 0.62,
@@ -3078,6 +3226,38 @@ impl NativeWorldRenderer {
                         7,
                         world,
                     );
+                }
+                if style.outfit_type == "idol_stage" {
+                    // Long cyan detached sleeves give the virtual-idol
+                    // recipe its recognisable silhouette in motion.
+                    for side in [-1.0_f32, 1.0] {
+                        self.add_world_ellipse(
+                            x + side * size * 0.37,
+                            y + size * 0.05,
+                            size * 0.105,
+                            size * 0.29,
+                            outline,
+                            10,
+                            world,
+                        );
+                        self.add_world_ellipse(
+                            x + side * size * 0.37,
+                            y + size * 0.05,
+                            size * 0.074,
+                            size * 0.25,
+                            accent,
+                            10,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x + side * size * 0.37,
+                            y + size * 0.19,
+                            size * 0.105,
+                            size * 0.045,
+                            hex("#0F172A"),
+                            world,
+                        );
+                    }
                 }
                 if style.outfit_type == "sailor_uniform" {
                     self.add_world_triangle(
