@@ -84,6 +84,51 @@ const FALLBACK_PLAYER: Player = {
   pendingEvolutionPicks: 0,
 };
 
+type NativeDynamicRenderBudget = {
+  hz: number;
+  maxDetailedMonsters: number;
+};
+
+function nativeDynamicRenderBudget(
+  livingMonsters: number,
+  particles: number,
+  projectiles: number
+): NativeDynamicRenderBudget {
+  if (livingMonsters >= 28) return { hz: 20, maxDetailedMonsters: 8 };
+  if (livingMonsters >= 18 || particles >= 48 || projectiles >= 24) {
+    return { hz: 30, maxDetailedMonsters: 10 };
+  }
+  if (livingMonsters >= 10) return { hz: 45, maxDetailedMonsters: 14 };
+  return { hz: 60, maxDetailedMonsters: 24 };
+}
+
+function buildNativeDynamicRenderInput(
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number },
+  maxDetailedMonsters: number
+): WorldRenderInput {
+  const pad = 220;
+  const halfWidth = input.canvasWidth / camera.zoom / 2 + pad;
+  const halfHeight = input.canvasHeight / camera.zoom / 2 + pad;
+  const inView = (x: number, y: number, radius = 0) => (
+    Math.abs(x - camera.x) <= halfWidth + radius
+    && Math.abs(y - camera.y) <= halfHeight + radius
+  );
+  return {
+    ...input,
+    maxDetailedMonsters,
+    monsters: input.monsters.filter((monster) => (
+      (monster.state !== 'dead' || (monster.deathProgress !== undefined && monster.deathProgress < 1))
+      && inView(monster.x, monster.y, monster.isBoss ? 120 : 72)
+    )),
+    particles: input.particles
+      .filter((particle) => particle.alpha > 0.01 && inView(particle.x, particle.y, particle.size * 3))
+      .slice(0, 96),
+    projectiles: input.projectiles.filter((projectile) => inView(projectile.x, projectile.y, 48)),
+    damagePopups: input.damagePopups.filter((popup) => inView(popup.x, popup.y, 40)).slice(0, 32),
+  };
+}
+
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -487,15 +532,20 @@ export function App() {
       });
       if (nativeWorldRendererRequested) {
         const camera = updateNativeCamera(curEngine.player, time);
-        const denseNativeScene = curEngine.monsters.length >= 20
-          || curEngine.particles.length >= 48
-          || curEngine.projectiles.length >= 16;
-        const nativeSceneTargetHz = denseNativeScene ? 60 : 120;
-        const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
-        perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
+        const livingMonsters = curEngine.monsters.filter((monster) => monster.state !== 'dead').length;
+        const budget = nativeDynamicRenderBudget(
+          livingMonsters,
+          curEngine.particles.length,
+          curEngine.projectiles.length
+        );
+        const nativeSceneIntervalMs = 1000 / budget.hz;
+        perfMonitor.recordNativeSceneTargetHz(budget.hz);
         if (time - lastNativeSceneAt.current >= nativeSceneIntervalMs) {
           lastNativeSceneAt.current = time;
-          const sceneJob = { input: buildWorldRenderInput(), camera };
+          const sceneJob = {
+            input: buildNativeDynamicRenderInput(buildWorldRenderInput(), camera, budget.maxDetailedMonsters),
+            camera,
+          };
           if (sceneCompileInFlightRef.current) {
             // Keep at most one newest snapshot; a queue would recreate the
             // same long-task backlog after a dense horde arrives.

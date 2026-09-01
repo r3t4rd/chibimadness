@@ -46,6 +46,8 @@ export type WorldRenderInput = {
   cars?: CarEntity[];
   summons?: SummonedAlly[];
   gameTimePhase?: number;
+  /** Native dynamic compile: cap full chibi draws for distant/low-priority mobs. */
+  maxDetailedMonsters?: number;
 };
 
 type WorldPaintLayer = 'full' | 'static' | 'dynamic';
@@ -53,6 +55,7 @@ type WorldDrawOptions = {
   layer?: WorldPaintLayer;
   /** Reuses the dynamic pass camera while compiling static invalidations. */
   camera?: { x: number; y: number; zoom: number };
+  maxDetailedMonsters?: number;
 };
 
 export function getCameraState() {
@@ -257,7 +260,8 @@ export function drawWorld(
     summons,
     gameTimePhase,
     options.layer ?? 'full',
-    options.camera?.zoom ?? camera.zoom
+    options.camera?.zoom ?? camera.zoom,
+    options.maxDetailedMonsters ?? undefined
   );
 }
 
@@ -286,7 +290,10 @@ export function drawWorldInput(
     input.cars,
     input.summons,
     input.gameTimePhase,
-    options
+    {
+      ...options,
+      maxDetailedMonsters: options.maxDetailedMonsters ?? input.maxDetailedMonsters,
+    }
   );
 }
 
@@ -353,7 +360,11 @@ export function compileDynamicWorldScene(
       camera,
       timeSeconds: input.time ?? 0,
     },
-    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'dynamic', camera })
+    (sceneContext) => drawWorldInput(sceneContext, input, {
+      layer: 'dynamic',
+      camera,
+      maxDetailedMonsters: input.maxDetailedMonsters,
+    })
   );
   compiled.scene.camera = camera;
   return compiled.scene;
@@ -406,7 +417,8 @@ export function renderWorld(
   summons: SummonedAlly[] = [],
   gameTimePhase: number = 0.35,
   layer: WorldPaintLayer = 'full',
-  fixedZoom?: number
+  fixedZoom?: number,
+  maxDetailedMonsters?: number
 ) {
   const renderStatic = layer !== 'dynamic';
   const renderDynamic = layer !== 'static';
@@ -566,7 +578,16 @@ export function renderWorld(
       drawMonsterTelegraphs(ctx, visibleMonsters, time);
     }
     drawHordeHazards(ctx, getHordeHazards().filter((h) => inView(h.x, h.y)), time);
-    drawMonsters(ctx, visibleMonsters, time);
+    const { detailedMonsters, silhouetteMonsters } = partitionMonstersForDetail(
+      visibleMonsters,
+      playerX,
+      playerY,
+      maxDetailedMonsters
+    );
+    drawMonsters(ctx, detailedMonsters, time);
+    if (silhouetteMonsters.length > 0) {
+      drawMonsterSilhouettes(ctx, silhouetteMonsters, time);
+    }
     if (blinded) {
       drawBlindScreams(ctx, monsters.filter((m) => m.battleBark && m.battleBark.timer > 0 && inView(m.x, m.y)), time);
     }
@@ -4673,6 +4694,65 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
     ctx.arc(0, -8, 28 + Math.sin(time * 5) * 4, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
+
+function partitionMonstersForDetail(
+  monsters: Monster[],
+  playerX: number,
+  playerY: number,
+  maxDetailed?: number
+): { detailedMonsters: Monster[]; silhouetteMonsters: Monster[] } {
+  if (maxDetailed === undefined || maxDetailed < 0 || monsters.length <= maxDetailed) {
+    return { detailedMonsters: monsters, silhouetteMonsters: [] };
+  }
+  const ranked = monsters
+    .map((monster, index) => ({
+      monster,
+      index,
+      distance: Math.hypot(monster.x - playerX, monster.y - playerY),
+      priority: monster.isBoss || monster.isJuggernaut ? 0 : monster.hordeKind ? 1 : 2,
+    }))
+    .sort((a, b) => a.priority - b.priority || a.distance - b.distance || a.index - b.index);
+  const detailedMonsters = ranked.slice(0, maxDetailed).map((entry) => entry.monster);
+  const detailedIds = new Set(detailedMonsters.map((monster) => monster.id));
+  const silhouetteMonsters = monsters.filter((monster) => !detailedIds.has(monster.id));
+  return { detailedMonsters, silhouetteMonsters };
+}
+
+function drawMonsterSilhouettes(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number) {
+  monsters.forEach((monster) => {
+    if (monster.hp <= 0 && (monster.deathProgress === undefined || monster.deathProgress >= 1.0)) return;
+    ctx.save();
+    ctx.translate(monster.x, monster.y);
+    const bob = Math.sin(time * 6 + monster.x * 0.02) * 1.5;
+    ctx.translate(0, bob);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, 12, 16, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    const bodyColor = monster.faction === 'police'
+      ? '#38BDF8'
+      : monster.faction === 'bandit'
+        ? '#F59E0B'
+        : monster.faction === 'punk_demon'
+          ? '#FB7185'
+          : '#C084FC';
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, -2, 14, 18, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (monster.hp > 0) {
+      const hpRatio = Math.max(0, monster.hp / monster.maxHp);
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(-16, -28, 32, 4);
+      ctx.fillStyle = monster.isBoss ? '#F59E0B' : '#EF4444';
+      ctx.fillRect(-16, -28, 32 * hpRatio, 4);
+    }
+    ctx.restore();
+  });
 }
 
 function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number) {
