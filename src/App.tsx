@@ -717,7 +717,6 @@ export function App() {
         curEngine.introCinematic,
       );
       if (nativeWorldRendererRequested) {
-        if (nativeWorldRenderer) {
           const nativeMonsterSprites: NativeWorldRenderFrame['entities'] = curEngine.monsters
             .filter((monster) => monster.hp > 0)
             .map((monster) => {
@@ -836,7 +835,6 @@ export function App() {
               ...nativeParticles, ...nativePopups,
             ],
           });
-        }
       }
 
       const drawStart = performance.now();

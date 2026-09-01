@@ -5,10 +5,10 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-mod world_renderer;
-mod scene_executor;
 mod chibi_assets;
 mod native_sprites;
+mod scene_executor;
+mod world_renderer;
 
 use std::{
     cell::RefCell,
@@ -19,14 +19,15 @@ use std::{
     io::{Cursor, Read},
     path::{Path, PathBuf},
     rc::Rc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
 use world_renderer::{
-    NativeRenderFrame, NativeRenderScene, NativeRendererMetrics, NativeWorldRenderer, NativeWorldState,
+    NativeRenderFrame, NativeRenderScene, NativeRendererMetrics, NativeWorldRenderer,
+    NativeWorldState,
 };
 use yuyib::{
     platform::{
@@ -118,6 +119,9 @@ struct GameDesktopApp {
     native_renderer: bool,
     session: PageSessionId,
     limits: BridgeLimits,
+    configuration: GameConfiguration,
+    configuration_broadcasts_remaining: u8,
+    last_configuration_broadcast: Option<Instant>,
     builder: Option<WebViewBuilder>,
     outbound: Rc<RefCell<Option<WebViewHost>>>,
     native_world: Rc<RefCell<NativeWorldState>>,
@@ -129,6 +133,33 @@ struct GameDesktopApp {
 }
 
 impl GameDesktopApp {
+    /// WebView2 evaluates the page while `WebViewBuilder::build` is still in
+    /// progress. That means the first `game.ready` can arrive before the host
+    /// is stored in `outbound`, so it has nobody to deliver the reply to.
+    /// Re-emit the immutable launch configuration for a short bootstrap window
+    /// from the native presentation loop. This is host-to-page only and avoids
+    /// keeping the world renderer hostage to a one-shot startup race.
+    fn broadcast_configuration_if_pending(&mut self) {
+        if !self.native_renderer || self.configuration_broadcasts_remaining == 0 {
+            return;
+        }
+        let now = Instant::now();
+        if self
+            .last_configuration_broadcast
+            .is_some_and(|last| now.duration_since(last) < Duration::from_millis(250))
+        {
+            return;
+        }
+        emit_game_configuration(
+            &self.outbound,
+            self.session,
+            self.limits,
+            self.configuration.clone(),
+        );
+        self.last_configuration_broadcast = Some(now);
+        self.configuration_broadcasts_remaining -= 1;
+    }
+
     fn sync_webview_surface(&mut self) {
         let Some(parent) = &self.parent_window else {
             return;
@@ -190,6 +221,7 @@ impl GameDesktopApp {
         if let Some(metrics) = self.world_renderer.record_presentation() {
             emit_native_renderer_metrics(&self.outbound, self.session, self.limits, metrics);
         }
+        self.broadcast_configuration_if_pending();
     }
 
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
@@ -372,32 +404,23 @@ fn main() -> Result<(), Box<dyn Error>> {
     let native_world_for_scene_endpoint = Rc::clone(&native_world);
     let native_world_for_static_scene_endpoint = Rc::clone(&native_world);
     let native_world_for_dynamic_scene_endpoint = Rc::clone(&native_world);
-    let server_url = server.map(|server| server.websocket_url);
-    let content_version = launch_assets.version;
-    let content_source = launch_assets.source;
+    let configuration = GameConfiguration {
+        server_url: server.map(|server| server.websocket_url),
+        content_version: launch_assets.version,
+        content_source: launch_assets.source,
+        native_renderer,
+    };
+    let configuration_for_endpoint = configuration.clone();
     let mut bridge = BridgeRouter::new(session, limits);
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("game.ready")?,
         move |_message: GameReady| {
-            let outbound = outbound_for_endpoint.borrow();
-            let Some(webview) = outbound.as_ref() else {
-                return;
-            };
-            let event = PageEvent::from_typed(
-                limits.protocol_version(),
+            emit_game_configuration(
+                &outbound_for_endpoint,
                 session,
-                EndpointName::parse("game.configuration").expect("static endpoint is valid"),
-                GameConfiguration {
-                    server_url: server_url.clone(),
-                    content_version: content_version.clone(),
-                    content_source,
-                    native_renderer,
-                },
                 limits,
+                configuration_for_endpoint.clone(),
             );
-            if let Ok(event) = event {
-                let _ = webview.emit_event(&event);
-            }
         },
     ))?;
     bridge.register(TypedEndpoint::new(
@@ -406,7 +429,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     ))?;
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("world.scene")?,
-        move |scene: NativeRenderScene| native_world_for_scene_endpoint.borrow_mut().apply_scene(scene),
+        move |scene: NativeRenderScene| {
+            native_world_for_scene_endpoint
+                .borrow_mut()
+                .apply_scene(scene)
+        },
     ))?;
     bridge.register(TypedEndpoint::new(
         EndpointName::parse("world.scene.static")?,
@@ -432,6 +459,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         native_renderer,
         session,
         limits,
+        configuration,
+        configuration_broadcasts_remaining: 16,
+        last_configuration_broadcast: None,
         builder: Some(builder),
         outbound,
         native_world,
@@ -444,6 +474,26 @@ fn main() -> Result<(), Box<dyn Error>> {
     let event_loop = EventLoop::new()?;
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+fn emit_game_configuration(
+    outbound: &Rc<RefCell<Option<WebViewHost>>>,
+    session: PageSessionId,
+    limits: BridgeLimits,
+    configuration: GameConfiguration,
+) {
+    let Ok(event) = PageEvent::from_typed(
+        limits.protocol_version(),
+        session,
+        EndpointName::parse("game.configuration").expect("static endpoint is valid"),
+        configuration,
+        limits,
+    ) else {
+        return;
+    };
+    if let Some(webview) = outbound.borrow().as_ref() {
+        let _ = webview.emit_event(&event);
+    }
 }
 
 fn emit_native_renderer_ready(
