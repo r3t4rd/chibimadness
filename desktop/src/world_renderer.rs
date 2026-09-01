@@ -1011,49 +1011,62 @@ impl NativeWorldRenderer {
         } else {
             false
         };
-        if static_cached {
-            self.composite_static_cache(
+        // Tile-based/integrated GPUs pay a full render-target load/store for
+        // every surface pass. The old path composited the retained texture,
+        // dynamic world and screen overlay in three separate passes; that can
+        // collapse presentation FPS even while the scene bridge is idle.
+        // Prepare the composite uniform once, then issue all visible layers in
+        // a single surface pass.
+        let static_composite_ready = static_cached
+            && self.prepare_static_composite(
                 frame,
                 retained_scene.expect("retained scene is present"),
                 retained_static_scene.expect("static scene is present"),
             );
-        }
         let (Some(pipeline), Some(camera_bind_group)) = (&self.pipeline, &self.camera_bind_group)
         else {
             return false;
         };
-        if !static_cached && static_vertex_count > 0 {
-            frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+        let composite = if static_composite_ready {
+            self.composite_pipeline
+                .as_ref()
+                .zip(self.composite_bind_group.as_ref())
+        } else {
+            None
+        };
+        let static_vertex_buffer = self.static_vertex_buffer.as_ref();
+        let dynamic_vertex_buffer = self.vertex_buffer.as_ref();
+        let overlay_vertex_buffer = self.overlay_vertex_buffer.as_ref();
+        frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+            if let Some((composite_pipeline, composite_bind_group)) = composite {
+                pass.set_pipeline(composite_pipeline);
+                pass.set_bind_group(0, composite_bind_group, &[]);
+                pass.draw(0..6, 0..1);
+            } else if static_vertex_count > 0 {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, camera_bind_group, &[]);
-                if let Some(static_vertex_buffer) = &self.static_vertex_buffer {
+                if let Some(static_vertex_buffer) = static_vertex_buffer {
                     pass.set_vertex_buffer(0, static_vertex_buffer.slice(..));
                     pass.draw(0..static_vertex_count, 0..1);
                 }
-            });
-        }
-        if dynamic_vertex_count > 0 {
-            frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+            }
+            if dynamic_vertex_count > 0 {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, camera_bind_group, &[]);
-                if dynamic_vertex_count > 0 {
-                    if let Some(vertex_buffer) = &self.vertex_buffer {
-                        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                        pass.draw(0..dynamic_vertex_count, 0..1);
-                    }
+                if let Some(dynamic_vertex_buffer) = dynamic_vertex_buffer {
+                    pass.set_vertex_buffer(0, dynamic_vertex_buffer.slice(..));
+                    pass.draw(0..dynamic_vertex_count, 0..1);
                 }
-            });
-        }
-        if overlay_vertex_count > 0 {
-            frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+            }
+            if overlay_vertex_count > 0 {
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, camera_bind_group, &[]);
-                if let Some(overlay_vertex_buffer) = &self.overlay_vertex_buffer {
+                if let Some(overlay_vertex_buffer) = overlay_vertex_buffer {
                     pass.set_vertex_buffer(0, overlay_vertex_buffer.slice(..));
                     pass.draw(0..overlay_vertex_count, 0..1);
                 }
-            });
-        }
+            }
+        });
         true
     }
 
@@ -1431,21 +1444,21 @@ impl NativeWorldRenderer {
         true
     }
 
-    fn composite_static_cache(
+    fn prepare_static_composite(
         &mut self,
         frame: &mut RenderFrame<'_>,
         dynamic_scene: &NativeRenderScene,
         static_scene: &NativeRenderScene,
-    ) {
+    ) -> bool {
         if !self.ensure_composite_pipeline(frame) {
-            return;
+            return false;
         }
         let (Some(buffer), Some(pipeline), Some(bind_group)) = (
             &self.composite_uniform_buffer,
             &self.composite_pipeline,
             &self.composite_bind_group,
         ) else {
-            return;
+            return false;
         };
         frame.queue().write_buffer(
             buffer,
@@ -1461,11 +1474,11 @@ impl NativeWorldRenderer {
                 _padding1: 0.0,
             }),
         );
-        frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.draw(0..6, 0..1);
-        });
+        // Pipeline/bind group are checked above. Keeping the bindings live in
+        // this method documents the exact precondition for the caller's single
+        // presentation pass without re-borrowing the renderer there.
+        let _ = (pipeline, bind_group);
+        true
     }
 
     fn upload_vertices(&mut self, frame: &RenderFrame<'_>) {
