@@ -10,6 +10,8 @@ import { compileRenderScene, recordRenderScene, type RenderScene } from './rende
 
 type RenderSceneLayerContext = CanvasRenderingContext2D & {
   __renderSceneLayer?: (name: 'screen' | 'static' | 'dynamic') => void;
+  /** Scene recorders must retain vector commands, never embed raster sprites. */
+  __disableSpriteCache?: boolean;
 };
 
 function markRenderSceneLayer(ctx: CanvasRenderingContext2D, name: 'screen' | 'static' | 'dynamic') {
@@ -4558,7 +4560,9 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   ctx.ellipse(0, 16, 16, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  const cachedSprite = !flash ? getCachedHordeMobSprite(kind, boss, col) : null;
+  const cachedSprite = !flash && !(ctx as RenderSceneLayerContext).__disableSpriteCache
+    ? getCachedHordeMobSprite(kind, boss, col)
+    : null;
   if (cachedSprite) {
     ctx.drawImage(cachedSprite, -36, -36);
   } else if (kind === 'mite') {

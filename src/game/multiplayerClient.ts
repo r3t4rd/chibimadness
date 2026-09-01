@@ -245,8 +245,11 @@ function sendNativeLayeredRenderScene(endpoint: 'world.scene.static' | 'world.sc
   if (endpoint === 'world.scene.dynamic' && scene.commands.length > 3_000) {
     // Large combat scenes can block the WebView main thread while the bridge
     // serializes thousands of Canvas commands. Yield once so input/HUD can run.
-    if (typeof window.scheduler?.postTask === 'function') {
-      window.scheduler.postTask(postScene, { priority: 'background' });
+    const scheduler = (window as typeof window & {
+      scheduler?: { postTask?: (callback: () => void, options?: { priority?: 'background' }) => Promise<unknown> };
+    }).scheduler;
+    if (typeof scheduler?.postTask === 'function') {
+      scheduler.postTask(postScene, { priority: 'background' });
       return;
     }
     window.requestAnimationFrame(postScene);
