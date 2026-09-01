@@ -105,10 +105,11 @@ export function App() {
   const webglHordeMobBodiesRef = useRef(webglHordeMobBodies);
   const [staticWorldLayerEnabled, setStaticWorldLayerEnabled] = useState(true);
   const staticWorldLayerEnabledRef = useRef(staticWorldLayerEnabled);
-  // WebView2 throttles requestAnimationFrame as soon as a freshly transferred
-  // ImageBitmap is composited through Canvas2D. Keep that compatibility path
-  // opt-in; the normal world is static texture + actor/effect GPU quads.
-  const [dynamicCanvasLayerEnabled, setDynamicCanvasLayerEnabled] = useState(false);
+  // Canvas remains enabled until every actor state and combat effect has a
+  // visual-equivalent GPU path. F7 is deliberately diagnostic only: turning
+  // it off also removes Canvas fallback actors and is not a valid gameplay
+  // rendering mode yet.
+  const [dynamicCanvasLayerEnabled, setDynamicCanvasLayerEnabled] = useState(true);
   const dynamicCanvasLayerEnabledRef = useRef(dynamicCanvasLayerEnabled);
   const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
   const forceStaticCanvasRef = useRef(forceStaticCanvas);
@@ -305,9 +306,9 @@ export function App() {
     const webglCanvas = webglCanvasRef.current;
     if (!createdPlayer || !canvas) return;
 
-    // Canvas dynamic presentation is a compatibility fallback. On WebView2 a
-    // per-frame ImageBitmap -> drawImage presentation throttles rAF to ~30 Hz,
-    // so normal WebView rendering keeps it disabled and draws the GPU path.
+    // Canvas dynamic presentation remains the visual-completeness path. On
+    // WebView2 its ImageBitmap -> drawImage present is a pacing suspect; F7
+    // disables it only for diagnostics, never as the default game mode.
     let dynamicCanvasWorker: Worker | null = null;
     const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
