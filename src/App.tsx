@@ -302,27 +302,21 @@ export function App() {
     const staticCanvas = staticCanvasRef.current;
     if (!createdPlayer || (!nativeWorldRenderer && (!canvas || !staticCanvas))) return;
 
-    // Move the high-churn actor pass to an attached OffscreenCanvas. Unlike an
-    // ImageBitmap copy this presents directly into the existing DOM canvas,
-    // so the WebView UI thread no longer performs Canvas2D raster work.
+    // The WebView always retains its visible Canvas context. Dynamic geometry
+    // is rasterized in a worker and arrives as an ImageBitmap; a worker failure
+    // can therefore fall back to direct Canvas without blanking the world.
     let dynamicCanvasWorker: Worker | null = null;
-    let ctx: CanvasRenderingContext2D | null = null;
+    let ctx: CanvasRenderingContext2D | null = nativeWorldRenderer ? null : canvas?.getContext('2d') ?? null;
     if (!nativeWorldRenderer && canvas && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
       try {
-        const offscreen = canvas.transferControlToOffscreen();
         dynamicCanvasWorker = new Worker(new URL('./game/dynamicCanvas.worker.ts', import.meta.url), { type: 'module' });
-        dynamicCanvasWorker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
       } catch {
-        // Older WebView2 builds can lack transferControlToOffscreen. They keep
-        // the direct Canvas path rather than risking a blank gameplay surface.
+        // Older WebView2 builds keep the direct Canvas path.
         dynamicCanvasWorker = null;
-        ctx = canvas.getContext('2d');
       }
-    } else if (!nativeWorldRenderer) {
-      ctx = canvas?.getContext('2d') ?? null;
     }
     const staticCtx = nativeWorldRenderer ? null : staticCanvas?.getContext('2d', { alpha: false });
-    if (!nativeWorldRenderer && ((!ctx && !dynamicCanvasWorker) || !staticCtx)) return;
+    if (!nativeWorldRenderer && (!ctx || !staticCtx)) return;
     const staticCacheCanvas = document.createElement('canvas');
     const staticCacheCtx = nativeWorldRenderer ? null : staticCacheCanvas.getContext('2d', { alpha: false });
     if (!nativeWorldRenderer && !staticCacheCtx) return;
@@ -354,12 +348,17 @@ export function App() {
     let pendingDynamicRender: DynamicRender | null = null;
     let nextDynamicRenderId = 1;
     let dynamicRenderStartedAt: number | null = null;
+    let dynamicFrame: ImageBitmap | null = null;
     let lastProbeMode = canvasProbeModeRef.current;
 
     const releaseStaticCacheImage = (image: CanvasImageSource) => {
       if ('close' in image && typeof image.close === 'function') {
         image.close();
       }
+    };
+    const replaceDynamicFrame = (nextFrame: ImageBitmap) => {
+      if (dynamicFrame && dynamicFrame !== nextFrame) dynamicFrame.close();
+      dynamicFrame = nextFrame;
     };
     const replaceStaticCache = (nextCache: StaticCache) => {
       if (staticCache && staticCache.image !== nextCache.image) {
@@ -404,10 +403,19 @@ export function App() {
     };
 
     const startDynamicRender = (renderInput: DynamicRender) => {
-      if (!dynamicCanvasWorker) return;
+      if (!dynamicCanvasWorker) return false;
       dynamicRenderInFlight = true;
       dynamicRenderStartedAt = performance.now();
-      dynamicCanvasWorker.postMessage({ type: 'render', id: nextDynamicRenderId++, ...renderInput });
+      try {
+        dynamicCanvasWorker.postMessage({ type: 'render', id: nextDynamicRenderId++, ...renderInput });
+        return true;
+      } catch {
+        dynamicRenderInFlight = false;
+        dynamicRenderStartedAt = null;
+        dynamicCanvasWorker.terminate();
+        dynamicCanvasWorker = null;
+        return false;
+      }
     };
     const queueDynamicRender = (renderInput: DynamicRender) => {
       if (!dynamicCanvasWorker) return false;
@@ -416,20 +424,23 @@ export function App() {
         // skipping one presentation: retain exactly one newest snapshot.
         pendingDynamicRender = renderInput;
       } else {
-        startDynamicRender(renderInput);
+        return startDynamicRender(renderInput);
       }
       return true;
     };
 
     if (dynamicCanvasWorker) {
-      dynamicCanvasWorker.onmessage = (event: MessageEvent<{ id?: number; error?: string }>) => {
+      dynamicCanvasWorker.onmessage = (event: MessageEvent<{ id?: number; error?: string; image?: ImageBitmap }>) => {
         if (event.data.error) {
           dynamicRenderInFlight = false;
           dynamicRenderStartedAt = null;
           pendingDynamicRender = null;
+          dynamicCanvasWorker?.terminate();
+          dynamicCanvasWorker = null;
           return;
         }
         if (event.data.id === undefined) return;
+        if (event.data.image) replaceDynamicFrame(event.data.image);
         if (dynamicRenderStartedAt !== null) {
           perfMonitor.recordOffscreenDynamicFrame(performance.now() - dynamicRenderStartedAt);
         }
@@ -443,6 +454,8 @@ export function App() {
         dynamicRenderInFlight = false;
         dynamicRenderStartedAt = null;
         pendingDynamicRender = null;
+        dynamicCanvasWorker?.terminate();
+        dynamicCanvasWorker = null;
       };
     }
 
@@ -822,9 +835,14 @@ export function App() {
           curEngine.screenShake,
           curEngine.introCinematic,
         );
-        if (!queueDynamicRender({ input: worldInput, camera })) {
-          ctx?.clearRect(0, 0, viewportWidth, viewportHeight);
-          if (ctx) drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
+        const workerQueued = queueDynamicRender({ input: worldInput, camera });
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        if (workerQueued && dynamicFrame) {
+          ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
+        } else {
+          // Paint the first frame locally while the worker warms up, and use
+          // this same path immediately if structured cloning ever fails.
+          drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
         }
         const resourceRevision = curEngine.resourceNodes
           .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
@@ -888,6 +906,7 @@ export function App() {
         // Terrain, buildings and world dressing. This is the candidate for a
         // retained/tiled Canvas cache if it is the pacing bottleneck.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
         drawWorldInput(staticCtx, buildWorldRenderInput(), { layer: 'static' });
       } else if (activeCanvasProbeMode === 'dynamic-only') {
         // Actors and screen-space effects, deliberately without static world
@@ -901,9 +920,12 @@ export function App() {
           curEngine.screenShake,
           curEngine.introCinematic,
         );
-        if (!queueDynamicRender({ input: worldInput, camera })) {
-          ctx?.clearRect(0, 0, viewportWidth, viewportHeight);
-          if (ctx) drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
+        const workerQueued = queueDynamicRender({ input: worldInput, camera });
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        if (workerQueued && dynamicFrame) {
+          ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
+        } else {
+          drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
         }
       } else if (activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
@@ -930,6 +952,7 @@ export function App() {
       window.removeEventListener('resize', handleResize);
       dynamicCanvasWorker?.terminate();
       staticCacheWorker?.terminate();
+      dynamicFrame?.close();
       if (staticCache) releaseStaticCacheImage(staticCache.image);
     };
   }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
