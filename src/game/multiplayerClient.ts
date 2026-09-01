@@ -230,29 +230,16 @@ export function sendNativeDynamicRenderScene(scene: RenderScene) {
 function sendNativeLayeredRenderScene(endpoint: 'world.scene.static' | 'world.scene.dynamic', scene: RenderScene) {
   if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
   if (scene.version !== 1 || scene.commands.length > 65_536) return;
-  const postScene = () => {
-    const startedAt = endpoint === 'world.scene.dynamic' ? performance.now() : 0;
-    window.yuyib!.post({
-      version: 1,
-      id: nextBridgeMessageId++,
-      endpoint,
-      payload: scene,
-    });
-    if (endpoint === 'world.scene.dynamic') {
-      perfMonitor.recordNativeSceneBridge(scene.commands.length, performance.now() - startedAt);
-    }
-  };
-  if (endpoint === 'world.scene.dynamic' && scene.commands.length > 3_000) {
-    // Large combat scenes can block the WebView main thread while the bridge
-    // serializes thousands of Canvas commands. Yield once so input/HUD can run.
-    if (typeof window.scheduler?.postTask === 'function') {
-      window.scheduler.postTask(postScene, { priority: 'background' });
-      return;
-    }
-    window.requestAnimationFrame(postScene);
-    return;
+  const startedAt = endpoint === 'world.scene.dynamic' ? performance.now() : 0;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint,
+    payload: scene,
+  });
+  if (endpoint === 'world.scene.dynamic') {
+    perfMonitor.recordNativeSceneBridge(scene.commands.length, performance.now() - startedAt);
   }
-  postScene();
 }
 
 class MultiplayerClient {

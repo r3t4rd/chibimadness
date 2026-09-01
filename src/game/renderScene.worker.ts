@@ -7,6 +7,7 @@ import {
 type SceneCompileRequest = {
   id: number;
   input: WorldRenderInput;
+  staticOnly?: boolean;
   camera: { x: number; y: number; zoom: number };
 };
 
@@ -72,7 +73,9 @@ self.addEventListener('message', (event: MessageEvent<SceneCompileRequest>) => {
     if (!camera) {
       throw new Error('Native scene compilation requires a camera');
     }
-    const dynamicScene = compileDynamicWorldScene(measurementContext, event.data.input, camera);
+    const dynamicScene = event.data.staticOnly
+      ? undefined
+      : compileDynamicWorldScene(measurementContext, event.data.input, camera);
     const contentKey = staticContentKey(event.data.input);
     const cameraOutsideStaticCache = !cameraFitsStaticCache(event.data.input, camera);
     const staticRefreshRequired = contentKey !== lastStaticContentKey

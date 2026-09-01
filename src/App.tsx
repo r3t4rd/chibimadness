@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { advanceCanvasCamera, drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
+import { advanceCanvasCamera, drawWorldInput, screenToWorld, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -29,6 +29,7 @@ import {
   net,
   sendNativeDynamicRenderScene,
   sendNativeStaticRenderScene,
+  sendNativeWorldRenderFrame,
   subscribeContentBuildInfo,
   subscribeNativeWorldRenderer,
 } from './game/multiplayerClient';
@@ -84,51 +85,6 @@ const FALLBACK_PLAYER: Player = {
   pendingEvolutionPicks: 0,
 };
 
-type NativeDynamicRenderBudget = {
-  hz: number;
-  maxDetailedMonsters: number;
-};
-
-function nativeDynamicRenderBudget(
-  livingMonsters: number,
-  particles: number,
-  projectiles: number
-): NativeDynamicRenderBudget {
-  if (livingMonsters >= 28) return { hz: 20, maxDetailedMonsters: 8 };
-  if (livingMonsters >= 18 || particles >= 48 || projectiles >= 24) {
-    return { hz: 30, maxDetailedMonsters: 10 };
-  }
-  if (livingMonsters >= 10) return { hz: 45, maxDetailedMonsters: 14 };
-  return { hz: 60, maxDetailedMonsters: 24 };
-}
-
-function buildNativeDynamicRenderInput(
-  input: WorldRenderInput,
-  camera: { x: number; y: number; zoom: number },
-  maxDetailedMonsters: number
-): WorldRenderInput {
-  const pad = 220;
-  const halfWidth = input.canvasWidth / camera.zoom / 2 + pad;
-  const halfHeight = input.canvasHeight / camera.zoom / 2 + pad;
-  const inView = (x: number, y: number, radius = 0) => (
-    Math.abs(x - camera.x) <= halfWidth + radius
-    && Math.abs(y - camera.y) <= halfHeight + radius
-  );
-  return {
-    ...input,
-    maxDetailedMonsters,
-    monsters: input.monsters.filter((monster) => (
-      (monster.state !== 'dead' || (monster.deathProgress !== undefined && monster.deathProgress < 1))
-      && inView(monster.x, monster.y, monster.isBoss ? 120 : 72)
-    )),
-    particles: input.particles
-      .filter((particle) => particle.alpha > 0.01 && inView(particle.x, particle.y, particle.size * 3))
-      .slice(0, 96),
-    projectiles: input.projectiles.filter((projectile) => inView(projectile.x, projectile.y, 48)),
-    damagePopups: input.damagePopups.filter((popup) => inView(popup.x, popup.y, 40)).slice(0, 32),
-  };
-}
-
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -149,6 +105,7 @@ export function App() {
   const sceneCompileInFlightRef = useRef(false);
   const pendingSceneInputRef = useRef<{
     input: WorldRenderInput;
+    staticOnly: boolean;
     camera: { x: number; y: number; zoom: number };
   } | null>(null);
   const nextSceneJobIdRef = useRef(1);
@@ -204,13 +161,13 @@ export function App() {
 
   useEffect(() => {
     const cycleDynamicRasterScale = (event: KeyboardEvent) => {
-      if (event.code !== 'F9' || event.repeat || nativeWorldRenderer) return;
+      if (event.code !== 'F9' || event.repeat) return;
       event.preventDefault();
       setDynamicRasterScale((current) => current === 1 ? 0.75 : current === 0.75 ? 0.5 : 1);
     };
     window.addEventListener('keydown', cycleDynamicRasterScale);
     return () => window.removeEventListener('keydown', cycleDynamicRasterScale);
-  }, [nativeWorldRenderer]);
+  }, []);
 
   useEffect(() => {
     const nextMode: Record<CanvasProbeMode, CanvasProbeMode> = {
@@ -283,23 +240,23 @@ export function App() {
     let lastRenderedAt: number | null = null;
     const canvas = canvasRef.current;
     const staticCanvas = staticCanvasRef.current;
-    if (!createdPlayer || (!nativeWorldRenderer && (!canvas || !staticCanvas))) return;
+    if (!createdPlayer || !canvas) return;
 
-    // The WebView always retains its visible Canvas context. Dynamic geometry
-    // is rasterized in a worker and arrives as an ImageBitmap; a worker failure
-    // can therefore fall back to direct Canvas without blanking the world.
+    // Dynamic actors are always Canvas: either the full webview path, or a
+    // transparent overlay above the native static world. ImageBitmap transfer
+    // stays off the display-list bridge.
     let dynamicCanvasWorker: Worker | null = null;
-    let ctx: CanvasRenderingContext2D | null = nativeWorldRenderer ? null : canvas?.getContext('2d') ?? null;
-    if (!nativeWorldRenderer && canvas && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+    const ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) return;
+    if (typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
       try {
         dynamicCanvasWorker = new Worker(new URL('./game/dynamicCanvas.worker.ts', import.meta.url), { type: 'module' });
       } catch {
-        // Older WebView2 builds keep the direct Canvas path.
         dynamicCanvasWorker = null;
       }
     }
-    const staticCtx = nativeWorldRenderer ? null : staticCanvas?.getContext('2d', { alpha: false });
-    if (!nativeWorldRenderer && (!ctx || !staticCtx)) return;
+    const staticCtx = nativeWorldRenderer ? null : staticCanvas?.getContext('2d', { alpha: false }) ?? null;
+    if (!nativeWorldRenderer && (!staticCanvas || !staticCtx)) return;
     const staticCacheCanvas = document.createElement('canvas');
     const staticCacheCtx = nativeWorldRenderer ? null : staticCacheCanvas.getContext('2d', { alpha: false });
     if (!nativeWorldRenderer && !staticCacheCtx) return;
@@ -350,6 +307,7 @@ export function App() {
       staticCache = nextCache;
     };
     const renderStaticCacheOnMainThread = (build: StaticCacheBuild) => {
+      if (!staticCacheCtx) return;
       staticCacheCanvas.width = build.input.canvasWidth;
       staticCacheCanvas.height = build.input.canvasHeight;
       staticCacheCtx.clearRect(0, 0, build.input.canvasWidth, build.input.canvasHeight);
@@ -508,8 +466,7 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      // Canvas keeps the complete presentation input. Native mode splits it
-      // into a cached static map pass and a realtime dynamic display list.
+      // Native retains the map as a GPU texture. Dynamic actors stay on Canvas.
       const buildWorldRenderInput = (): WorldRenderInput => ({
         canvasWidth: viewportWidth,
         canvasHeight: viewportHeight,
@@ -530,25 +487,39 @@ export function App() {
         summons: curEngine.summons,
         gameTimePhase: curEngine.gameTimePhase,
       });
+      const buildStaticWorldRenderInput = (): WorldRenderInput => ({
+        canvasWidth: viewportWidth,
+        canvasHeight: viewportHeight,
+        localPlayer: curEngine.player,
+        players: {},
+        monsters: [],
+        resourceNodes: curEngine.resourceNodes,
+        dropItems: [],
+        projectiles: [],
+        particles: [],
+        damagePopups: [],
+        groundDecals: [],
+        time: timeInSeconds,
+        worldPois: curEngine.worldPois,
+        cars: [],
+        summons: [],
+        gameTimePhase: curEngine.gameTimePhase,
+      });
+      const camera = advanceCanvasCamera(
+        curEngine.player,
+        timeInSeconds,
+        curEngine.screenShake,
+        curEngine.introCinematic,
+      );
       if (nativeWorldRendererRequested) {
-        const camera = updateNativeCamera(curEngine.player, time);
-        const livingMonsters = curEngine.monsters.filter((monster) => monster.state !== 'dead').length;
-        const budget = nativeDynamicRenderBudget(
-          livingMonsters,
-          curEngine.particles.length,
-          curEngine.projectiles.length
-        );
-        const nativeSceneIntervalMs = 1000 / budget.hz;
-        perfMonitor.recordNativeSceneTargetHz(budget.hz);
+        // Native owns retained map geometry. Never send a combat display-list
+        // across the WebView bridge — that clone is the long-task stutter.
+        const nativeSceneIntervalMs = 1000 / 15;
+        perfMonitor.recordNativeSceneTargetHz(15);
         if (time - lastNativeSceneAt.current >= nativeSceneIntervalMs) {
           lastNativeSceneAt.current = time;
-          const sceneJob = {
-            input: buildNativeDynamicRenderInput(buildWorldRenderInput(), camera, budget.maxDetailedMonsters),
-            camera,
-          };
+          const sceneJob = { input: buildStaticWorldRenderInput(), staticOnly: true, camera };
           if (sceneCompileInFlightRef.current) {
-            // Keep at most one newest snapshot; a queue would recreate the
-            // same long-task backlog after a dense horde arrives.
             pendingSceneInputRef.current = sceneJob;
           } else {
             const worker = sceneWorkerRef.current;
@@ -558,19 +529,17 @@ export function App() {
             }
           }
         }
-        perfMonitor.setExtras({
-          monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
-          particles: curEngine.particles.length,
-          projectiles: curEngine.projectiles.length,
-          zoom: camera.zoom,
-          canvasW: viewportWidth,
-          canvasH: viewportHeight,
-        });
         if (nativeWorldRenderer) {
-          perfMonitor.recordDraw(0);
-          perfMonitor.recordFrame(frameIntervalMs);
-          animationId = requestAnimationFrame(render);
-          return;
+          sendNativeWorldRenderFrame({
+            cameraX: camera.x,
+            cameraY: camera.y,
+            zoom: camera.zoom,
+            viewportWidth,
+            viewportHeight,
+            timeSeconds: timeInSeconds,
+            theme: curEngine.player.currentZone,
+            entities: [],
+          });
         }
       }
 
@@ -578,7 +547,7 @@ export function App() {
         monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
         particles: curEngine.particles.length,
         projectiles: curEngine.projectiles.length,
-        zoom: getCameraState().zoom,
+        zoom: camera.zoom,
         canvasW: viewportWidth,
         canvasH: viewportHeight,
         dynamicRasterScale: dynamicRasterScaleRef.current,
@@ -592,18 +561,8 @@ export function App() {
         }
         lastProbeMode = activeCanvasProbeMode;
       }
-      if (activeCanvasProbeMode === 'normal') {
-        const worldInput = buildWorldRenderInput();
-        // Dynamic pass advances the existing Canvas camera every rAF. The
-        // static cache is rendered with that resulting camera, so background
-        // and actors stay in the same world coordinate system.
-        const camera = advanceCanvasCamera(
-          curEngine.player,
-          timeInSeconds,
-          curEngine.screenShake,
-          curEngine.introCinematic,
-        );
-        const rasterScale = dynamicRasterScaleRef.current;
+      const presentDynamicOverlay = (worldInput: WorldRenderInput) => {
+        const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
         const workerInput = rasterScale === 1
           ? worldInput
           : {
@@ -614,13 +573,18 @@ export function App() {
         const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
         const workerQueued = queueDynamicRender({ input: workerInput, camera: workerCamera });
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        if (workerQueued && dynamicFrame) {
+        if (dynamicFrame) {
           ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
-        } else {
-          // Paint the first frame locally while the worker warms up, and use
-          // this same path immediately if structured cloning ever fails.
+        } else if (!nativeWorldRenderer || !workerQueued) {
+          // Native already shows the map. Skip a main-thread chibi paint while
+          // the overlay worker warms up — that paint is the freeze we removed.
           drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
         }
+      };
+      if (nativeWorldRenderer || activeCanvasProbeMode === 'normal') {
+        const worldInput = buildWorldRenderInput();
+        presentDynamicOverlay(worldInput);
+        if (!nativeWorldRenderer && staticCtx && staticCacheCtx) {
         const resourceRevision = curEngine.resourceNodes
           .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
           .join(',');
@@ -659,6 +623,9 @@ export function App() {
           }
         }
 
+        if (!staticCache) {
+          // Keep the previous frame if the worker has not produced a cache yet.
+        } else {
         const sourceWidth = viewportWidth * staticCache.camera.zoom / camera.zoom;
         const sourceHeight = viewportHeight * staticCache.camera.zoom / camera.zoom;
         const rawSourceX = (staticCache.width - sourceWidth) / 2
@@ -679,45 +646,25 @@ export function App() {
           viewportWidth,
           viewportHeight,
         );
-      } else if (activeCanvasProbeMode === 'static-only') {
+        }
+        }
+      } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'static-only') {
         // Terrain, buildings and world dressing. This is the candidate for a
         // retained/tiled Canvas cache if it is the pacing bottleneck.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        drawWorldInput(staticCtx, buildWorldRenderInput(), { layer: 'static' });
-      } else if (activeCanvasProbeMode === 'dynamic-only') {
+        drawWorldInput(staticCtx, buildWorldRenderInput(), { layer: 'static', camera });
+      } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'dynamic-only') {
         // Actors and screen-space effects, deliberately without static world
         // geometry. Clear first so dynamic pixels do not accumulate between
         // diagnostic frames.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
-        const worldInput = buildWorldRenderInput();
-        const camera = advanceCanvasCamera(
-          curEngine.player,
-          timeInSeconds,
-          curEngine.screenShake,
-          curEngine.introCinematic,
-        );
-        const rasterScale = dynamicRasterScaleRef.current;
-        const workerInput = rasterScale === 1
-          ? worldInput
-          : {
-            ...worldInput,
-            canvasWidth: Math.max(1, Math.round(viewportWidth * rasterScale)),
-            canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
-          };
-        const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
-        const workerQueued = queueDynamicRender({ input: workerInput, camera: workerCamera });
-        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        if (workerQueued && dynamicFrame) {
-          ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
-        } else {
-          drawWorldInput(ctx, worldInput, { layer: 'dynamic', camera });
-        }
-      } else if (activeCanvasProbeMode === 'present-only') {
+        presentDynamicOverlay(buildWorldRenderInput());
+      } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.
         staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
-        ctx?.clearRect(0, 0, viewportWidth, viewportHeight);
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
       }
       // raf-only intentionally performs no Canvas calls. It isolates WebView
       // scheduling from Canvas command submission and compositing.
@@ -849,32 +796,20 @@ export function App() {
         />
       ) : (
         <>
-          {/* Native mode deliberately has no Canvas element: the transparent
-              WebView only owns input/HUD, while Rust owns every world pixel. */}
-          {nativeWorldRenderer ? (
-            <div
-              aria-label="Game world input"
-              onContextMenu={(e) => e.preventDefault()}
-              onMouseDown={handleWorldPointerDown}
-              onMouseUp={handleWorldPointerUp}
-              className="absolute inset-0 cursor-crosshair"
-            />
-          ) : (
-            <>
-              <canvas
-                ref={staticCanvasRef}
-                aria-hidden="true"
-                className="absolute inset-0 block w-full h-full pointer-events-none"
-              />
-              <canvas
-                ref={canvasRef}
-                onContextMenu={(e) => e.preventDefault()}
-                onMouseDown={handleWorldPointerDown}
-                onMouseUp={handleWorldPointerUp}
-                className="absolute inset-0 block w-full h-full cursor-crosshair"
-              />
-            </>
-          )}
+          {/* Native owns the retained map. The dynamic canvas stays visible as
+              a transparent overlay so chibis never cross the command-list bridge. */}
+          <canvas
+            ref={staticCanvasRef}
+            aria-hidden="true"
+            className={`absolute inset-0 block w-full h-full pointer-events-none ${nativeWorldRenderer ? 'hidden' : ''}`}
+          />
+          <canvas
+            ref={canvasRef}
+            onContextMenu={(e) => e.preventDefault()}
+            onMouseDown={handleWorldPointerDown}
+            onMouseUp={handleWorldPointerUp}
+            className="absolute inset-0 block w-full h-full cursor-crosshair bg-transparent"
+          />
 
           {/* 3. Floating In-Game Toast Notifications */}
           <AnimatePresence>

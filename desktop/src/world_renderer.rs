@@ -1054,31 +1054,16 @@ impl NativeWorldRenderer {
         let mut retained_scene = None;
         let frame_scene: NativeRenderScene;
         let mut rendering_retained_scene = false;
-        let rendered_scene = if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
-            state.retained_scenes_with_revisions()
-        {
-            // Canvas display list is the visual source of truth. Prefer it
-            // over the legacy entity snapshot whenever both are available.
-            if self.last_static_scene_submitted_revision != Some(static_revision) {
-                self.submit_static_scene(static_revision, static_scene.clone());
-                self.last_static_scene_submitted_revision = Some(static_revision);
-            }
-            if self.last_dynamic_scene_submitted_revision != Some(dynamic_revision) {
-                self.submit_dynamic_scene(dynamic_revision, dynamic_scene.clone());
-                self.last_dynamic_scene_submitted_revision = Some(dynamic_revision);
-            }
-            retained_scene = Some(dynamic_scene);
-            rendering_retained_scene = true;
-            true
-        } else if let (
+        let rendered_scene = if let (
             Some((static_scene, static_revision)),
             Some((world, prediction_seconds, frame_revision)),
         ) = (
             state.static_scene_with_revision(),
             state.frame_with_prediction_and_revision(),
         ) {
-            // Legacy fallback: simplified procedural actors when the dynamic
-            // display list has not yet crossed the WebView bridge.
+            // Static display-list + camera frame. Actors are painted by the
+            // WebView Canvas overlay, so this path must win over a leftover
+            // dynamic command list from an older bundle.
             if self.last_static_scene_submitted_revision != Some(static_revision) {
                 self.submit_static_scene(static_revision, static_scene.clone());
                 self.last_static_scene_submitted_revision = Some(static_revision);
@@ -1674,6 +1659,9 @@ impl NativeWorldRenderer {
         use wgpu::util::DeviceExt;
 
         let bytes = bytemuck::cast_slice(&self.vertices);
+        if bytes.is_empty() {
+            return;
+        }
         if self.vertex_capacity < bytes.len() {
             self.vertex_buffer = Some(frame.device().create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
@@ -1692,6 +1680,9 @@ impl NativeWorldRenderer {
         use wgpu::util::DeviceExt;
 
         let bytes = bytemuck::cast_slice(&self.overlay_vertices);
+        if bytes.is_empty() {
+            return;
+        }
         if self.overlay_vertex_capacity < bytes.len() {
             self.overlay_vertex_buffer = Some(frame.device().create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
