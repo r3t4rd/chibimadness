@@ -8,6 +8,9 @@ export type PerfSnapshot = {
   nativeStaticCacheRedraws: number | null;
   nativeStaticTriangles: number | null;
   nativeDynamicTriangles: number | null;
+  nativeBridgeMs: number | null;
+  nativeDynamicCommands: number | null;
+  nativeSceneTargetHz: number | null;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -28,6 +31,9 @@ class PerformanceMonitor {
   private nativeStaticCacheRedraws: number | null = null;
   private nativeStaticTriangles: number | null = null;
   private nativeDynamicTriangles: number | null = null;
+  private nativeBridgeMs: number | null = null;
+  private nativeDynamicCommands: number | null = null;
+  private nativeSceneTargetHz: number | null = null;
   private fogMs = 0;
   private extras: Partial<PerfSnapshot> = {};
 
@@ -65,6 +71,15 @@ class PerformanceMonitor {
       : null;
   }
 
+  recordNativeSceneBridge(commandCount: number, elapsedMs: number) {
+    this.nativeDynamicCommands = Math.max(0, Math.round(commandCount));
+    this.nativeBridgeMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : null;
+  }
+
+  recordNativeSceneTargetHz(hz: number) {
+    this.nativeSceneTargetHz = Number.isFinite(hz) ? Math.max(0, Math.round(hz)) : null;
+  }
+
   recordFog(ms: number) {
     this.fogMs = ms;
   }
@@ -85,6 +100,9 @@ class PerformanceMonitor {
       nativeStaticCacheRedraws: this.nativeStaticCacheRedraws,
       nativeStaticTriangles: this.nativeStaticTriangles,
       nativeDynamicTriangles: this.nativeDynamicTriangles,
+      nativeBridgeMs: this.nativeBridgeMs,
+      nativeDynamicCommands: this.nativeDynamicCommands,
+      nativeSceneTargetHz: this.nativeSceneTargetHz,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,

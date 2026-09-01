@@ -227,12 +227,16 @@ export function sendNativeDynamicRenderScene(scene: RenderScene) {
 function sendNativeLayeredRenderScene(endpoint: 'world.scene.static' | 'world.scene.dynamic', scene: RenderScene) {
   if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
   if (scene.version !== 1 || scene.commands.length > 65_536) return;
+  const startedAt = endpoint === 'world.scene.dynamic' ? performance.now() : 0;
   window.yuyib.post({
     version: 1,
     id: nextBridgeMessageId++,
     endpoint,
     payload: scene,
   });
+  if (endpoint === 'world.scene.dynamic') {
+    perfMonitor.recordNativeSceneBridge(scene.commands.length, performance.now() - startedAt);
+  }
 }
 
 class MultiplayerClient {

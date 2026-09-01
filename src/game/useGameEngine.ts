@@ -1140,6 +1140,9 @@ export function useGameEngine(initialPlayer: Player) {
 
   // Keyboard input tracker ref
   const keysRef = useRef<{ [key: string]: boolean }>({});
+  // Dodge is an action, not a continuous state. Holding Shift while the
+  // WebView is busy must never queue a chain of dashes on recovery.
+  const dashRequestedRef = useRef(false);
   const joystickVectorRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const joystickSprintRef = useRef<boolean>(false);
   const toggleVehicleRef = useRef<() => void>(() => {});
@@ -3541,8 +3544,11 @@ export function useGameEngine(initialPlayer: Player) {
       const drivingCar = isDrivingHijackCar(curPlayer);
       const skating = isSkating(curPlayer);
 
-      const isShiftPressed = keysRef.current['ShiftLeft'] || keysRef.current['ShiftRight'] || joystickSprintRef.current;
-      if (!drivingCar && isShiftPressed && dodgeCooldown <= 0 && dodgeTimer <= 0) {
+      const dashRequested = dashRequestedRef.current || joystickSprintRef.current;
+      // Consume the key edge even while dash is cooling down: otherwise input
+      // delayed by a long task is replayed after the game catches up.
+      dashRequestedRef.current = false;
+      if (!drivingCar && dashRequested && dodgeCooldown <= 0 && dodgeTimer <= 0) {
         isAirDash = jumpZ > 3;
         dodgeTimer = skating ? 0.44 : 0.52;
         dodgeCooldown = skating ? 0.52 : 0.62;
@@ -6194,6 +6200,9 @@ export function useGameEngine(initialPlayer: Player) {
       if (focused && (focused.tagName === 'INPUT' || focused.tagName === 'TEXTAREA')) return;
 
       keysRef.current[e.code] = true;
+      if (!e.repeat && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) {
+        dashRequestedRef.current = true;
+      }
 
       // Modal Hotkeys: [I] Inventory, [B] Craft, [K] Skills, [M] Map, [Esc] Close
       if (!e.repeat) {

@@ -45,6 +45,11 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
               cache {stats.nativeStaticCacheRedraws}/0.5s · static {(stats.nativeStaticTriangles ?? 0).toLocaleString()} △ · dyn {(stats.nativeDynamicTriangles ?? 0).toLocaleString()} △
             </div>
           )}
+          {stats.nativeBridgeMs !== null && (
+            <div className={stats.nativeBridgeMs > 4 ? 'text-amber-300' : 'text-slate-400'}>
+              bridge {stats.nativeBridgeMs.toFixed(1)} ms · {(stats.nativeDynamicCommands ?? 0).toLocaleString()} cmd · {stats.nativeSceneTargetHz ?? 0} Hz
+            </div>
+          )}
           <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
             world {nativeWorldActive ? 'native active' : 'canvas fallback'}
           </div>

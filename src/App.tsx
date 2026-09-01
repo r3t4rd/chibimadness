@@ -238,14 +238,21 @@ export function App() {
           event.data.staticScene as Parameters<typeof sendNativeStaticRenderScene>[0]
         );
       }
+      const pending = pendingSceneInputRef.current;
+      pendingSceneInputRef.current = null;
+      // If compilation already fell behind, this dynamic list is obsolete.
+      // Sending it through WebView2 first creates another main-thread queue
+      // and makes keyboard input look frozen. Keep static invalidations, then
+      // compile only the newest snapshot.
+      if (pending) {
+        submit(pending);
+        return;
+      }
       if (event.data.dynamicScene) {
         sendNativeDynamicRenderScene(
           event.data.dynamicScene as Parameters<typeof sendNativeDynamicRenderScene>[0]
         );
       }
-      const pending = pendingSceneInputRef.current;
-      pendingSceneInputRef.current = null;
-      if (pending) submit(pending);
     };
     return () => {
       worker.terminate();
@@ -285,9 +292,9 @@ export function App() {
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
       // A single complete input is shared by the Canvas source backend and
-      // the recorded RenderScene path.  Do not rebuild a reduced visual
-      // entity protocol here: that was the reason native mode diverged.
-      const worldRenderInput: WorldRenderInput = {
+      // the recorded RenderScene path. Do not rebuild a reduced visual entity
+      // protocol here: that was the reason native mode diverged.
+      const buildWorldRenderInput = (): WorldRenderInput => ({
         canvasWidth: viewportWidth,
         canvasHeight: viewportHeight,
         localPlayer: curEngine.player,
@@ -306,10 +313,20 @@ export function App() {
         cars: curEngine.cars,
         summons: curEngine.summons,
         gameTimePhase: curEngine.gameTimePhase,
-      };
+      });
       if (nativeWorldRendererRequested) {
-        if (time - lastNativeFrameAt.current >= 1000 / 30) {
+        // Dense Canvas-equivalent command lists are the remaining JS -> native
+        // choke point. The WGPU surface keeps interpolating its retained world
+        // buffers, so back off publication before it can starve UI/input.
+        const denseNativeScene = curEngine.monsters.length >= 20
+          || curEngine.particles.length >= 48
+          || curEngine.projectiles.length >= 16;
+        const nativeSceneTargetHz = denseNativeScene ? 12 : 20;
+        const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
+        perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
+        if (time - lastNativeFrameAt.current >= nativeSceneIntervalMs) {
           lastNativeFrameAt.current = time;
+          const worldRenderInput = buildWorldRenderInput();
           if (sceneCompileInFlightRef.current) {
             // Keep at most one newest snapshot; a queue would recreate the
             // same long-task backlog after a dense horde arrives.
@@ -519,6 +536,7 @@ export function App() {
         canvasH: viewportHeight,
       });
 
+      const worldRenderInput = buildWorldRenderInput();
       const drawStart = performance.now();
       drawWorldInput(ctx, worldRenderInput);
       perfMonitor.recordDraw(performance.now() - drawStart);
