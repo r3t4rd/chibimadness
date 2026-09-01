@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { compileWorldScene, drawWorldInput, screenToWorld, getCameraState, updateNativeCamera } from './game/worldRenderer';
+import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -167,6 +167,10 @@ export function App() {
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lastNativeFrameAt = useRef(0);
+  const sceneWorkerRef = useRef<Worker | null>(null);
+  const sceneCompileInFlightRef = useRef(false);
+  const pendingSceneInputRef = useRef<WorldRenderInput | null>(null);
+  const nextSceneJobIdRef = useRef(1);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -209,6 +213,33 @@ export function App() {
     document.body.classList.toggle('bg-slate-950', !nativeWorldRenderer);
   }, [nativeWorldRenderer]);
 
+  // Scene compilation is intentionally outside the WebView's animation
+  // thread. A complete Canvas display-list is expensive to construct; doing
+  // it in requestAnimationFrame made the HUD/input loop fall to ~27 FPS even
+  // while the native WGPU surface was presenting at 240 FPS.
+  useEffect(() => {
+    if (!nativeWorldRendererRequested || typeof Worker === 'undefined') return;
+    const worker = new Worker(new URL('./game/renderScene.worker.ts', import.meta.url), { type: 'module' });
+    sceneWorkerRef.current = worker;
+    const submit = (input: WorldRenderInput) => {
+      sceneCompileInFlightRef.current = true;
+      worker.postMessage({ id: nextSceneJobIdRef.current++, input });
+    };
+    worker.onmessage = (event: MessageEvent<{ id: number; scene?: unknown; error?: string }>) => {
+      sceneCompileInFlightRef.current = false;
+      if (event.data.scene) sendNativeRenderScene(event.data.scene as Parameters<typeof sendNativeRenderScene>[0]);
+      const pending = pendingSceneInputRef.current;
+      pendingSceneInputRef.current = null;
+      if (pending) submit(pending);
+    };
+    return () => {
+      worker.terminate();
+      if (sceneWorkerRef.current === worker) sceneWorkerRef.current = null;
+      sceneCompileInFlightRef.current = false;
+      pendingSceneInputRef.current = null;
+    };
+  }, [nativeWorldRendererRequested]);
+
   // Main Canvas Render Loop
   useEffect(() => {
     let animationId: number;
@@ -217,13 +248,7 @@ export function App() {
     if (!createdPlayer || (!nativeWorldRenderer && !canvas)) return;
 
     const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
-    // Native mode has no visible Canvas, but the canonical compiler still
-    // needs browser font metrics for the exact source layout.
-    const measurementContext = nativeWorldRenderer
-      ? document.createElement('canvas').getContext('2d')
-      : ctx;
     if (!nativeWorldRenderer && !ctx) return;
-    if (!measurementContext) return;
     let viewportWidth = window.innerWidth;
     let viewportHeight = window.innerHeight;
 
@@ -247,7 +272,7 @@ export function App() {
       // A single complete input is shared by the Canvas source backend and
       // the recorded RenderScene path.  Do not rebuild a reduced visual
       // entity protocol here: that was the reason native mode diverged.
-      const worldRenderInput = {
+      const worldRenderInput: WorldRenderInput = {
         canvasWidth: viewportWidth,
         canvasHeight: viewportHeight,
         localPlayer: curEngine.player,
@@ -270,7 +295,17 @@ export function App() {
       if (nativeWorldRendererRequested) {
         if (time - lastNativeFrameAt.current >= 1000 / 30) {
           lastNativeFrameAt.current = time;
-          sendNativeRenderScene(compileWorldScene(measurementContext, worldRenderInput));
+          if (sceneCompileInFlightRef.current) {
+            // Keep at most one newest snapshot; a queue would recreate the
+            // same long-task backlog after a dense horde arrives.
+            pendingSceneInputRef.current = worldRenderInput;
+          } else {
+            const worker = sceneWorkerRef.current;
+            if (worker) {
+              sceneCompileInFlightRef.current = true;
+              worker.postMessage({ id: nextSceneJobIdRef.current++, input: worldRenderInput });
+            }
+          }
         }
         if (nativeWorldRenderer) {
           perfMonitor.setExtras({

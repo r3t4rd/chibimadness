@@ -268,7 +268,7 @@ export function recordWorldScene(
  * record-and-forward approach would impose on every WGPU frame.
  */
 export function compileWorldScene(
-  measurementContext: CanvasRenderingContext2D,
+  measurementContext: Pick<CanvasRenderingContext2D, 'font' | 'measureText'>,
   input: WorldRenderInput
 ): RenderScene {
   const compiled = compileRenderScene(

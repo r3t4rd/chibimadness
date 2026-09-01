@@ -231,6 +231,8 @@ type VirtualSceneResource = {
   kind: SceneResourceKind;
 };
 
+type TextMeasurementContext = Pick<CanvasRenderingContext2D, 'font' | 'measureText'>;
+
 /**
  * Compiles the established Canvas renderer into a display list without asking
  * Canvas to rasterize a single world primitive.  `measureText` is delegated
@@ -239,7 +241,7 @@ type VirtualSceneResource = {
  * `recordRenderScene` remains the pixel-reference path used for conformance.
  */
 export function compileRenderScene<T>(
-  measurementContext: CanvasRenderingContext2D,
+  measurementContext: TextMeasurementContext,
   metadata: Omit<RenderScene, 'version' | 'commands'>,
   paint: (context: CanvasRenderingContext2D) => T
 ): { result: T; scene: RenderScene } {
