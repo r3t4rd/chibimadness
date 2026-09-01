@@ -6,12 +6,39 @@ import { drawEvolutionFx } from './evolutions';
 import { clipToViewBounds, getViewBounds, isInViewBounds } from './viewCull';
 import { drawWorldBuildings, drawInteriorPrompt, drawBuildingOccluders, drawInteriorActors } from './buildingRenderer';
 import { occupancyMatchesObject, isInteriorWorld } from './buildings';
+import { recordRenderScene, type RenderScene } from './renderScene';
 
 // Persistent smoothed camera state
 let smoothedCameraX = 650;
 let smoothedCameraY = 750;
 let smoothedZoom = 1.0;
 let lastRenderTimestamp = 0;
+
+/**
+ * The complete input to the source-of-truth world paint.  Keeping this as a
+ * named value means Canvas and a recorded RenderScene cannot gradually grow
+ * different argument lists as the game evolves.
+ */
+export type WorldRenderInput = {
+  canvasWidth: number;
+  canvasHeight: number;
+  localPlayer: Player;
+  players: Record<string, Player>;
+  monsters: Monster[];
+  resourceNodes: ResourceNode[];
+  dropItems: DropItem[];
+  projectiles: Projectile[];
+  particles: VisualParticle[];
+  damagePopups: DamagePopup[];
+  screenShake?: { intensity: number; duration: number };
+  groundDecals?: GroundDecal[];
+  time?: number;
+  introCinematic?: IntroCinematicState;
+  worldPois?: WorldPOI[];
+  cars?: CarEntity[];
+  summons?: SummonedAlly[];
+  gameTimePhase?: number;
+};
 
 export function getCameraState() {
   return {
@@ -184,6 +211,55 @@ export function drawWorld(
     summons,
     gameTimePhase
   );
+}
+
+export function drawWorldInput(ctx: CanvasRenderingContext2D, input: WorldRenderInput) {
+  drawWorld(
+    ctx,
+    input.canvasWidth,
+    input.canvasHeight,
+    input.localPlayer,
+    input.players,
+    input.monsters,
+    input.resourceNodes,
+    input.dropItems,
+    input.projectiles,
+    input.particles,
+    input.damagePopups,
+    input.screenShake,
+    input.groundDecals,
+    input.time,
+    input.introCinematic,
+    input.worldPois,
+    input.cars,
+    input.summons,
+    input.gameTimePhase
+  );
+}
+
+/**
+ * Executes the *existing* Canvas paint and captures the same operations as a
+ * backend-neutral display list.  This must be used only by the native scene
+ * pipeline: ordinary Canvas rendering calls `drawWorldInput` directly and
+ * does not pay proxy/serialization overhead.
+ */
+export function recordWorldScene(
+  ctx: CanvasRenderingContext2D,
+  input: WorldRenderInput
+): RenderScene {
+  const recorded = recordRenderScene(
+    ctx,
+    {
+      viewport: { width: input.canvasWidth, height: input.canvasHeight },
+      camera: getCameraState(),
+      timeSeconds: input.time ?? 0,
+    },
+    (sceneContext) => drawWorldInput(sceneContext, input)
+  );
+  // `drawWorld` performs camera smoothing before issuing world commands.
+  // Store that final transform, not the value from the preceding frame.
+  recorded.scene.camera = getCameraState();
+  return recorded.scene;
 }
 
 export function renderWorld(

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld, getCameraState, updateNativeCamera } from './game/worldRenderer';
+import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -237,6 +237,29 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
+      // A single complete input is shared by the Canvas source backend and
+      // the recorded RenderScene path.  Do not rebuild a reduced visual
+      // entity protocol here: that was the reason native mode diverged.
+      const worldRenderInput = {
+        canvasWidth: viewportWidth,
+        canvasHeight: viewportHeight,
+        localPlayer: curEngine.player,
+        players: curEngine.remotePlayers,
+        monsters: curEngine.monsters,
+        resourceNodes: curEngine.resourceNodes,
+        dropItems: curEngine.dropItems,
+        projectiles: curEngine.projectiles,
+        particles: curEngine.particles,
+        damagePopups: curEngine.damagePopups,
+        screenShake: curEngine.screenShake,
+        groundDecals: curEngine.groundDecals,
+        time: timeInSeconds,
+        introCinematic: curEngine.introCinematic,
+        worldPois: curEngine.worldPois,
+        cars: curEngine.cars,
+        summons: curEngine.summons,
+        gameTimePhase: curEngine.gameTimePhase,
+      };
       if (nativeWorldRendererRequested) {
         const camera = updateNativeCamera(curEngine.player, time);
         const nativeViewPadding = 180;
@@ -422,27 +445,7 @@ export function App() {
       });
 
       const drawStart = performance.now();
-      drawWorld(
-        ctx,
-        viewportWidth,
-        viewportHeight,
-        curEngine.player,
-        curEngine.remotePlayers,
-        curEngine.monsters,
-        curEngine.resourceNodes,
-        curEngine.dropItems,
-        curEngine.projectiles,
-        curEngine.particles,
-        curEngine.damagePopups,
-        curEngine.screenShake,
-        curEngine.groundDecals,
-        timeInSeconds,
-        curEngine.introCinematic,
-        curEngine.worldPois,
-        curEngine.cars,
-        curEngine.summons,
-        curEngine.gameTimePhase
-      );
+      drawWorldInput(ctx, worldRenderInput);
       perfMonitor.recordDraw(performance.now() - drawStart);
       perfMonitor.recordFrame(frameIntervalMs);
       animationId = requestAnimationFrame(render);
