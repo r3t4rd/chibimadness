@@ -1,4 +1,4 @@
-export type CanvasProbeMode = 'normal' | 'present-only' | 'raf-only';
+export type CanvasProbeMode = 'normal' | 'static-only' | 'dynamic-only' | 'present-only' | 'raf-only';
 
 export type PerfSnapshot = {
   fps: number;

@@ -225,7 +225,9 @@ export function App() {
 
   useEffect(() => {
     const nextMode: Record<CanvasProbeMode, CanvasProbeMode> = {
-      normal: 'present-only',
+      normal: 'static-only',
+      'static-only': 'dynamic-only',
+      'dynamic-only': 'present-only',
       'present-only': 'raf-only',
       'raf-only': 'normal',
     };
@@ -610,6 +612,16 @@ export function App() {
       const drawStart = performance.now();
       if (canvasProbeMode === 'normal') {
         drawWorldInput(ctx, buildWorldRenderInput());
+      } else if (canvasProbeMode === 'static-only') {
+        // Terrain, buildings and world dressing. This is the candidate for a
+        // retained/tiled Canvas cache if it is the pacing bottleneck.
+        drawWorldInput(ctx, buildWorldRenderInput(), { layer: 'static' });
+      } else if (canvasProbeMode === 'dynamic-only') {
+        // Actors and screen-space effects, deliberately without static world
+        // geometry. Clear first so dynamic pixels do not accumulate between
+        // diagnostic frames.
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        drawWorldInput(ctx, buildWorldRenderInput(), { layer: 'dynamic' });
       } else if (canvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.
