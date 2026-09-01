@@ -88,13 +88,18 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
               bridge {stats.nativeBridgeMs.toFixed(1)} ms · {(stats.nativeDynamicCommands ?? 0).toLocaleString()} cmd · {stats.nativeSceneTargetHz ?? 0} Hz
             </div>
           )}
-          {stats.offscreenDynamicFps !== null && (
+          {!nativeWorldActive && stats.offscreenDynamicFps !== null && (
             <div className="text-cyan-300">
               worker dyn {stats.offscreenDynamicFps} Hz · RTT {(stats.offscreenDynamicRoundTripMs ?? 0).toFixed(1)} ms · raster {(stats.dynamicRasterScale * 100).toFixed(0)}% · F9 scale
             </div>
           )}
-          <div className={stats.webglHordeMobBodies ? 'text-emerald-300' : 'text-slate-500'}>
-            actor bodies {stats.webglHordeMobBodies ? `WebGL2 ${stats.webglMonsterBodies}/${stats.monsters} mobs` : 'Canvas fallback'} · F10 toggle
+          <div className={nativeWorldActive || stats.webglHordeMobBodies ? 'text-emerald-300' : 'text-slate-500'}>
+            actor bodies {nativeWorldActive
+              ? `WGPU atlas + primitives · ${stats.monsters} mobs`
+              : stats.webglHordeMobBodies
+                ? `WebGL2 ${stats.webglMonsterBodies}/${stats.monsters} mobs`
+                : 'Canvas fallback'}
+            {!nativeWorldActive && ' · F10 toggle'}
           </div>
           {!nativeWorldActive && (
             <div className="text-slate-400">

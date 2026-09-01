@@ -916,6 +916,10 @@ pub struct NativeWorldRenderer {
     static_vertex_capacity: usize,
     static_vertices: Vec<Vertex>,
     static_vertices_dirty: bool,
+    /// Key for the fully-native static map. Unlike `static_scene_view`, this
+    /// path is generated in Rust and never depends on a WebView Canvas
+    /// display-list worker.
+    native_static_key: Option<(String, u32, u32)>,
     last_static_scene_submitted_revision: Option<u64>,
     last_static_scene_applied_revision: Option<u64>,
     static_scene_view: Option<StaticSceneView>,
@@ -1003,6 +1007,7 @@ impl Default for NativeWorldRenderer {
             static_vertex_capacity: 0,
             static_vertices: Vec::new(),
             static_vertices_dirty: false,
+            native_static_key: None,
             last_static_scene_submitted_revision: None,
             last_static_scene_applied_revision: None,
             static_scene_view: None,
@@ -1189,12 +1194,36 @@ impl NativeWorldRenderer {
         } else if let Some((world, prediction_seconds, _)) =
             state.frame_with_prediction_and_revision()
         {
-            // Compatibility fallback for an older bundle which has not yet
-            // produced a retained static scene. It still owns the map
-            // geometry, unlike the `static scene + world.frame` path above.
-            self.build_vertices(world, prediction_seconds);
-            self.last_scene_revision = None;
+            // Native-only world path: build the authored base map once in
+            // Rust, then submit only mutable entities every presentation.
+            // This replaces the old TS OffscreenCanvas scene compiler.
+            let static_key = (
+                world.theme.clone(),
+                world.viewport_width.max(1.0).round() as u32,
+                world.viewport_height.max(1.0).round() as u32,
+            );
+            if self.native_static_key.as_ref() != Some(&static_key) {
+                self.rebuild_native_static_world(world);
+                self.native_static_key = Some(static_key);
+            }
+            self.build_dynamic_frame_vertices(world, prediction_seconds);
             self.vertices_dirty = true;
+            self.last_scene_revision = None;
+            frame_scene = NativeRenderScene {
+                version: 1,
+                viewport: NativeSceneViewport {
+                    width: world.viewport_width,
+                    height: world.viewport_height,
+                },
+                camera: NativeSceneCamera {
+                    x: world.camera_x,
+                    y: world.camera_y,
+                    zoom: world.zoom,
+                },
+                time_seconds: world.time_seconds,
+                commands: Vec::new(),
+            };
+            retained_scene = Some(&frame_scene);
             true
         } else {
             false
@@ -2030,18 +2059,11 @@ impl NativeWorldRenderer {
         }
     }
 
-    fn build_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
+    fn rebuild_native_static_world(&mut self, world: &NativeRenderFrame) {
         self.vertices.clear();
-        self.clear_sprite_vertices();
-        // The native pass intentionally owns the world surface. The WebView
-        // stays transparent and therefore cannot force WebView2 to composite
-        // a full-screen Canvas2D texture every gameplay frame.
         self.add_source_world(world);
-        for entity in &world.entities {
-            let x = entity.x + entity.velocity_x * prediction_seconds;
-            let y = entity.y + entity.velocity_y * prediction_seconds;
-            self.add_entity(entity, x, y, world);
-        }
+        self.static_vertices = std::mem::take(&mut self.vertices);
+        self.static_vertices_dirty = true;
     }
 
     fn build_dynamic_frame_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
@@ -2767,6 +2789,10 @@ impl NativeWorldRenderer {
             "resource" => self.add_resource(entity, x, y, world),
             "vehicle" => self.add_vehicle(entity, x, y, world),
             "pickup" | "poi" => self.add_pickup(entity, x, y, world),
+            "decal" => self.add_decal(entity, x, y, world),
+            "summon" => self.add_summon(entity, x, y, world),
+            "popup" => self.add_popup(entity, x, y, world),
+            "monster" if entity.effect_type == "forest_wolf" => self.add_forest_wolf(entity, x, y, world),
             _ => self.add_humanoid(entity, x, y, world),
         }
     }
@@ -4714,6 +4740,123 @@ impl NativeWorldRenderer {
             8,
             world,
         );
+    }
+
+    fn add_decal(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let radius = entity.size.max(1.0);
+        match entity.effect_type.as_str() {
+            "fire_pool" => {
+                self.add_world_ellipse(x, y, radius, radius * 0.65, [0.92, 0.22, 0.03, entity.color[3] * 0.42], 18, world);
+                let flicker = 0.78 + (world.time_seconds * 12.0 + x).sin() * 0.16;
+                self.add_world_ellipse(x, y, radius * flicker, radius * 0.42 * flicker, [0.96, 0.55, 0.04, entity.color[3] * 0.82], 18, world);
+                self.add_world_circle(x, y, (radius * 0.18).max(2.0), [1.0, 0.94, 0.54, entity.color[3]], 10, world);
+            }
+            "ice_trail" => {
+                self.add_world_ellipse(x, y, radius, radius * 0.65, [0.45, 0.86, 0.98, entity.color[3] * 0.42], 18, world);
+                self.add_world_ellipse(x, y, radius, radius * 0.65, [0.22, 0.72, 0.98, entity.color[3] * 0.20], 18, world);
+            }
+            _ => {
+                self.add_world_ellipse(x, y, radius, radius * 0.60, entity.color, 16, world);
+                for step in 0..3 {
+                    let angle = step as f32 * std::f32::consts::TAU / 3.0;
+                    self.add_world_circle(
+                        x + angle.cos() * radius * 1.25,
+                        y + angle.sin() * radius * 0.75,
+                        (radius * 0.09).max(1.5),
+                        entity.color,
+                        8,
+                        world,
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_summon(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(12.0);
+        let outline = [0.02, 0.03, 0.06, 0.96];
+        match entity.effect_type.as_str() {
+            "golem" => {
+                self.add_world_rect(x, y - size * 0.16, size * 1.08, size * 1.20, outline, world);
+                self.add_world_rect(x, y - size * 0.16, size * 0.94, size * 1.04, entity.color, world);
+                self.add_world_rect(x, y - size * 0.76, size * 0.70, size * 0.34, [0.47, 0.44, 0.40, 1.0], world);
+                for offset in [-0.16_f32, 0.16] {
+                    self.add_world_circle(x + size * offset, y - size * 0.76, size * 0.07, [0.96, 0.60, 0.06, 1.0], 8, world);
+                }
+            }
+            "totem" => {
+                self.add_world_rect(x, y - size * 0.34, size * 0.30, size * 1.55, [0.30, 0.11, 0.58, 1.0], world);
+                self.add_world_triangle(
+                    [x - size * 0.20, y - size * 1.05],
+                    [x, y - size * 1.48],
+                    [x + size * 0.20, y - size * 1.05],
+                    entity.color,
+                    world,
+                );
+                self.add_world_circle(x, y - size * 1.28, size * 0.13, [0.86, 0.70, 1.0, 0.92], 10, world);
+            }
+            _ => {
+                self.add_world_ellipse(x, y + size * 0.22, size * 0.56, size * 0.18, [0.0, 0.0, 0.0, 0.32], 12, world);
+                self.add_world_rect(x, y, size * 0.86, size * 0.48, [0.50, 0.11, 0.11, 1.0], world);
+                self.add_world_circle(x + size * 0.28, y - size * 0.28, size * 0.27, outline, 12, world);
+                self.add_world_circle(x + size * 0.34, y - size * 0.33, size * 0.07, entity.color, 8, world);
+            }
+        }
+        self.add_sprite_health_bar(entity, x, y, world);
+    }
+
+    fn add_popup(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(4.0);
+        if entity.effect_type == "heal" {
+            self.add_world_circle(x, y, size * 0.52, entity.color, 10, world);
+            self.add_world_rect(x, y, size * 0.20, size * 1.30, [1.0, 1.0, 1.0, entity.color[3]], world);
+            self.add_world_rect(x, y, size * 1.30, size * 0.20, [1.0, 1.0, 1.0, entity.color[3]], world);
+        } else {
+            for point in 0..5 {
+                let start = std::f32::consts::TAU * point as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+                let end = std::f32::consts::TAU * (point + 1) as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+                self.add_world_triangle(
+                    [x, y],
+                    [x + start.cos() * size, y + start.sin() * size],
+                    [x + end.cos() * size * 0.54, y + end.sin() * size * 0.54],
+                    entity.color,
+                    world,
+                );
+            }
+        }
+    }
+
+    fn add_forest_wolf(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(20.0);
+        self.add_world_ellipse(x, y + size * 0.33, size * 0.58, size * 0.16, [0.0, 0.0, 0.0, 0.40], 14, world);
+        self.add_world_rect(x, y, size * 0.98, size * 0.58, [0.20, 0.25, 0.32, 1.0], world);
+        self.add_world_circle(x + size * 0.34, y - size * 0.17, size * 0.30, [0.12, 0.18, 0.25, 1.0], 14, world);
+        self.add_world_circle(x + size * 0.44, y - size * 0.22, size * 0.055, [0.94, 0.18, 0.25, 1.0], 8, world);
+        self.add_sprite_health_bar(entity, x, y, world);
     }
 
     #[allow(dead_code)]
