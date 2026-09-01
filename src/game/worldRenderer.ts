@@ -4414,6 +4414,95 @@ function drawMonsterTelegraphs(ctx: CanvasRenderingContext2D, monsters: Monster[
   });
 }
 
+const hordeSpriteCache = new Map<string, OffscreenCanvas>();
+const CACHEABLE_HORDE_KINDS = new Set([
+  'mite', 'shade', 'raider', 'shotgun', 'bomber', 'dasher', 'sniper',
+  'splitter', 'boss_titan', 'boss_storm',
+]);
+
+function drawCachedHordeMobBody(
+  ctx: CanvasRenderingContext2D,
+  kind: string,
+  boss: boolean,
+  color: string,
+) {
+  if (kind === 'mite') {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ECFEFF';
+    ctx.fillRect(-3, -2, 2, 2);
+    ctx.fillRect(2, -2, 2, 2);
+  } else if (kind === 'shade') {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-14, 10);
+    ctx.quadraticCurveTo(-18, -8, 0, -16);
+    ctx.quadraticCurveTo(18, -8, 14, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#F472B6';
+    ctx.beginPath();
+    ctx.arc(5, -6, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (kind === 'bomber') {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(-14, -10, 28, 24, 8);
+    ctx.fill();
+    ctx.fillStyle = '#1C1917';
+    ctx.beginPath();
+    ctx.arc(0, -4, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FACC15';
+    ctx.beginPath();
+    ctx.arc(0, -4, 3, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(-14, -16, 28, 32, boss ? 6 : 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = kind === 'sniper' ? '#FECACA' : '#E2E8F0';
+    ctx.beginPath();
+    ctx.arc(8, -10, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = kind === 'dasher' ? '#F43F5E' : '#22D3EE';
+    ctx.beginPath();
+    ctx.arc(11, -11, 2, 0, Math.PI * 2);
+    ctx.fill();
+    if (kind === 'shotgun') {
+      ctx.fillStyle = '#78350F';
+      ctx.fillRect(10, -2, 16, 4);
+    }
+    if (kind === 'splitter') {
+      ctx.strokeStyle = '#F5D0FE';
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(-18, -20, 36, 40);
+      ctx.setLineDash([]);
+    }
+  }
+}
+
+function getCachedHordeMobSprite(kind: string, boss: boolean, color: string) {
+  if (typeof OffscreenCanvas === 'undefined' || !CACHEABLE_HORDE_KINDS.has(kind)) return null;
+  const key = `${kind}:${boss ? 1 : 0}:${color}`;
+  const cached = hordeSpriteCache.get(key);
+  if (cached) return cached;
+
+  const sprite = new OffscreenCanvas(72, 72);
+  const spriteContext = sprite.getContext('2d');
+  if (!spriteContext) return null;
+  spriteContext.translate(36, 36);
+  drawCachedHordeMobBody(spriteContext as unknown as CanvasRenderingContext2D, kind, boss, color);
+  hordeSpriteCache.set(key, sprite);
+  return sprite;
+}
+
 function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   const kind = m.hordeKind || 'shade';
   const flash = (m.hitFlash || 0) > 0;
@@ -4448,7 +4537,10 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   ctx.ellipse(0, 16, 16, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if (kind === 'mite') {
+  const cachedSprite = !flash ? getCachedHordeMobSprite(kind, boss, col) : null;
+  if (cachedSprite) {
+    ctx.drawImage(cachedSprite, -36, -36);
+  } else if (kind === 'mite') {
     ctx.fillStyle = col;
     ctx.beginPath();
     ctx.arc(0, 0, 8, 0, Math.PI * 2);
