@@ -312,7 +312,13 @@ export function App() {
     let pendingDynamicRender: DynamicRender | null = null;
     let nextDynamicRenderId = 1;
     let dynamicRenderStartedAt: number | null = null;
-    let dynamicFrame: { image: ImageBitmap; webglHordeMobBodies: boolean } | null = null;
+    let dynamicFrame: {
+      image: ImageBitmap;
+      width: number;
+      height: number;
+      camera: { x: number; y: number; zoom: number };
+      webglHordeMobBodies: boolean;
+    } | null = null;
     let uploadedDynamicFrame: ImageBitmap | null = null;
     let canvasOverlayClearedForWebgl = false;
     let lastProbeMode = canvasProbeModeRef.current;
@@ -322,9 +328,15 @@ export function App() {
         image.close();
       }
     };
-    const replaceDynamicFrame = (nextFrame: ImageBitmap, webglHordeMobBodies: boolean) => {
+    const replaceDynamicFrame = (
+      nextFrame: ImageBitmap,
+      width: number,
+      height: number,
+      camera: { x: number; y: number; zoom: number },
+      webglHordeMobBodies: boolean,
+    ) => {
       if (dynamicFrame && dynamicFrame.image !== nextFrame) dynamicFrame.image.close();
-      dynamicFrame = { image: nextFrame, webglHordeMobBodies };
+      dynamicFrame = { image: nextFrame, width, height, camera, webglHordeMobBodies };
     };
     const replaceStaticCache = (nextCache: StaticCache) => {
       if (staticCache && staticCache.image !== nextCache.image) {
@@ -401,6 +413,9 @@ export function App() {
         id?: number;
         error?: string;
         image?: ImageBitmap;
+        width?: number;
+        height?: number;
+        camera?: { x: number; y: number; zoom: number };
         webglHordeMobBodies?: boolean;
       }>) => {
         if (event.data.error) {
@@ -412,7 +427,15 @@ export function App() {
           return;
         }
         if (event.data.id === undefined) return;
-        if (event.data.image) replaceDynamicFrame(event.data.image, event.data.webglHordeMobBodies === true);
+        if (event.data.image && event.data.width && event.data.height && event.data.camera) {
+          replaceDynamicFrame(
+            event.data.image,
+            event.data.width,
+            event.data.height,
+            event.data.camera,
+            event.data.webglHordeMobBodies === true,
+          );
+        }
         if (dynamicRenderStartedAt !== null) {
           perfMonitor.recordOffscreenDynamicFrame(performance.now() - dynamicRenderStartedAt);
         }
@@ -653,7 +676,12 @@ export function App() {
               webglHordeMobRenderer.uploadDynamicOverlay(dynamicFrame.image);
               uploadedDynamicFrame = dynamicFrame.image;
             }
-            presentedByWebgl = webglHordeMobRenderer.renderDynamicOverlay();
+            presentedByWebgl = webglHordeMobRenderer.renderDynamicOverlay({
+              camera,
+              sourceCamera: dynamicFrame.camera,
+              sourceWidth: dynamicFrame.width,
+              sourceHeight: dynamicFrame.height,
+            });
           } catch {
             webglHordeMobRenderer.destroy();
             webglHordeMobRenderer = null;

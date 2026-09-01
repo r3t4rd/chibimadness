@@ -41,6 +41,7 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
       id: message.id,
       width: canvas.width,
       height: canvas.height,
+      camera: message.camera,
       webglHordeMobBodies: message.webglHordeMobBodies === true,
       image,
     }, [image]);

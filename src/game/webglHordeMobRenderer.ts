@@ -331,11 +331,28 @@ export class WebglHordeMobRenderer {
     return true;
   }
 
-  renderDynamicOverlay() {
+  renderDynamicOverlay(options: {
+    camera: Camera;
+    sourceCamera: Camera;
+    sourceWidth: number;
+    sourceHeight: number;
+  }) {
     if (this.lost || !this.dynamicOverlayReady) return false;
+    const sourceScaleX = Math.max(0.01, options.sourceWidth / this.canvas.width);
+    const sourceScaleY = Math.max(0.01, options.sourceHeight / this.canvas.height);
+    const sourceZoomX = options.sourceCamera.zoom / sourceScaleX;
+    const sourceZoomY = options.sourceCamera.zoom / sourceScaleY;
+    const scaleX = options.camera.zoom / sourceZoomX;
+    const scaleY = options.camera.zoom / sourceZoomY;
+    const translateX = (options.sourceCamera.x - options.camera.x) * options.camera.zoom * 2 / this.canvas.width;
+    const translateY = -(options.sourceCamera.y - options.camera.y) * options.camera.zoom * 2 / this.canvas.height;
     const vertices = [
-      -1, 1, 0, 1, 1, 1, 1, 1, 1, -1, 1, 0,
-      -1, 1, 0, 1, 1, -1, 1, 0, -1, -1, 0, 0,
+      -scaleX + translateX, scaleY + translateY, 0, 0,
+      scaleX + translateX, scaleY + translateY, 1, 0,
+      scaleX + translateX, -scaleY + translateY, 1, 1,
+      -scaleX + translateX, scaleY + translateY, 0, 0,
+      scaleX + translateX, -scaleY + translateY, 1, 1,
+      -scaleX + translateX, -scaleY + translateY, 0, 1,
     ];
     this.drawVertices(vertices, false, this.dynamicOverlayTexture);
     return true;
