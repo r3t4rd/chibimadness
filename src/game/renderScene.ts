@@ -225,3 +225,124 @@ export function replayRenderScene(
   }
   return { appliedCommands, unsupportedCommands };
 }
+
+type VirtualSceneResource = {
+  ref: number;
+  kind: SceneResourceKind;
+};
+
+/**
+ * Compiles the established Canvas renderer into a display list without asking
+ * Canvas to rasterize a single world primitive.  `measureText` is delegated
+ * to a small real context because label layout is gameplay-visible; every
+ * drawing call is recorded only.  This is the native production path, while
+ * `recordRenderScene` remains the pixel-reference path used for conformance.
+ */
+export function compileRenderScene<T>(
+  measurementContext: CanvasRenderingContext2D,
+  metadata: Omit<RenderScene, 'version' | 'commands'>,
+  paint: (context: CanvasRenderingContext2D) => T
+): { result: T; scene: RenderScene } {
+  const commands: SceneCommand[] = [];
+  const state: Record<string, unknown> = {
+    font: measurementContext.font,
+    globalAlpha: 1,
+  };
+  const stateStack: Array<Record<string, unknown>> = [];
+  const resources = new WeakMap<object, VirtualSceneResource>();
+  let nextResourceId = 1;
+
+  const encode = (value: unknown): SceneValue => {
+    if (value === null) return null;
+    if (typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (Array.isArray(value)) return value.map(encode);
+    if (typeof value === 'object') {
+      const resource = resources.get(value);
+      if (resource) return { ref: resource.ref, kind: resource.kind };
+      const result: SceneObject = {};
+      for (const [key, entry] of Object.entries(value as Record<string, unknown>).slice(0, 24)) {
+        if (typeof entry !== 'function') result[key] = encode(entry);
+      }
+      return result;
+    }
+    return null;
+  };
+
+  const createResource = (kind: SceneResourceKind): CanvasGradient => {
+    const resource = {} as CanvasGradient;
+    const descriptor = { ref: nextResourceId++, kind };
+    resources.set(resource, descriptor);
+    const proxy = new Proxy(resource as object, {
+      get(_target, property) {
+        if (property === 'addColorStop') {
+          return (...args: unknown[]) => {
+            commands.push({
+              op: 'resourceCall',
+              ref: descriptor.ref,
+              method: 'addColorStop',
+              args: args.map(encode),
+            });
+          };
+        }
+        return undefined;
+      },
+    }) as CanvasGradient;
+    resources.set(proxy, descriptor);
+    return proxy;
+  };
+
+  const context = new Proxy(state, {
+    get(_target, property) {
+      const method = String(property);
+      // Canvas state is occasionally read and combined (for example
+      // `ctx.globalAlpha *= fade`). Preserve it in the compiler instead of
+      // accidentally treating a state property as a drawing method.
+      if (method in state) return state[method];
+      if (method === 'measureText') {
+        return (text: string) => {
+          measurementContext.font = typeof state.font === 'string' ? state.font : measurementContext.font;
+          return measurementContext.measureText(text);
+        };
+      }
+      if (method === 'save') {
+        return () => {
+          stateStack.push({ ...state });
+          commands.push({ op: 'call', method, args: [] });
+        };
+      }
+      if (method === 'restore') {
+        return () => {
+          const previous = stateStack.pop();
+          if (previous) {
+            for (const key of Object.keys(state)) delete state[key];
+            Object.assign(state, previous);
+          }
+          commands.push({ op: 'call', method, args: [] });
+        };
+      }
+      if (method === 'createLinearGradient' || method === 'createRadialGradient') {
+        return (...args: unknown[]) => {
+          const kind: SceneResourceKind = 'gradient';
+          const result = createResource(kind);
+          const descriptor = resources.get(result)!;
+          commands.push({ op: 'call', method, args: args.map(encode), result: descriptor });
+          return result;
+        };
+      }
+      return (...args: unknown[]) => commands.push({ op: 'call', method, args: args.map(encode) });
+    },
+    set(_target, property, value) {
+      const key = String(property);
+      state[key] = value;
+      commands.push({ op: 'set', property: key, value: encode(value) });
+      return true;
+    },
+  });
+
+  const result = paint(context as unknown as CanvasRenderingContext2D);
+  return {
+    result,
+    scene: { version: 1, ...metadata, commands },
+  };
+}

@@ -6,7 +6,7 @@ import { drawEvolutionFx } from './evolutions';
 import { clipToViewBounds, getViewBounds, isInViewBounds } from './viewCull';
 import { drawWorldBuildings, drawInteriorPrompt, drawBuildingOccluders, drawInteriorActors } from './buildingRenderer';
 import { occupancyMatchesObject, isInteriorWorld } from './buildings';
-import { recordRenderScene, type RenderScene } from './renderScene';
+import { compileRenderScene, recordRenderScene, type RenderScene } from './renderScene';
 
 // Persistent smoothed camera state
 let smoothedCameraX = 650;
@@ -260,6 +260,28 @@ export function recordWorldScene(
   // Store that final transform, not the value from the preceding frame.
   recorded.scene.camera = getCameraState();
   return recorded.scene;
+}
+
+/**
+ * Native scene compiler. It runs the exact source draw order but does not
+ * paint to Canvas, so it avoids the duplicate CPU raster pass that a
+ * record-and-forward approach would impose on every WGPU frame.
+ */
+export function compileWorldScene(
+  measurementContext: CanvasRenderingContext2D,
+  input: WorldRenderInput
+): RenderScene {
+  const compiled = compileRenderScene(
+    measurementContext,
+    {
+      viewport: { width: input.canvasWidth, height: input.canvasHeight },
+      camera: getCameraState(),
+      timeSeconds: input.time ?? 0,
+    },
+    (sceneContext) => drawWorldInput(sceneContext, input)
+  );
+  compiled.scene.camera = getCameraState();
+  return compiled.scene;
 }
 
 export function renderWorld(
