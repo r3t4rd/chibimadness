@@ -15,6 +15,12 @@ let lastStaticCamera: { x: number; y: number; zoom: number } | null = null;
 const STATIC_CACHE_OVERSCAN = 1.5;
 const MAX_STATIC_CACHE_DIMENSION = 4096;
 
+function isRapidCameraMotion(input: WorldRenderInput) {
+  const { localPlayer } = input;
+  return localPlayer.state === 'dodge'
+    || Math.hypot(localPlayer.vx || 0, localPlayer.vy || 0) >= 700;
+}
+
 function staticContentKey(input: WorldRenderInput) {
   // Camera position is deliberately excluded. The existing oversized cache
   // remains correct until its real world-space coverage is exhausted.
@@ -63,10 +69,15 @@ self.addEventListener('message', (event: MessageEvent<SceneCompileRequest>) => {
   try {
     const dynamicScene = compileDynamicWorldScene(measurementContext, event.data.input);
     const contentKey = staticContentKey(event.data.input);
-    const staticScene = contentKey === lastStaticContentKey
-      && cameraFitsStaticCache(event.data.input, dynamicScene.camera)
-      ? undefined
-      : compileStaticWorldScene(measurementContext, staticCacheInput(event.data.input), dynamicScene.camera);
+    const staticRefreshRequired = contentKey !== lastStaticContentKey
+      || !cameraFitsStaticCache(event.data.input, dynamicScene.camera);
+    // A full static texture redraw is much more expensive than a dash. Keep
+    // the valid cached world during rapid movement and refresh it as soon as
+    // the camera settles; the native sampler clamps the tiny uncovered edge.
+    const staticScene = staticRefreshRequired
+      && !(lastStaticCamera && isRapidCameraMotion(event.data.input))
+      ? compileStaticWorldScene(measurementContext, staticCacheInput(event.data.input), dynamicScene.camera)
+      : undefined;
     if (staticScene) {
       lastStaticContentKey = contentKey;
       lastStaticCamera = dynamicScene.camera;

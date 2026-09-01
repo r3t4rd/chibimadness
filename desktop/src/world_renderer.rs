@@ -144,9 +144,9 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let world = (pixel - camera.output_viewport * 0.5) / camera.dynamic_zoom + camera.dynamic_position;
     let static_pixel = (world - camera.static_position) * camera.static_zoom + camera.static_viewport * 0.5;
     let uv = static_pixel / camera.static_viewport;
-    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
-        return vec4<f32>(0.01, 0.015, 0.03, 1.0);
-    }
+    // The sampler clamps while an asynchronous cache refresh catches up with
+    // a fast camera. Returning a dark fallback here exposed a distracting
+    // expanding strip at the viewport edge during every dash.
     return textureSample(static_world, static_sampler, uv);
 }
 "#;
@@ -939,13 +939,14 @@ fn scene_vertices_for(
     text_font: Option<&FontArc>,
 ) -> Option<Vec<Vertex>> {
     let tessellation = scene_executor::tessellate(scene, text_font);
-    if tessellation.unsupported_commands != 0 || tessellation.truncated {
-        eprintln!(
-            "native scene held on Canvas fallback: {} unsupported command(s), truncated={}",
-            tessellation.unsupported_commands, tessellation.truncated,
-        );
+    if tessellation.truncated {
+        eprintln!("native scene rejected because tessellation reached its triangle limit");
         return None;
     }
+    // A visual effect can use an unimplemented Canvas operation while the
+    // actors in the same display list are entirely supported. Dropping the
+    // whole scene made monsters disappear whenever that happened; retain all
+    // triangles we can faithfully execute and omit only the unsupported call.
     let mut vertices = Vec::with_capacity(tessellation.triangles.len() * 3);
     for triangle in tessellation.triangles {
         let include = match selection {
