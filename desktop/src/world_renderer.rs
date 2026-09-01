@@ -1,4 +1,14 @@
-use std::{borrow::Cow, collections::HashMap, env, fs, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    env, fs,
+    sync::{
+        Arc, Condvar, Mutex,
+        mpsc::{self, Receiver, TryRecvError},
+    },
+    thread,
+    time::Instant,
+};
 
 use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
@@ -654,6 +664,52 @@ enum SceneVertexSelection {
     Dynamic,
 }
 
+struct DynamicSceneCompileJob {
+    revision: u64,
+    scene: NativeRenderScene,
+}
+
+struct DynamicSceneCompileResult {
+    revision: u64,
+    vertices: Vec<Vertex>,
+}
+
+type LatestDynamicScene = Arc<(Mutex<Option<DynamicSceneCompileJob>>, Condvar)>;
+
+fn start_dynamic_scene_compiler(
+    text_font: Option<FontArc>,
+) -> (LatestDynamicScene, Receiver<DynamicSceneCompileResult>) {
+    let pending: LatestDynamicScene = Arc::new((Mutex::new(None), Condvar::new()));
+    let worker_pending = Arc::clone(&pending);
+    let (result_tx, result_rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("native-world-scene-compiler".to_owned())
+        .spawn(move || loop {
+            let job = {
+                let (lock, ready) = &*worker_pending;
+                let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                while slot.is_none() {
+                    slot = ready.wait(slot).unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
+                slot.take().expect("scene compiler notified without a job")
+            };
+            let Some(vertices) = scene_vertices_for(&job.scene, SceneVertexSelection::Dynamic, text_font.as_ref()) else {
+                continue;
+            };
+            if result_tx
+                .send(DynamicSceneCompileResult {
+                    revision: job.revision,
+                    vertices,
+                })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .expect("native dynamic scene compiler thread must start");
+    (pending, result_rx)
+}
+
 pub struct NativeWorldRenderer {
     pipeline: Option<wgpu::RenderPipeline>,
     surface_format: Option<wgpu::TextureFormat>,
@@ -682,7 +738,10 @@ pub struct NativeWorldRenderer {
     vertices: Vec<Vertex>,
     vertices_dirty: bool,
     last_scene_revision: Option<u64>,
-    last_dynamic_scene_revision: Option<u64>,
+    last_dynamic_scene_submitted_revision: Option<u64>,
+    last_dynamic_scene_applied_revision: Option<u64>,
+    latest_dynamic_scene: LatestDynamicScene,
+    dynamic_scene_results: Receiver<DynamicSceneCompileResult>,
     text_font: Option<FontArc>,
     last_presented_at: Option<Instant>,
     metrics_started_at: Instant,
@@ -721,6 +780,9 @@ fn load_native_text_font() -> Option<FontArc> {
 
 impl Default for NativeWorldRenderer {
     fn default() -> Self {
+        let text_font = load_native_text_font();
+        let (latest_dynamic_scene, dynamic_scene_results) =
+            start_dynamic_scene_compiler(text_font.clone());
         Self {
             pipeline: None,
             surface_format: None,
@@ -749,8 +811,11 @@ impl Default for NativeWorldRenderer {
             vertices: Vec::new(),
             vertices_dirty: false,
             last_scene_revision: None,
-            last_dynamic_scene_revision: None,
-            text_font: load_native_text_font(),
+            last_dynamic_scene_submitted_revision: None,
+            last_dynamic_scene_applied_revision: None,
+            latest_dynamic_scene,
+            dynamic_scene_results,
+            text_font,
             last_presented_at: None,
             metrics_started_at: Instant::now(),
             metrics_frame_count: 0,
@@ -758,6 +823,57 @@ impl Default for NativeWorldRenderer {
             static_cache_redraws: 0,
         }
     }
+}
+
+fn scene_vertices_for(
+    scene: &NativeRenderScene,
+    selection: SceneVertexSelection,
+    text_font: Option<&FontArc>,
+) -> Option<Vec<Vertex>> {
+    let tessellation = scene_executor::tessellate(scene, text_font);
+    if tessellation.unsupported_commands != 0 || tessellation.truncated {
+        eprintln!(
+            "native scene held on Canvas fallback: {} unsupported command(s), truncated={}",
+            tessellation.unsupported_commands, tessellation.truncated,
+        );
+        return None;
+    }
+    let mut vertices = Vec::with_capacity(tessellation.triangles.len() * 3);
+    for triangle in tessellation.triangles {
+        let include = match selection {
+            SceneVertexSelection::All => true,
+            SceneVertexSelection::Static => triangle.layer != scene_executor::SceneLayer::Dynamic,
+            SceneVertexSelection::Dynamic => triangle.layer == scene_executor::SceneLayer::Dynamic,
+        };
+        if !include {
+            continue;
+        }
+        let is_world_space = matches!(selection, SceneVertexSelection::Static)
+            && triangle.layer == scene_executor::SceneLayer::Static;
+        for index in 0..3 {
+            let position = if is_world_space {
+                [
+                    scene.camera.x
+                        + (triangle.positions[index][0] - scene.viewport.width * 0.5)
+                            / scene.camera.zoom,
+                    scene.camera.y
+                        + (triangle.positions[index][1] - scene.viewport.height * 0.5)
+                            / scene.camera.zoom,
+                ]
+            } else {
+                [
+                    triangle.positions[index][0] / scene.viewport.width * 2.0 - 1.0,
+                    1.0 - triangle.positions[index][1] / scene.viewport.height * 2.0,
+                ]
+            };
+            let mut color = triangle.colors[index];
+            if is_world_space {
+                color[3] = -color[3].max(f32::EPSILON);
+            }
+            vertices.push(Vertex { position, color });
+        }
+    }
+    Some(vertices)
 }
 
 impl NativeWorldRenderer {
@@ -810,15 +926,9 @@ impl NativeWorldRenderer {
                     self.static_texture_dirty = true;
                     self.last_static_scene_revision = Some(static_revision);
                 }
-                if self.last_dynamic_scene_revision != Some(dynamic_revision) {
-                    let Some(vertices) =
-                        self.scene_vertices(dynamic_scene, SceneVertexSelection::Dynamic)
-                    else {
-                        return false;
-                    };
-                    self.vertices = vertices;
-                    self.vertices_dirty = true;
-                    self.last_dynamic_scene_revision = Some(dynamic_revision);
+                if self.last_dynamic_scene_submitted_revision != Some(dynamic_revision) {
+                    self.submit_dynamic_scene(dynamic_revision, dynamic_scene.clone());
+                    self.last_dynamic_scene_submitted_revision = Some(dynamic_revision);
                 }
                 retained_scene = Some(dynamic_scene);
                 retained_static_scene = Some(static_scene);
@@ -845,6 +955,7 @@ impl NativeWorldRenderer {
             } else {
                 false
             };
+        self.drain_dynamic_scene_results();
         if !rendered_scene {
             return false;
         }
@@ -1065,6 +1176,36 @@ impl NativeWorldRenderer {
                 _padding: [0.0; 3],
             }),
         );
+    }
+
+    /// Replaces queued work instead of building an unbounded backlog when the
+    /// simulation publishes another state while tessellation is in flight.
+    fn submit_dynamic_scene(&self, revision: u64, scene: NativeRenderScene) {
+        let (lock, ready) = &*self.latest_dynamic_scene;
+        let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        *slot = Some(DynamicSceneCompileJob { revision, scene });
+        ready.notify_one();
+    }
+
+    /// The WGPU/UI thread never tessellates a combat-rate display list. It
+    /// uploads only completed vertex buffers and keeps presenting the previous
+    /// valid dynamic scene while a newer one is being compiled in background.
+    fn drain_dynamic_scene_results(&mut self) {
+        loop {
+            match self.dynamic_scene_results.try_recv() {
+                Ok(result) => {
+                    if self
+                        .last_dynamic_scene_applied_revision
+                        .is_none_or(|revision| result.revision > revision)
+                    {
+                        self.vertices = result.vertices;
+                        self.vertices_dirty = true;
+                        self.last_dynamic_scene_applied_revision = Some(result.revision);
+                    }
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return,
+            }
+        }
     }
 
     fn ensure_static_cache(&mut self, frame: &RenderFrame<'_>, static_scene: &NativeRenderScene) {
@@ -1342,57 +1483,7 @@ impl NativeWorldRenderer {
         scene: &NativeRenderScene,
         selection: SceneVertexSelection,
     ) -> Option<Vec<Vertex>> {
-        let tessellation = scene_executor::tessellate(scene, self.text_font.as_ref());
-        if tessellation.unsupported_commands != 0 || tessellation.truncated {
-            eprintln!(
-                "native scene held on Canvas fallback: {} unsupported command(s), truncated={}",
-                tessellation.unsupported_commands, tessellation.truncated,
-            );
-            return None;
-        }
-        let mut vertices = Vec::with_capacity(tessellation.triangles.len() * 3);
-        for triangle in tessellation.triangles {
-            let include = match selection {
-                SceneVertexSelection::All => true,
-                SceneVertexSelection::Static => {
-                    triangle.layer != scene_executor::SceneLayer::Dynamic
-                }
-                SceneVertexSelection::Dynamic => {
-                    triangle.layer == scene_executor::SceneLayer::Dynamic
-                }
-            };
-            if !include {
-                continue;
-            }
-            let is_world_space = matches!(selection, SceneVertexSelection::Static)
-                && triangle.layer == scene_executor::SceneLayer::Static;
-            for index in 0..3 {
-                let position = if is_world_space {
-                    [
-                        scene.camera.x
-                            + (triangle.positions[index][0] - scene.viewport.width * 0.5)
-                                / scene.camera.zoom,
-                        scene.camera.y
-                            + (triangle.positions[index][1] - scene.viewport.height * 0.5)
-                                / scene.camera.zoom,
-                    ]
-                } else {
-                    [
-                        triangle.positions[index][0] / scene.viewport.width * 2.0 - 1.0,
-                        1.0 - triangle.positions[index][1] / scene.viewport.height * 2.0,
-                    ]
-                };
-                let mut color = triangle.colors[index];
-                if is_world_space {
-                    // The vertex ABI predates retained layers. A negative alpha
-                    // is a compact, lossless-enough space bit; the shader
-                    // restores the absolute alpha before blending.
-                    color[3] = -color[3].max(f32::EPSILON);
-                }
-                vertices.push(Vertex { position, color });
-            }
-        }
-        Some(vertices)
+        scene_vertices_for(scene, selection, self.text_font.as_ref())
     }
 
     /// Faithful fixed-layout base layer mirrored from `worldRenderer.ts`.
