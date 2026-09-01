@@ -15,6 +15,7 @@ use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use yuyib::render::{wgpu, RenderFrame};
 
+use crate::chibi_assets::{self, Paint, PathCommand, Primitive};
 use crate::scene_executor;
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
@@ -2519,6 +2520,36 @@ impl NativeWorldRenderer {
         }
         y -= animation.map_or(0.0, |state| state.jump_z) + bob + spawn_lift;
 
+        if let Some(style) = recipe.filter(|style| {
+            chibi_assets::is_miku(
+                &style.front_hair_style,
+                &style.back_hair_style,
+                &style.hair_style,
+                &style.hat_type,
+                &style.outfit_type,
+            )
+        }) {
+            self.add_miku_asset(style, entity, x, y, size, world);
+            self.add_weapon_asset(entity, x, y, size, outline, world);
+            if entity.kind == "monster" {
+                let bar_width = size * 1.28;
+                self.add_world_rect(x, y - size * 0.86, bar_width, size * 0.11, outline, world);
+                self.add_world_rect(
+                    x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
+                    y - size * 0.86,
+                    bar_width * entity.hp_ratio,
+                    size * 0.065,
+                    if entity.faction == "police" {
+                        hex("#22D3EE")
+                    } else {
+                        hex("#FB2C4A")
+                    },
+                    world,
+                );
+            }
+            return;
+        }
+
         // The source Chibi order is shadow -> back hair/wings -> outfit ->
         // face/front hair -> cosmetics/weapon. The primitives below retain
         // that order and use the real `ChibiConfig` recipe, not faction paint.
@@ -3153,6 +3184,221 @@ impl NativeWorldRenderer {
                 },
                 world,
             );
+        }
+    }
+
+    /// Tessellates one complete bounded asset recipe in the source Chibi
+    /// coordinate system. This is intentionally local Rust geometry: the
+    /// WebView sends cosmetic data, never a Canvas command stream.
+    fn add_miku_asset(
+        &mut self,
+        style: &NativeChibiRecipe,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        size: f32,
+        world: &NativeRenderFrame,
+    ) {
+        // The source Miku art spans roughly 72 design units. Keeping that
+        // scale makes its source paths visually stable regardless of camera.
+        let scale = (size / 72.0).max(0.1);
+        for primitive in chibi_assets::MIKU {
+            match *primitive {
+                Primitive::Path {
+                    commands,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => self.add_asset_path(
+                    commands,
+                    x,
+                    y,
+                    scale,
+                    self.asset_paint(style, entity, fill),
+                    stroke.map(|paint| self.asset_paint(style, entity, paint)),
+                    stroke_width * scale,
+                    world,
+                ),
+                Primitive::Rect {
+                    x: local_x,
+                    y: local_y,
+                    width,
+                    height,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
+                    let fill = self.asset_paint(style, entity, fill);
+                    let center_x = x + local_x * scale;
+                    let center_y = y + local_y * scale;
+                    if let Some(stroke) = stroke {
+                        self.add_world_rect(
+                            center_x,
+                            center_y,
+                            (width + stroke_width) * scale,
+                            (height + stroke_width) * scale,
+                            self.asset_paint(style, entity, stroke),
+                            world,
+                        );
+                    }
+                    self.add_world_rect(center_x, center_y, width * scale, height * scale, fill, world);
+                }
+                Primitive::Ellipse {
+                    x: local_x,
+                    y: local_y,
+                    radius_x,
+                    radius_y,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
+                    let center_x = x + local_x * scale;
+                    let center_y = y + local_y * scale;
+                    if let Some(stroke) = stroke {
+                        self.add_world_ellipse(
+                            center_x,
+                            center_y,
+                            (radius_x + stroke_width * 0.5) * scale,
+                            (radius_y + stroke_width * 0.5) * scale,
+                            self.asset_paint(style, entity, stroke),
+                            14,
+                            world,
+                        );
+                    }
+                    self.add_world_ellipse(
+                        center_x,
+                        center_y,
+                        radius_x * scale,
+                        radius_y * scale,
+                        self.asset_paint(style, entity, fill),
+                        14,
+                        world,
+                    );
+                }
+                Primitive::Line {
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    width,
+                    paint,
+                } => self.add_world_line(
+                    x + start_x * scale,
+                    y + start_y * scale,
+                    x + end_x * scale,
+                    y + end_y * scale,
+                    width * scale,
+                    self.asset_paint(style, entity, paint),
+                    world,
+                ),
+            }
+        }
+    }
+
+    fn asset_paint(
+        &self,
+        style: &NativeChibiRecipe,
+        entity: &NativeRenderEntity,
+        paint: Paint,
+    ) -> [f32; 4] {
+        match paint {
+            Paint::Hair => recipe_color(&style.hair_color, entity.color),
+            Paint::Skin => recipe_color(&style.skin_tone, hex("#FFE4D6")),
+            Paint::Eye => recipe_color(&style.eye_color, hex("#38BDF8")),
+            Paint::Accent => recipe_color(
+                &style.accent_color,
+                recipe_color(&style.ribbon_color, hex("#06B6D4")),
+            ),
+            Paint::Ribbon => recipe_color(&style.ribbon_color, hex("#EC4899")),
+            Paint::Hat => recipe_color(&style.hat_color, hex("#06B6D4")),
+            Paint::Wing => recipe_color(&style.wing_color, hex("#67E8F9")),
+            Paint::Outline => hex("#1E1B18"),
+            Paint::Dark => hex("#0F172A"),
+            Paint::White => hex("#FFFFFF"),
+        }
+    }
+
+    fn add_asset_path(
+        &mut self,
+        commands: &[PathCommand],
+        origin_x: f32,
+        origin_y: f32,
+        scale: f32,
+        fill: [f32; 4],
+        stroke: Option<[f32; 4]>,
+        stroke_width: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let mut points = Vec::with_capacity(commands.len() * 8);
+        let mut current = [0.0_f32, 0.0_f32];
+        let mut closed = false;
+        for command in commands {
+            match *command {
+                PathCommand::Move(x, y) => {
+                    current = [x, y];
+                    points.push(current);
+                }
+                PathCommand::Line(x, y) => {
+                    current = [x, y];
+                    points.push(current);
+                }
+                PathCommand::Cubic(c1x, c1y, c2x, c2y, end_x, end_y) => {
+                    let start = current;
+                    for step in 1..=8 {
+                        let t = step as f32 / 8.0;
+                        let inv = 1.0 - t;
+                        points.push([
+                            inv.powi(3) * start[0]
+                                + 3.0 * inv.powi(2) * t * c1x
+                                + 3.0 * inv * t.powi(2) * c2x
+                                + t.powi(3) * end_x,
+                            inv.powi(3) * start[1]
+                                + 3.0 * inv.powi(2) * t * c1y
+                                + 3.0 * inv * t.powi(2) * c2y
+                                + t.powi(3) * end_y,
+                        ]);
+                    }
+                    current = [end_x, end_y];
+                }
+                PathCommand::Close => closed = true,
+            }
+        }
+        if points.len() < 3 {
+            return;
+        }
+        let world_points = points
+            .iter()
+            .map(|point| [origin_x + point[0] * scale, origin_y + point[1] * scale])
+            .collect::<Vec<_>>();
+        self.add_world_polygon(&world_points, fill, world);
+        if let Some(stroke) = stroke {
+            for pair in world_points.windows(2) {
+                self.add_world_line(
+                    pair[0][0],
+                    pair[0][1],
+                    pair[1][0],
+                    pair[1][1],
+                    stroke_width,
+                    stroke,
+                    world,
+                );
+            }
+            if closed {
+                let first = world_points[0];
+                let last = world_points[world_points.len() - 1];
+                self.add_world_line(last[0], last[1], first[0], first[1], stroke_width, stroke, world);
+            }
+        }
+    }
+
+    fn add_world_polygon(
+        &mut self,
+        points: &[[f32; 2]],
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        for index in 1..points.len() - 1 {
+            self.add_world_triangle(points[0], points[index], points[index + 1], color, world);
         }
     }
 
