@@ -3,7 +3,7 @@ use std::{borrow::Cow, collections::HashMap, env, fs, time::Instant};
 use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
-use yuyib::render::{wgpu, RenderFrame};
+use yuyib::render::{RenderFrame, wgpu};
 
 use crate::scene_executor;
 
@@ -88,6 +88,53 @@ fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec4<f32>) -> V
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     return input.color;
+}
+"#;
+
+// Samples the retained world texture using the live dynamic camera. The
+// texture is deliberately larger than the presentation surface, so panning
+// does not force the expensive static mesh to be rasterized every frame.
+const STATIC_COMPOSITE_SHADER: &str = r#"
+struct CompositeCamera {
+    output_viewport: vec2<f32>,
+    dynamic_position: vec2<f32>,
+    dynamic_zoom: f32,
+    _padding0: f32,
+    static_viewport: vec2<f32>,
+    static_position: vec2<f32>,
+    static_zoom: f32,
+    _padding1: f32,
+};
+
+@group(0) @binding(0) var<uniform> camera: CompositeCamera;
+@group(0) @binding(1) var static_world: texture_2d<f32>;
+@group(0) @binding(2) var static_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> VertexOutput {
+    var positions = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
+        vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
+    );
+    var output: VertexOutput;
+    output.position = vec4<f32>(positions[index], 0.0, 1.0);
+    return output;
+}
+
+@fragment
+fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let pixel = vec2<f32>(position.x, camera.output_viewport.y - position.y);
+    let world = (pixel - camera.output_viewport * 0.5) / camera.dynamic_zoom + camera.dynamic_position;
+    let static_pixel = (world - camera.static_position) * camera.static_zoom + camera.static_viewport * 0.5;
+    let uv = static_pixel / camera.static_viewport;
+    if (any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0))) {
+        return vec4<f32>(0.01, 0.015, 0.03, 1.0);
+    }
+    return textureSample(static_world, static_sampler, uv);
 }
 "#;
 
@@ -526,20 +573,23 @@ impl NativeWorldState {
     }
 
     pub fn scene_with_revision(&self) -> Option<(&NativeRenderScene, u64)> {
-        self.scene.as_ref().map(|scene| (scene, self.scene_revision))
+        self.scene
+            .as_ref()
+            .map(|scene| (scene, self.scene_revision))
     }
 
     pub fn retained_scenes_with_revisions(
         &self,
     ) -> Option<((&NativeRenderScene, u64), (&NativeRenderScene, u64))> {
-        self.static_scene.as_ref().zip(self.dynamic_scene.as_ref()).map(
-            |(static_scene, dynamic_scene)| {
+        self.static_scene
+            .as_ref()
+            .zip(self.dynamic_scene.as_ref())
+            .map(|(static_scene, dynamic_scene)| {
                 (
                     (static_scene, self.static_scene_revision),
                     (dynamic_scene, self.dynamic_scene_revision),
                 )
-            },
-        )
+            })
     }
 
     #[cfg(test)]
@@ -578,6 +628,19 @@ struct CameraUniform {
     _padding: [f32; 3],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CompositeCameraUniform {
+    output_viewport: [f32; 2],
+    dynamic_position: [f32; 2],
+    dynamic_zoom: f32,
+    _padding0: f32,
+    static_viewport: [f32; 2],
+    static_position: [f32; 2],
+    static_zoom: f32,
+    _padding1: f32,
+}
+
 #[derive(Clone, Copy)]
 enum SceneVertexSelection {
     /// Compatibility path for one-piece display lists from older bundles.
@@ -594,11 +657,23 @@ pub struct NativeWorldRenderer {
     camera_bind_group_layout: Option<wgpu::BindGroupLayout>,
     camera_bind_group: Option<wgpu::BindGroup>,
     camera_buffer: Option<wgpu::Buffer>,
+    static_camera_bind_group: Option<wgpu::BindGroup>,
+    static_camera_buffer: Option<wgpu::Buffer>,
     static_vertex_buffer: Option<wgpu::Buffer>,
     static_vertex_capacity: usize,
     static_vertices: Vec<Vertex>,
     static_vertices_dirty: bool,
     last_static_scene_revision: Option<u64>,
+    static_texture: Option<wgpu::Texture>,
+    static_texture_view: Option<wgpu::TextureView>,
+    static_texture_size: [u32; 2],
+    static_texture_format: Option<wgpu::TextureFormat>,
+    static_texture_dirty: bool,
+    composite_pipeline: Option<wgpu::RenderPipeline>,
+    composite_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    composite_bind_group: Option<wgpu::BindGroup>,
+    composite_uniform_buffer: Option<wgpu::Buffer>,
+    static_sampler: Option<wgpu::Sampler>,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
@@ -645,11 +720,23 @@ impl Default for NativeWorldRenderer {
             camera_bind_group_layout: None,
             camera_bind_group: None,
             camera_buffer: None,
+            static_camera_bind_group: None,
+            static_camera_buffer: None,
             static_vertex_buffer: None,
             static_vertex_capacity: 0,
             static_vertices: Vec::new(),
             static_vertices_dirty: false,
             last_static_scene_revision: None,
+            static_texture: None,
+            static_texture_view: None,
+            static_texture_size: [0, 0],
+            static_texture_format: None,
+            static_texture_dirty: false,
+            composite_pipeline: None,
+            composite_bind_group_layout: None,
+            composite_bind_group: None,
+            composite_uniform_buffer: None,
+            static_sampler: None,
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
@@ -695,48 +782,57 @@ impl NativeWorldRenderer {
     /// WebView uses this acknowledgement to hide its Canvas fallback safely.
     pub fn render(&mut self, frame: &mut RenderFrame<'_>, state: &NativeWorldState) -> bool {
         let mut retained_scene = None;
-        let rendered_scene = if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
-            state.retained_scenes_with_revisions()
-        {
-            if self.last_static_scene_revision != Some(static_revision) {
-                let Some(vertices) = self.scene_vertices(static_scene, SceneVertexSelection::Static) else {
-                    return false;
-                };
-                self.static_vertices = vertices;
-                self.static_vertices_dirty = true;
-                self.last_static_scene_revision = Some(static_revision);
-            }
-            if self.last_dynamic_scene_revision != Some(dynamic_revision) {
-                let Some(vertices) = self.scene_vertices(dynamic_scene, SceneVertexSelection::Dynamic) else {
-                    return false;
-                };
-                self.vertices = vertices;
+        let mut retained_static_scene = None;
+        let rendered_scene =
+            if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
+                state.retained_scenes_with_revisions()
+            {
+                if self.last_static_scene_revision != Some(static_revision) {
+                    let Some(vertices) =
+                        self.scene_vertices(static_scene, SceneVertexSelection::Static)
+                    else {
+                        return false;
+                    };
+                    self.static_vertices = vertices;
+                    self.static_vertices_dirty = true;
+                    self.static_texture_dirty = true;
+                    self.last_static_scene_revision = Some(static_revision);
+                }
+                if self.last_dynamic_scene_revision != Some(dynamic_revision) {
+                    let Some(vertices) =
+                        self.scene_vertices(dynamic_scene, SceneVertexSelection::Dynamic)
+                    else {
+                        return false;
+                    };
+                    self.vertices = vertices;
+                    self.vertices_dirty = true;
+                    self.last_dynamic_scene_revision = Some(dynamic_revision);
+                }
+                retained_scene = Some(dynamic_scene);
+                retained_static_scene = Some(static_scene);
+                true
+            } else if let Some((scene, revision)) = state.scene_with_revision() {
+                if self.last_scene_revision != Some(revision) {
+                    let Some(vertices) = self.scene_vertices(scene, SceneVertexSelection::All)
+                    else {
+                        return false;
+                    };
+                    self.vertices = vertices;
+                    self.last_scene_revision = Some(revision);
+                    self.vertices_dirty = true;
+                }
+                true
+            } else if let Some((world, prediction_seconds)) = state.frame_with_prediction() {
+                // Kept only during an upgrade from an older JS bundle. New clients
+                // always submit `world.scene`; the source display list is the
+                // presentable native path.
+                self.build_vertices(world, prediction_seconds);
+                self.last_scene_revision = None;
                 self.vertices_dirty = true;
-                self.last_dynamic_scene_revision = Some(dynamic_revision);
-            }
-            retained_scene = Some(dynamic_scene);
-            true
-        } else if let Some((scene, revision)) = state.scene_with_revision() {
-            if self.last_scene_revision != Some(revision) {
-                let Some(vertices) = self.scene_vertices(scene, SceneVertexSelection::All) else {
-                    return false;
-                };
-                self.vertices = vertices;
-                self.last_scene_revision = Some(revision);
-                self.vertices_dirty = true;
-            }
-            true
-        } else if let Some((world, prediction_seconds)) = state.frame_with_prediction() {
-            // Kept only during an upgrade from an older JS bundle. New clients
-            // always submit `world.scene`; the source display list is the
-            // presentable native path.
-            self.build_vertices(world, prediction_seconds);
-            self.last_scene_revision = None;
-            self.vertices_dirty = true;
-            true
-        } else {
-            false
-        };
+                true
+            } else {
+                false
+            };
         if !rendered_scene {
             return false;
         }
@@ -744,6 +840,9 @@ impl NativeWorldRenderer {
             return false;
         }
         self.ensure_pipeline(frame);
+        if let Some(static_scene) = retained_static_scene {
+            self.ensure_static_cache(frame, static_scene);
+        }
         if let Some(scene) = retained_scene {
             self.write_camera(frame, scene);
         }
@@ -755,27 +854,46 @@ impl NativeWorldRenderer {
             self.upload_vertices(frame);
             self.vertices_dirty = false;
         }
-        let (Some(pipeline), Some(camera_bind_group)) = (&self.pipeline, &self.camera_bind_group) else {
-            return false;
-        };
         let static_vertex_count = self.static_vertices.len() as u32;
         let dynamic_vertex_count = self.vertices.len() as u32;
-        frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, camera_bind_group, &[]);
-            if static_vertex_count > 0 {
+        let static_cached = if let Some(static_scene) = retained_static_scene {
+            self.rasterize_static_cache(frame, static_scene, static_vertex_count)
+        } else {
+            false
+        };
+        if static_cached {
+            self.composite_static_cache(
+                frame,
+                retained_scene.expect("retained scene is present"),
+                retained_static_scene.expect("static scene is present"),
+            );
+        }
+        let (Some(pipeline), Some(camera_bind_group)) = (&self.pipeline, &self.camera_bind_group)
+        else {
+            return false;
+        };
+        if !static_cached && static_vertex_count > 0 {
+            frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, camera_bind_group, &[]);
                 if let Some(static_vertex_buffer) = &self.static_vertex_buffer {
                     pass.set_vertex_buffer(0, static_vertex_buffer.slice(..));
                     pass.draw(0..static_vertex_count, 0..1);
                 }
-            }
-            if dynamic_vertex_count > 0 {
-                if let Some(vertex_buffer) = &self.vertex_buffer {
-                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
-                    pass.draw(0..dynamic_vertex_count, 0..1);
+            });
+        }
+        if dynamic_vertex_count > 0 {
+            frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, camera_bind_group, &[]);
+                if dynamic_vertex_count > 0 {
+                    if let Some(vertex_buffer) = &self.vertex_buffer {
+                        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                        pass.draw(0..dynamic_vertex_count, 0..1);
+                    }
                 }
-            }
-        });
+            });
+        }
         true
     }
 
@@ -784,24 +902,37 @@ impl NativeWorldRenderer {
         if self.pipeline.is_some() && self.surface_format == Some(format) {
             return;
         }
+        // A surface format change invalidates both the retained texture and
+        // its sampling pipeline. Rebuild them lazily on the next static pass.
+        self.static_texture = None;
+        self.static_texture_view = None;
+        self.static_texture_size = [0, 0];
+        self.static_texture_format = None;
+        self.static_texture_dirty = true;
+        self.composite_pipeline = None;
+        self.composite_bind_group_layout = None;
+        self.composite_bind_group = None;
+        self.composite_uniform_buffer = None;
+        self.static_sampler = None;
         let device = frame.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chibimadness native world shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(WORLD_SHADER)),
         });
-        let camera_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("chibimadness native world camera layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let camera_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("chibimadness native world camera layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
         use wgpu::util::DeviceExt;
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("chibimadness native world camera"),
@@ -819,6 +950,24 @@ impl NativeWorldRenderer {
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+        let static_camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("chibimadness retained static camera"),
+            contents: bytemuck::bytes_of(&CameraUniform {
+                viewport: [1.0, 1.0],
+                position: [0.0, 0.0],
+                zoom: 1.0,
+                _padding: [0.0; 3],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let static_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("chibimadness retained static camera bind group"),
+            layout: &camera_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: static_camera_buffer.as_entire_binding(),
             }],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -869,6 +1018,8 @@ impl NativeWorldRenderer {
         self.camera_bind_group_layout = Some(camera_bind_group_layout);
         self.camera_bind_group = Some(camera_bind_group);
         self.camera_buffer = Some(camera_buffer);
+        self.static_camera_bind_group = Some(static_camera_bind_group);
+        self.static_camera_buffer = Some(static_camera_buffer);
         self.surface_format = Some(format);
     }
 
@@ -886,6 +1037,242 @@ impl NativeWorldRenderer {
                 _padding: [0.0; 3],
             }),
         );
+    }
+
+    fn write_static_camera(&self, frame: &RenderFrame<'_>, scene: &NativeRenderScene) {
+        let Some(buffer) = &self.static_camera_buffer else {
+            return;
+        };
+        frame.queue().write_buffer(
+            buffer,
+            0,
+            bytemuck::bytes_of(&CameraUniform {
+                viewport: [scene.viewport.width, scene.viewport.height],
+                position: [scene.camera.x, scene.camera.y],
+                zoom: scene.camera.zoom,
+                _padding: [0.0; 3],
+            }),
+        );
+    }
+
+    fn ensure_static_cache(&mut self, frame: &RenderFrame<'_>, static_scene: &NativeRenderScene) {
+        let size = [
+            static_scene.viewport.width.max(1.0).ceil() as u32,
+            static_scene.viewport.height.max(1.0).ceil() as u32,
+        ];
+        let format = frame.surface_format();
+        if self.static_texture_view.is_some()
+            && self.static_texture_size == size
+            && self.static_texture_format == Some(format)
+        {
+            return;
+        }
+
+        let texture = frame.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("chibimadness retained static world texture"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        self.static_texture_view =
+            Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+        self.static_texture = Some(texture);
+        self.static_texture_size = size;
+        self.static_texture_format = Some(format);
+        self.static_texture_dirty = true;
+        self.composite_bind_group = None;
+    }
+
+    fn rasterize_static_cache(
+        &mut self,
+        frame: &mut RenderFrame<'_>,
+        static_scene: &NativeRenderScene,
+        vertex_count: u32,
+    ) -> bool {
+        let (Some(view), Some(pipeline), Some(camera_bind_group), Some(vertex_buffer)) = (
+            &self.static_texture_view,
+            &self.pipeline,
+            &self.static_camera_bind_group,
+            &self.static_vertex_buffer,
+        ) else {
+            return false;
+        };
+        if self.static_texture_dirty {
+            self.write_static_camera(frame, static_scene);
+            frame.with_color_only_pass(
+                view,
+                wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                |pass| {
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, camera_bind_group, &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(0..vertex_count, 0..1);
+                },
+            );
+            self.static_texture_dirty = false;
+        }
+        true
+    }
+
+    fn ensure_composite_pipeline(&mut self, frame: &RenderFrame<'_>) -> bool {
+        if self.composite_pipeline.is_some() && self.composite_bind_group.is_some() {
+            return true;
+        }
+        let (Some(view), Some(format)) = (&self.static_texture_view, self.static_texture_format)
+        else {
+            return false;
+        };
+        use wgpu::util::DeviceExt;
+        let device = frame.device();
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("chibimadness retained world composite layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("chibimadness retained world composite camera"),
+            contents: bytemuck::bytes_of(&CompositeCameraUniform::zeroed()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("chibimadness retained world sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("chibimadness retained world composite bind group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("chibimadness retained world composite shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(STATIC_COMPOSITE_SHADER)),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("chibimadness retained world composite pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        self.composite_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("chibimadness retained world composite pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            },
+        ));
+        self.composite_bind_group_layout = Some(bind_group_layout);
+        self.composite_bind_group = Some(bind_group);
+        self.composite_uniform_buffer = Some(uniform_buffer);
+        self.static_sampler = Some(sampler);
+        true
+    }
+
+    fn composite_static_cache(
+        &mut self,
+        frame: &mut RenderFrame<'_>,
+        dynamic_scene: &NativeRenderScene,
+        static_scene: &NativeRenderScene,
+    ) {
+        if !self.ensure_composite_pipeline(frame) {
+            return;
+        }
+        let (Some(buffer), Some(pipeline), Some(bind_group)) = (
+            &self.composite_uniform_buffer,
+            &self.composite_pipeline,
+            &self.composite_bind_group,
+        ) else {
+            return;
+        };
+        frame.queue().write_buffer(
+            buffer,
+            0,
+            bytemuck::bytes_of(&CompositeCameraUniform {
+                output_viewport: [dynamic_scene.viewport.width, dynamic_scene.viewport.height],
+                dynamic_position: [dynamic_scene.camera.x, dynamic_scene.camera.y],
+                dynamic_zoom: dynamic_scene.camera.zoom,
+                _padding0: 0.0,
+                static_viewport: [static_scene.viewport.width, static_scene.viewport.height],
+                static_position: [static_scene.camera.x, static_scene.camera.y],
+                static_zoom: static_scene.camera.zoom,
+                _padding1: 0.0,
+            }),
+        );
+        frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.draw(0..6, 0..1);
+        });
     }
 
     fn upload_vertices(&mut self, frame: &RenderFrame<'_>) {
@@ -954,8 +1341,12 @@ impl NativeWorldRenderer {
         for triangle in tessellation.triangles {
             let include = match selection {
                 SceneVertexSelection::All => true,
-                SceneVertexSelection::Static => triangle.layer != scene_executor::SceneLayer::Dynamic,
-                SceneVertexSelection::Dynamic => triangle.layer == scene_executor::SceneLayer::Dynamic,
+                SceneVertexSelection::Static => {
+                    triangle.layer != scene_executor::SceneLayer::Dynamic
+                }
+                SceneVertexSelection::Dynamic => {
+                    triangle.layer == scene_executor::SceneLayer::Dynamic
+                }
             };
             if !include {
                 continue;
@@ -985,10 +1376,7 @@ impl NativeWorldRenderer {
                     // restores the absolute alpha before blending.
                     color[3] = -color[3].max(f32::EPSILON);
                 }
-                vertices.push(Vertex {
-                    position,
-                    color,
-                });
+                vertices.push(Vertex { position, color });
             }
         }
         Some(vertices)
@@ -2679,10 +3067,12 @@ mod tests {
             Some("miku_twintails")
         );
         assert_eq!(entity.projectile_type, "magic_orb");
-        assert!(entity
-            .animation
-            .as_ref()
-            .is_some_and(|animation| animation.is_sprinting));
+        assert!(
+            entity
+                .animation
+                .as_ref()
+                .is_some_and(|animation| animation.is_sprinting)
+        );
     }
 
     #[test]
