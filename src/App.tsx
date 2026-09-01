@@ -93,6 +93,8 @@ export function App() {
   const [nativeWorldRendererReady, setNativeWorldRendererReady] = useState(isNativeWorldRendererReady);
   const [canvasProbeMode, setCanvasProbeMode] = useState<CanvasProbeMode>('normal');
   const canvasProbeModeRef = useRef<CanvasProbeMode>(canvasProbeMode);
+  const [dynamicRasterScale, setDynamicRasterScale] = useState(1);
+  const dynamicRasterScaleRef = useRef(dynamicRasterScale);
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -109,6 +111,10 @@ export function App() {
   useEffect(() => {
     canvasProbeModeRef.current = canvasProbeMode;
   }, [canvasProbeMode]);
+
+  useEffect(() => {
+    dynamicRasterScaleRef.current = dynamicRasterScale;
+  }, [dynamicRasterScale]);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -149,6 +155,16 @@ export function App() {
     document.documentElement.classList.toggle('native-world', nativeWorldRenderer);
     document.body.classList.toggle('bg-transparent', nativeWorldRenderer);
     document.body.classList.toggle('bg-slate-950', !nativeWorldRenderer);
+  }, [nativeWorldRenderer]);
+
+  useEffect(() => {
+    const cycleDynamicRasterScale = (event: KeyboardEvent) => {
+      if (event.code !== 'F9' || event.repeat || nativeWorldRenderer) return;
+      event.preventDefault();
+      setDynamicRasterScale((current) => current === 1 ? 0.75 : current === 0.75 ? 0.5 : 1);
+    };
+    window.addEventListener('keydown', cycleDynamicRasterScale);
+    return () => window.removeEventListener('keydown', cycleDynamicRasterScale);
   }, [nativeWorldRenderer]);
 
   useEffect(() => {
@@ -515,6 +531,7 @@ export function App() {
         zoom: getCameraState().zoom,
         canvasW: viewportWidth,
         canvasH: viewportHeight,
+        dynamicRasterScale: dynamicRasterScaleRef.current,
       });
 
       const drawStart = performance.now();
@@ -536,7 +553,16 @@ export function App() {
           curEngine.screenShake,
           curEngine.introCinematic,
         );
-        const workerQueued = queueDynamicRender({ input: worldInput, camera });
+        const rasterScale = dynamicRasterScaleRef.current;
+        const workerInput = rasterScale === 1
+          ? worldInput
+          : {
+            ...worldInput,
+            canvasWidth: Math.max(1, Math.round(viewportWidth * rasterScale)),
+            canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
+          };
+        const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
+        const workerQueued = queueDynamicRender({ input: workerInput, camera: workerCamera });
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
         if (workerQueued && dynamicFrame) {
           ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);
@@ -621,7 +647,16 @@ export function App() {
           curEngine.screenShake,
           curEngine.introCinematic,
         );
-        const workerQueued = queueDynamicRender({ input: worldInput, camera });
+        const rasterScale = dynamicRasterScaleRef.current;
+        const workerInput = rasterScale === 1
+          ? worldInput
+          : {
+            ...worldInput,
+            canvasWidth: Math.max(1, Math.round(viewportWidth * rasterScale)),
+            canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
+          };
+        const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
+        const workerQueued = queueDynamicRender({ input: workerInput, camera: workerCamera });
         ctx.clearRect(0, 0, viewportWidth, viewportHeight);
         if (workerQueued && dynamicFrame) {
           ctx.drawImage(dynamicFrame, 0, 0, viewportWidth, viewportHeight);

@@ -90,7 +90,7 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
           )}
           {stats.offscreenDynamicFps !== null && (
             <div className="text-cyan-300">
-              worker dyn {stats.offscreenDynamicFps} Hz · RTT {(stats.offscreenDynamicRoundTripMs ?? 0).toFixed(1)} ms
+              worker dyn {stats.offscreenDynamicFps} Hz · RTT {(stats.offscreenDynamicRoundTripMs ?? 0).toFixed(1)} ms · raster {(stats.dynamicRasterScale * 100).toFixed(0)}% · F9 scale
             </div>
           )}
           <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>

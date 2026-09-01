@@ -35,6 +35,7 @@ export type PerfSnapshot = {
   /** Completed visible OffscreenCanvas dynamic paints, not main-thread rAF. */
   offscreenDynamicFps: number | null;
   offscreenDynamicRoundTripMs: number | null;
+  dynamicRasterScale: number;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -295,6 +296,7 @@ class PerformanceMonitor {
         ? Math.round(1000 / Math.max(1, average(this.offscreenDynamicFrameTimes)))
         : null,
       offscreenDynamicRoundTripMs: this.offscreenDynamicRoundTripMs,
+      dynamicRasterScale: this.extras.dynamicRasterScale ?? 1,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
