@@ -53,9 +53,12 @@ uniform sampler2D u_atlas;
 uniform float u_probe_solid;
 uniform vec4 u_solid_color;
 uniform vec4 u_tint;
+uniform float u_flash;
 out vec4 out_color;
 void main() {
-  out_color = mix(texture(u_atlas, v_uv) * u_tint, u_solid_color, u_probe_solid);
+  vec4 sampled = texture(u_atlas, v_uv);
+  sampled.rgb = mix(sampled.rgb, vec3(1.0), u_flash);
+  out_color = mix(sampled * u_tint, u_solid_color, u_probe_solid);
 }`;
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
@@ -118,8 +121,10 @@ export class WebglHordeMobRenderer {
   private readonly uvLocation: number;
   private readonly solidColorLocation: WebGLUniformLocation | null;
   private readonly tintLocation: WebGLUniformLocation | null;
+  private readonly flashLocation: WebGLUniformLocation | null;
   private lost = false;
   private drawnMobCount = 0;
+  private drawnMonsterCount = 0;
   private nextAtlasSlot = 0;
   private staticWorldReady = false;
 
@@ -129,6 +134,10 @@ export class WebglHordeMobRenderer {
 
   get lastDrawnMobCount() {
     return this.drawnMobCount;
+  }
+
+  get lastDrawnMonsterCount() {
+    return this.drawnMonsterCount;
   }
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -158,6 +167,7 @@ export class WebglHordeMobRenderer {
     this.uvLocation = gl.getAttribLocation(this.program, 'a_uv');
     this.solidColorLocation = gl.getUniformLocation(this.program, 'u_solid_color');
     this.tintLocation = gl.getUniformLocation(this.program, 'u_tint');
+    this.flashLocation = gl.getUniformLocation(this.program, 'u_flash');
     if (this.positionLocation < 0 || this.uvLocation < 0) throw new Error('WebGL atlas attributes unavailable');
     this.buildAtlas();
     canvas.addEventListener('webglcontextlost', this.onContextLost, false);
@@ -366,6 +376,7 @@ export class WebglHordeMobRenderer {
     solidColor?: readonly [number, number, number, number],
     tint: readonly [number, number, number, number] = [1, 1, 1, 1],
     texture: WebGLTexture = this.texture,
+    flash = 0,
   ) {
     if (vertices.length === 0) return 0;
     const gl = this.gl;
@@ -384,6 +395,7 @@ export class WebglHordeMobRenderer {
     gl.uniform1f(probeSolidUniform, solidColor ? 1 : 0);
     if (solidColor) gl.uniform4f(this.solidColorLocation, ...solidColor);
     gl.uniform4f(this.tintLocation, ...tint);
+    gl.uniform1f(this.flashLocation, flash);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 4);
@@ -434,6 +446,7 @@ export class WebglHordeMobRenderer {
     drawActors = true,
   ) {
     this.drawnMobCount = 0;
+    this.drawnMonsterCount = 0;
     if (this.lost) return 0;
     const width = this.canvas.width;
     const height = this.canvas.height;
@@ -452,6 +465,7 @@ export class WebglHordeMobRenderer {
     this.ensurePlayerSprites(players);
     this.ensurePlayerLabelSprites(players);
     const vertices: number[] = [];
+    const flashedVertices: number[] = [];
     const healthBackground: number[] = [];
     const healthCyan: number[] = [];
     const healthRed: number[] = [];
@@ -565,6 +579,7 @@ export class WebglHordeMobRenderer {
       if (!key) continue;
       const slot = this.atlasSlots.get(key);
       if (!slot) continue;
+      this.drawnMonsterCount += 1;
       const kind = monster.hordeKind;
       const bodyScale = kind ? (monster.isBoss ? 1.55 : kind === 'mite' ? 0.55 : 1) : 1;
       const spriteWorldSize = kind ? HORDE_SPRITE_WORLD_SIZE : HUMANOID_SPRITE_WORLD_SIZE;
@@ -578,7 +593,8 @@ export class WebglHordeMobRenderer {
       const flip = monster.facing === 'left';
       const u0 = flip ? slot.u1 : slot.u0;
       const u1 = flip ? slot.u0 : slot.u1;
-      vertices.push(
+      const bodyVertices = (monster.hitFlash || 0) > 0 ? flashedVertices : vertices;
+      bodyVertices.push(
         left, top, u0, slot.v0, right, top, u1, slot.v0, right, bottom, u1, slot.v1,
         left, top, u0, slot.v0, right, bottom, u1, slot.v1, left, bottom, u0, slot.v1,
       );
@@ -669,7 +685,7 @@ export class WebglHordeMobRenderer {
         appendFx('fx:soft', particle.color, particle.alpha, particle.x, particle.y, particle.size * 2.2, particle.size * 2.2, 0);
       }
     }
-    this.drawnMobCount = this.drawVertices(vertices);
+    this.drawnMobCount = this.drawVertices(vertices) + this.drawVertices(flashedVertices, undefined, [1, 1, 1, 1], this.texture, 1);
     this.drawVertices(healthBackground, [0.06, 0.09, 0.16, 0.82]);
     this.drawVertices(healthCyan, [0.13, 0.83, 0.95, 1]);
     this.drawVertices(healthRed, [0.94, 0.27, 0.27, 1]);

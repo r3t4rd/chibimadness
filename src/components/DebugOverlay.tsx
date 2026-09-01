@@ -94,7 +94,7 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nati
             </div>
           )}
           <div className={stats.webglHordeMobBodies ? 'text-emerald-300' : 'text-slate-500'}>
-            actor bodies {stats.webglHordeMobBodies ? 'WebGL2 runtime atlas active' : 'Canvas fallback'} · F10 toggle
+            actor bodies {stats.webglHordeMobBodies ? `WebGL2 ${stats.webglMonsterBodies}/${stats.monsters} mobs` : 'Canvas fallback'} · F10 toggle
           </div>
           {!nativeWorldActive && (
             <div className="text-slate-400">

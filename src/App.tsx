@@ -895,6 +895,7 @@ export function App() {
         canvasH: viewportHeight,
         dynamicRasterScale: dynamicRasterScaleRef.current,
         webglHordeMobBodies: webglHordeMobBodiesRef.current && webglHordeMobRenderer !== null,
+        webglMonsterBodies: webglHordeMobRenderer?.lastDrawnMonsterCount ?? 0,
         staticWorldLayerEnabled: staticWorldLayerEnabledRef.current,
         dynamicCanvasLayerEnabled: dynamicCanvasLayerEnabledRef.current,
         forceStaticCanvas: forceStaticCanvasRef.current,

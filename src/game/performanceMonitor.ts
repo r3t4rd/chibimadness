@@ -44,6 +44,8 @@ export type PerfSnapshot = {
   dynamicRasterScale: number;
   /** WebView hybrid path: horde bodies are batched as WebGL atlas quads. */
   webglHordeMobBodies: boolean;
+  /** Number of enemy bodies emitted by the WebGL actor pass in this frame. */
+  webglMonsterBodies: number;
   /** Live WebView layer switches used to isolate compositor pacing. */
   staticWorldLayerEnabled: boolean;
   dynamicCanvasLayerEnabled: boolean;
@@ -311,6 +313,7 @@ class PerformanceMonitor {
       offscreenDynamicRoundTripMs: this.offscreenDynamicRoundTripMs,
       dynamicRasterScale: this.extras.dynamicRasterScale ?? 1,
       webglHordeMobBodies: this.extras.webglHordeMobBodies === true,
+      webglMonsterBodies: this.extras.webglMonsterBodies ?? 0,
       staticWorldLayerEnabled: this.extras.staticWorldLayerEnabled !== false,
       dynamicCanvasLayerEnabled: this.extras.dynamicCanvasLayerEnabled !== false,
       forceStaticCanvas: this.extras.forceStaticCanvas === true,

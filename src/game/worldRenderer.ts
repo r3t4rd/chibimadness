@@ -4470,10 +4470,10 @@ export function drawHordeMobAtlasSprite(
   drawCachedHordeMobBody(ctx, sprite.kind, sprite.boss, sprite.color);
 }
 
-/** A flash is deliberately kept on Canvas so the hit response cannot lag GL. */
+/** Hit flashes are a shader tint, so combat never evicts horde bodies from the GPU atlas. */
 export function getWebglHordeMobAtlasKey(monster: Monster): string | null {
   const kind = monster.hordeKind;
-  if (!kind || !CACHEABLE_HORDE_KINDS.has(kind) || (monster.hitFlash || 0) > 0) return null;
+  if (!kind || !CACHEABLE_HORDE_KINDS.has(kind)) return null;
   const boss = Boolean(monster.isBoss);
   const sprite = HORDE_ATLAS_SPRITES.find((candidate) => candidate.kind === kind && candidate.boss === boss);
   return sprite ? `${sprite.kind}:${sprite.boss ? 1 : 0}` : null;
