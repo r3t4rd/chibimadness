@@ -423,7 +423,9 @@ export function App() {
               kind: 'monster',
               faction: monster.faction || '',
               x: monster.x,
-              y: monster.y - (monster.jumpZ || 0),
+              // Rust applies the vertical animation recipe; subtracting here
+              // as well displaced airborne enemies twice.
+              y: monster.y,
               size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
               color: nativeMonsterColor(monster.faction),
               velocityX: 0,
