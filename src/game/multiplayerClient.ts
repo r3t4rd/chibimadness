@@ -33,6 +33,9 @@ export type NativeWorldRenderFrame = {
     facingLeft: boolean;
     layer: number;
     projectileType?: string;
+    weaponType?: string;
+    hasShield?: boolean;
+    effectType?: string;
     projectileRange?: number;
     tracerLength?: number;
     tracerWidth?: number;

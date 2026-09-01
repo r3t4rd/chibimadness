@@ -486,6 +486,28 @@ export function App() {
             tracerWidth: projectile.tracerWidth,
             distanceTraveled: projectile.distanceTraveled,
           })),
+          ...curEngine.particles
+            .filter((particle) => particle.alpha > 0.01 && inNativeView(particle.x, particle.y, particle.size * 4))
+            .slice(0, 48)
+            .map((particle, index) => {
+              const color = hexColor(particle.color, [1, 0.9, 0.2, 1]);
+              return {
+                id: `fx:${index}:${particle.shape}`,
+                kind: 'particle',
+                faction: '',
+                x: particle.x,
+                y: particle.y,
+                size: Math.max(1.2, particle.size),
+                color: [color[0], color[1], color[2], particle.alpha] as [number, number, number, number],
+                velocityX: particle.vx,
+                velocityY: particle.vy,
+                hasVelocity: true,
+                hpRatio: 1,
+                facingLeft: false,
+                layer: 34,
+                effectType: particle.shape,
+              };
+            }),
           ...curEngine.resourceNodes
             .filter((node) => node.hp > 0 && inNativeView(node.x, node.y, 80))
             .map((node) => ({

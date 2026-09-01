@@ -37,6 +37,14 @@ const MAX_ENTITY_SPEED: f32 = 10_000.0;
 const SOURCE_WORLD_WIDTH: f32 = 5_400.0;
 const SOURCE_WORLD_HEIGHT: f32 = 4_400.0;
 
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// Converts the source renderer's CSS palette to linear bridge colours once,
 /// avoiding a second, hand-maintained palette in the native renderer.
 fn hex(value: &str) -> [f32; 4] {
@@ -48,7 +56,7 @@ fn hex(value: &str) -> [f32; 4] {
         std::str::from_utf8(&bytes[offset..offset + 2])
             .ok()
             .and_then(|part| u8::from_str_radix(part, 16).ok())
-            .map_or(0.0, |channel| channel as f32 / 255.0)
+            .map_or(0.0, |channel| srgb_to_linear(channel as f32 / 255.0))
     };
     [parse(1), parse(3), parse(5), 1.0]
 }
@@ -245,6 +253,8 @@ pub struct NativeRenderEntity {
     pub weapon_type: String,
     #[serde(default)]
     pub has_shield: bool,
+    #[serde(default)]
+    pub effect_type: String,
     #[serde(default)]
     pub projectile_range: f32,
     #[serde(default)]
@@ -476,6 +486,7 @@ impl NativeWorldState {
                 && entity.faction.len() <= 32
                 && entity.projectile_type.len() <= 32
                 && entity.weapon_type.len() <= 32
+                && entity.effect_type.len() <= 32
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
                     .animation
@@ -530,9 +541,10 @@ impl NativeWorldState {
                     animation.dodge_timer = animation.dodge_timer.clamp(0.0, 10.0);
                 }
             }
-            for channel in &mut entity.color {
-                *channel = channel.clamp(0.0, 1.0);
+            for channel in &mut entity.color[..3] {
+                *channel = srgb_to_linear(channel.clamp(0.0, 1.0));
             }
+            entity.color[3] = entity.color[3].clamp(0.0, 1.0);
         }
         frame.entities.sort_by_key(|entity| entity.layer);
         self.frame = Some(frame);
@@ -2418,7 +2430,7 @@ impl NativeWorldRenderer {
         y: f32,
         world: &NativeRenderFrame,
     ) {
-        if entity.kind != "projectile" {
+        if !matches!(entity.kind.as_str(), "projectile" | "particle") {
             let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.34).min(0.34)];
             self.add_world_ellipse(
                 x + entity.size * 0.10,
@@ -2432,6 +2444,7 @@ impl NativeWorldRenderer {
         }
         match entity.kind.as_str() {
             "projectile" => self.add_projectile(entity, x, y, world),
+            "particle" => self.add_particle(entity, x, y, world),
             "resource" => self.add_resource(entity, x, y, world),
             "vehicle" => self.add_vehicle(entity, x, y, world),
             "pickup" | "poi" => self.add_pickup(entity, x, y, world),
@@ -3355,7 +3368,7 @@ impl NativeWorldRenderer {
                 self.add_world_circle(x, y, radius * 0.45, hex("#0F172A"), 14, world);
                 self.add_world_circle(x, y, radius * 0.15, [0.96, 0.45, 0.71, 0.92], 10, world);
             }
-            "laser" if entity.projectile_range > 1_800.0 => {
+            "laser" => {
                 self.add_world_line(
                     x - direction_x * tracer,
                     y - direction_y * tracer,
@@ -3411,6 +3424,90 @@ impl NativeWorldRenderer {
                     world,
                 );
             }
+        }
+    }
+
+    fn add_particle(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(1.0);
+        let color = entity.color;
+        match entity.effect_type.as_str() {
+            "spark" => {
+                let speed = entity.velocity_x.hypot(entity.velocity_y);
+                let (dx, dy) = if speed > 0.01 {
+                    (entity.velocity_x / speed, entity.velocity_y / speed)
+                } else {
+                    (1.0, 0.0)
+                };
+                self.add_world_line(
+                    x - dx * size * 2.8,
+                    y - dy * size * 2.8,
+                    x + dx * size * 0.7,
+                    y + dy * size * 0.7,
+                    (size * 0.42).max(0.7),
+                    color,
+                    world,
+                );
+            }
+            "star" => {
+                for point in 0..5 {
+                    let a0 = std::f32::consts::TAU * point as f32 / 5.0
+                        - std::f32::consts::FRAC_PI_2;
+                    let a1 = std::f32::consts::TAU * (point + 1) as f32 / 5.0
+                        - std::f32::consts::FRAC_PI_2;
+                    self.add_world_triangle(
+                        [x, y],
+                        [x + a0.cos() * size, y + a0.sin() * size],
+                        [
+                            x + a1.cos() * size * 0.52,
+                            y + a1.sin() * size * 0.52,
+                        ],
+                        color,
+                        world,
+                    );
+                }
+            }
+            "ring" => {
+                let radius = size * 0.95;
+                let width = (size * 0.22).max(0.8);
+                for segment in 0..12 {
+                    let start = std::f32::consts::TAU * segment as f32 / 12.0;
+                    let end = std::f32::consts::TAU * (segment + 1) as f32 / 12.0;
+                    self.add_world_line(
+                        x + start.cos() * radius,
+                        y + start.sin() * radius,
+                        x + end.cos() * radius,
+                        y + end.sin() * radius,
+                        width,
+                        color,
+                        world,
+                    );
+                }
+            }
+            "casing" => {
+                self.add_world_rect(x, y, size * 0.70, size * 1.9, hex("#78350F"), world);
+                self.add_world_rect(x, y - size * 0.35, size * 0.60, size * 0.48, color, world);
+            }
+            "smoke" => {
+                self.add_world_circle(x, y, size * 1.22, [color[0], color[1], color[2], color[3] * 0.42], 14, world);
+                self.add_world_circle(
+                    x + size * 0.44,
+                    y - size * 0.28,
+                    size * 0.82,
+                    [color[0], color[1], color[2], color[3] * 0.30],
+                    12,
+                    world,
+                );
+            }
+            "petal" => {
+                self.add_world_ellipse(x, y, size * 0.68, size * 0.36, color, 10, world);
+            }
+            _ => self.add_world_circle(x, y, size, color, 12, world),
         }
     }
 
@@ -3824,7 +3921,12 @@ mod tests {
     fn source_palette_matches_canvas_hex() {
         assert_eq!(
             hex("#162C1E"),
-            [22.0 / 255.0, 44.0 / 255.0, 30.0 / 255.0, 1.0]
+            [
+                srgb_to_linear(22.0 / 255.0),
+                srgb_to_linear(44.0 / 255.0),
+                srgb_to_linear(30.0 / 255.0),
+                1.0,
+            ]
         );
         assert_eq!(hex("not-a-colour"), [1.0, 0.0, 1.0, 1.0]);
     }
