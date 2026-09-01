@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorld, screenToWorld, getCameraState, getStaticTerrainCache, type RenderQuality } from './game/worldRenderer';
+import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
 import { perfMonitor } from './game/performanceMonitor';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
@@ -22,7 +22,17 @@ import { SettingsModal } from './components/SettingsModal';
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
 import { CLASS_DEFAULTS } from './game/constants';
-import { getContentBuildInfo, net, subscribeContentBuildInfo } from './game/multiplayerClient';
+import {
+  getContentBuildInfo,
+  isNativeWorldRendererEnabled,
+  isNativeWorldRendererReady,
+  net,
+  sendNativeDynamicRenderScene,
+  sendNativeStaticRenderScene,
+  sendNativeWorldRenderFrame,
+  subscribeContentBuildInfo,
+  subscribeNativeWorldRenderer,
+} from './game/multiplayerClient';
 
 const FALLBACK_PLAYER: Player = {
   id: 'default',
@@ -75,14 +85,98 @@ const FALLBACK_PLAYER: Player = {
   pendingEvolutionPicks: 0,
 };
 
+function hexColor(color: string | undefined, fallback: [number, number, number, number]): [number, number, number, number] {
+  const match = color?.match(/^#([0-9a-f]{6})$/i);
+  if (!match) return fallback;
+  const value = Number.parseInt(match[1], 16);
+  return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255, 1];
+}
+
+/**
+ * Native rendering deliberately consumes the same visual recipe as the Canvas
+ * renderer. Do not reduce a player to a faction colour here: cosmetics are
+ * part of the game state and native parity depends on carrying them across the
+ * bridge intact.
+ */
+function nativeChibiRecipe(player: Player) {
+  const chibi = player.chibi;
+  return {
+    hairStyle: chibi.hairStyle,
+    frontHairStyle: chibi.frontHairStyle,
+    backHairStyle: chibi.backHairStyle,
+    hairColor: chibi.hairColor,
+    skinTone: chibi.skinTone,
+    eyeColor: chibi.eyeColor,
+    eyeType: chibi.eyeType,
+    earType: chibi.earType,
+    earColor: chibi.earColor,
+    innerEarColor: chibi.innerEarColor,
+    haloType: chibi.haloType,
+    haloColor: chibi.haloColor,
+    outfitType: chibi.outfitType,
+    coatColor: chibi.coatColor,
+    skirtColor: chibi.skirtColor,
+    accentColor: chibi.accentColor,
+    ribbonColor: chibi.ribbonColor,
+    hatType: chibi.hatType,
+    hatColor: chibi.hatColor,
+    wingType: chibi.wingType,
+    wingColor: chibi.wingColor,
+  };
+}
+
+function nativeAnimationRecipe(player: Player) {
+  return {
+    state: player.state,
+    isSprinting: player.isSprinting,
+    jumpZ: player.jumpZ,
+    spawnBounce: player.spawnBounce,
+    attackTimer: player.attackTimer,
+    dodgeTimer: player.dodgeTimer,
+  };
+}
+
+function nativeMonsterColor(faction: string | undefined): [number, number, number, number] {
+  if (faction === 'police') return [0.12, 0.75, 1, 1];
+  if (faction === 'punk_demon') return [1, 0.2, 0.32, 1];
+  if (faction === 'bandit') return [1, 0.6, 0.12, 1];
+  return [0.75, 0.2, 0.9, 1];
+}
+
+function nativeResourceColor(type: string): [number, number, number, number] {
+  if (type === 'iron_ore') return [0.48, 0.58, 0.7, 1];
+  if (type === 'lumite_crystal') return [0.55, 0.25, 1, 1];
+  if (type === 'star_flower') return [1, 0.76, 0.18, 1];
+  return [0.12, 0.52, 0.28, 1];
+}
+
+function nativePoiColor(type: string): [number, number, number, number] {
+  if (type === 'fire_hydrant') return [1, 0.18, 0.22, 1];
+  if (type === 'vending_machine') return [0.08, 0.66, 1, 1];
+  if (type === 'steam_geyser') return [0.72, 0.86, 0.96, 1];
+  return [1, 0.68, 0.12, 1];
+}
+
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
   const [chatLog, setChatLog] = useState<ChatMessage[]>([]);
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
+  const [nativeWorldRendererRequested, setNativeWorldRendererRequested] = useState(isNativeWorldRendererEnabled);
+  const [nativeWorldRendererReady, setNativeWorldRendererReady] = useState(isNativeWorldRendererReady);
+  const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const staticTerrainCacheRef = useRef<CanvasImageSource | null>(null);
+  const lastNativeSceneAt = useRef(0);
+  const lastNativeEntityFrameAt = useRef(0);
+  const sceneWorkerRef = useRef<Worker | null>(null);
+  const sceneCompileInFlightRef = useRef(false);
+  const pendingSceneInputRef = useRef<{
+    input: WorldRenderInput;
+    staticOnly: boolean;
+    camera?: { x: number; y: number; zoom: number };
+  } | null>(null);
+  const nextSceneJobIdRef = useRef(1);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -101,124 +195,365 @@ export function App() {
     return unsub;
   }, []);
 
-  useEffect(() => subscribeContentBuildInfo(() => {
-    setContentBuild(getContentBuildInfo());
-  }), []);
-
-  useEffect(() => perfMonitor.observeLongTasks(), []);
+  useEffect(() => {
+    const syncRendererState = () => {
+      setContentBuild(getContentBuildInfo());
+      setNativeWorldRendererRequested(isNativeWorldRendererEnabled());
+      setNativeWorldRendererReady(isNativeWorldRendererReady());
+    };
+    syncRendererState();
+    const unsubscribeContent = subscribeContentBuildInfo(syncRendererState);
+    const unsubscribeRenderer = subscribeNativeWorldRenderer(syncRendererState);
+    return () => {
+      unsubscribeContent();
+      unsubscribeRenderer();
+    };
+  }, []);
 
   useEffect(() => {
-    if (!createdPlayer) return;
-    const warmCache = () => {
-      staticTerrainCacheRef.current = getStaticTerrainCache();
+    // `body` used to carry an opaque Tailwind background for the Canvas2D
+    // game. Once WGPU has acknowledged its first frame, leaving that class
+    // in place visually covers the native surface even though it is drawing.
+    document.documentElement.classList.toggle('native-world', nativeWorldRenderer);
+    document.body.classList.toggle('bg-transparent', nativeWorldRenderer);
+    document.body.classList.toggle('bg-slate-950', !nativeWorldRenderer);
+  }, [nativeWorldRenderer]);
+
+  // Scene compilation is intentionally outside the WebView's animation
+  // thread. A complete Canvas display-list is expensive to construct; doing
+  // it in requestAnimationFrame made the HUD/input loop fall to ~27 FPS even
+  // while the native WGPU surface was presenting at 240 FPS.
+  useEffect(() => {
+    if (!nativeWorldRendererRequested || typeof Worker === 'undefined') return;
+    const worker = new Worker(new URL('./game/renderScene.worker.ts', import.meta.url), { type: 'module' });
+    sceneWorkerRef.current = worker;
+    const submit = (job: NonNullable<typeof pendingSceneInputRef.current>) => {
+      sceneCompileInFlightRef.current = true;
+      worker.postMessage({ id: nextSceneJobIdRef.current++, ...job });
     };
-    const id = window.setTimeout(warmCache, 0);
-    return () => window.clearTimeout(id);
-  }, [createdPlayer]);
+    worker.onmessage = (event: MessageEvent<{
+      id: number;
+      staticScene?: unknown;
+      dynamicScene?: unknown;
+      error?: string;
+    }>) => {
+      sceneCompileInFlightRef.current = false;
+      if (event.data.staticScene) {
+        sendNativeStaticRenderScene(
+          event.data.staticScene as Parameters<typeof sendNativeStaticRenderScene>[0]
+        );
+      }
+      if (event.data.dynamicScene) {
+        sendNativeDynamicRenderScene(
+          event.data.dynamicScene as Parameters<typeof sendNativeDynamicRenderScene>[0]
+        );
+      }
+      const pending = pendingSceneInputRef.current;
+      pendingSceneInputRef.current = null;
+      // Keep one latest input while compilation runs, but always present the
+      // completed scene first. Dropping each finished result when a newer
+      // snapshot exists leaves WGPU rapidly repainting an old world.
+      if (pending) submit(pending);
+    };
+    return () => {
+      worker.terminate();
+      if (sceneWorkerRef.current === worker) sceneWorkerRef.current = null;
+      sceneCompileInFlightRef.current = false;
+      pendingSceneInputRef.current = null;
+    };
+  }, [nativeWorldRendererRequested]);
 
   // Main Canvas Render Loop
   useEffect(() => {
     let animationId: number;
     let lastRenderedAt: number | null = null;
-    let nextRenderAt = 0;
-    let quality: RenderQuality = 'high';
-    let stableFrames = 0;
     const canvas = canvasRef.current;
-    if (!canvas || !createdPlayer) return;
+    if (!createdPlayer || (!nativeWorldRenderer && !canvas)) return;
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
+    if (!nativeWorldRenderer && !ctx) return;
+    let viewportWidth = window.innerWidth;
+    let viewportHeight = window.innerHeight;
 
     // Responsive Canvas Resize Observer
     const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+      viewportWidth = window.innerWidth;
+      viewportHeight = window.innerHeight;
+      if (canvas) {
+        canvas.width = viewportWidth;
+        canvas.height = viewportHeight;
+      }
     };
     handleResize();
     window.addEventListener('resize', handleResize);
 
     const render = (time: number) => {
-      const minFrameMs = quality === 'high' ? 1000 / 120 : quality === 'medium' ? 1000 / 90 : 1000 / 60;
-      if (time < nextRenderAt) {
-        animationId = requestAnimationFrame(render);
-        return;
-      }
-      nextRenderAt = time + minFrameMs;
+      const callbackStartedAt = performance.now();
       const frameIntervalMs = lastRenderedAt === null ? 1000 / 60 : time - lastRenderedAt;
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      const replicatedCombat = net.hasSharedWorld()
-        ? curEngine.combatRenderStateRef.current
-        : null;
-      const renderMonsters = replicatedCombat?.monsters ?? curEngine.monsters;
-      const renderProjectiles = replicatedCombat?.projectiles ?? curEngine.projectiles;
-
-      perfMonitor.setExtras({
-        monsters: renderMonsters.filter((m) => m.state !== 'dead').length,
-        particles: curEngine.particles.length,
-        projectiles: renderProjectiles.length,
-        quality,
-        zoom: getCameraState().zoom,
-        canvasW: canvas.width,
-        canvasH: canvas.height,
+      // Canvas keeps the complete presentation input. Native mode splits it:
+      // only map state reaches the static compiler, while a bounded entity
+      // snapshot reaches Rust at its own cadence.
+      const buildWorldRenderInput = (): WorldRenderInput => ({
+        canvasWidth: viewportWidth,
+        canvasHeight: viewportHeight,
+        localPlayer: curEngine.player,
+        players: curEngine.remotePlayers,
+        monsters: curEngine.monsters,
+        resourceNodes: curEngine.resourceNodes,
+        dropItems: curEngine.dropItems,
+        projectiles: curEngine.projectiles,
+        particles: curEngine.particles,
+        damagePopups: curEngine.damagePopups,
+        screenShake: curEngine.screenShake,
+        groundDecals: curEngine.groundDecals,
+        time: timeInSeconds,
+        introCinematic: curEngine.introCinematic,
+        worldPois: curEngine.worldPois,
+        cars: curEngine.cars,
+        summons: curEngine.summons,
+        gameTimePhase: curEngine.gameTimePhase,
       });
-
-      const drawStart = performance.now();
-      drawWorld(
-        ctx,
-        canvas.width,
-        canvas.height,
-        curEngine.player,
-        curEngine.remotePlayers,
-        renderMonsters,
-        curEngine.resourceNodes,
-        curEngine.dropItems,
-        renderProjectiles,
-        curEngine.particles,
-        curEngine.damagePopups,
-        curEngine.screenShake,
-        curEngine.groundDecals,
-        timeInSeconds,
-        curEngine.introCinematic,
-        curEngine.worldPois,
-        curEngine.cars,
-        curEngine.summons,
-        curEngine.gameTimePhase,
-        staticTerrainCacheRef.current,
-        quality
-      );
-      const drawMs = performance.now() - drawStart;
-      perfMonitor.recordDraw(drawMs);
-      // Canvas draw time only covers JavaScript submitting work. The remaining
-      // frame interval includes WebView/GPU/compositor scheduling, which is
-      // exactly where the desktop client can miss frames under entity load.
-      const frameGapMs = Math.max(0, frameIntervalMs - drawMs);
-      perfMonitor.recordFrameGap(frameGapMs);
-      const frameMissesLowBudget = frameIntervalMs > 25;
-      const frameMissesMediumBudget = frameIntervalMs > 16.7;
-      if (drawMs > 18 || frameMissesLowBudget) {
-        quality = 'low';
-        stableFrames = 0;
-      } else if ((drawMs > 10 || frameMissesMediumBudget) && quality === 'high') {
-        quality = 'medium';
-        stableFrames = 0;
-      } else {
-        const canRecover = quality === 'low'
-          ? drawMs < 7 && frameIntervalMs < 20
-          : drawMs < 5 && frameIntervalMs < 12;
-        if (!canRecover) {
-          stableFrames = 0;
-        } else {
-          stableFrames += 1;
-          if (stableFrames >= 180) {
-            quality = quality === 'low' ? 'medium' : 'high';
-            stableFrames = 0;
+      const buildStaticWorldRenderInput = (): WorldRenderInput => ({
+        canvasWidth: viewportWidth,
+        canvasHeight: viewportHeight,
+        localPlayer: curEngine.player,
+        players: {},
+        monsters: [],
+        resourceNodes: curEngine.resourceNodes,
+        dropItems: [],
+        projectiles: [],
+        particles: [],
+        damagePopups: [],
+        groundDecals: [],
+        time: timeInSeconds,
+        worldPois: curEngine.worldPois,
+        cars: [],
+        summons: [],
+        gameTimePhase: curEngine.gameTimePhase,
+      });
+      if (nativeWorldRendererRequested) {
+        const camera = updateNativeCamera(curEngine.player, time);
+        // Desktop-native presentation owns actor geometry. The worker produces
+        // only cacheable map data once WGPU is ready; dynamic Canvas commands
+        // must never cross the WebView bridge in the gameplay hot path.
+        const staticOnly = nativeWorldRenderer;
+        const denseNativeScene = curEngine.monsters.length >= 20
+          || curEngine.particles.length >= 48
+          || curEngine.projectiles.length >= 16;
+        const nativeSceneTargetHz = staticOnly ? 15 : denseNativeScene ? 60 : 120;
+        const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
+        perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
+        if (time - lastNativeSceneAt.current >= nativeSceneIntervalMs) {
+          lastNativeSceneAt.current = time;
+          const worldRenderInput = staticOnly
+            ? buildStaticWorldRenderInput()
+            : buildWorldRenderInput();
+          const sceneJob = { input: worldRenderInput, staticOnly, camera };
+          if (sceneCompileInFlightRef.current) {
+            // Keep at most one newest snapshot; a queue would recreate the
+            // same long-task backlog after a dense horde arrives.
+            pendingSceneInputRef.current = sceneJob;
+          } else {
+            const worker = sceneWorkerRef.current;
+            if (worker) {
+              sceneCompileInFlightRef.current = true;
+              worker.postMessage({ id: nextSceneJobIdRef.current++, ...sceneJob });
+            }
           }
         }
+        const nativeEntityTargetHz = nativeWorldRenderer ? 60 : 30;
+        if (time - lastNativeEntityFrameAt.current >= 1000 / nativeEntityTargetHz) {
+          lastNativeEntityFrameAt.current = time;
+          const nativeViewPadding = 180;
+        const nativeHalfWidth = viewportWidth / camera.zoom / 2 + nativeViewPadding;
+        const nativeHalfHeight = viewportHeight / camera.zoom / 2 + nativeViewPadding;
+        const inNativeView = (x: number, y: number, size = 0) => (
+          Math.abs(x - camera.x) <= nativeHalfWidth + size
+          && Math.abs(y - camera.y) <= nativeHalfHeight + size
+        );
+        const entities = [
+          {
+            id: curEngine.player.id,
+            kind: 'player',
+            faction: '',
+            x: curEngine.player.x,
+            y: curEngine.player.y,
+            size: 38,
+            color: [0.1, 0.9, 1, 1] as [number, number, number, number],
+            velocityX: curEngine.player.vx,
+            velocityY: curEngine.player.vy,
+            hasVelocity: true,
+            hpRatio: curEngine.player.stats.maxHp > 0 ? curEngine.player.stats.hp / curEngine.player.stats.maxHp : 1,
+            facingLeft: curEngine.player.facing === 'left',
+            layer: 20,
+            chibi: nativeChibiRecipe(curEngine.player),
+            animation: nativeAnimationRecipe(curEngine.player),
+          },
+          ...(Object.values(curEngine.remotePlayers) as Player[])
+            .filter((player) => inNativeView(player.x, player.y, 48))
+            .map((player) => ({
+            id: player.id,
+            kind: 'player',
+            faction: '',
+            x: player.x,
+            y: player.y,
+            size: 34,
+            color: [0.35, 0.65, 1, 1] as [number, number, number, number],
+            velocityX: player.vx,
+            velocityY: player.vy,
+            hasVelocity: true,
+            hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 1,
+            facingLeft: player.facing === 'left',
+            layer: 18,
+            chibi: nativeChibiRecipe(player),
+            animation: nativeAnimationRecipe(player),
+          })),
+          ...curEngine.monsters
+            .filter((monster) => monster.state !== 'dead' && monster.hp > 0 && inNativeView(monster.x, monster.y, 90))
+            .map((monster) => ({
+              id: monster.id,
+              kind: 'monster',
+              faction: monster.faction || '',
+              x: monster.x,
+              y: monster.y - (monster.jumpZ || 0),
+              size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
+              color: nativeMonsterColor(monster.faction),
+              velocityX: 0,
+              velocityY: 0,
+              hasVelocity: false,
+              hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 1,
+              facingLeft: monster.facing === 'left',
+              layer: 10,
+            })),
+          ...curEngine.projectiles.filter((projectile) => inNativeView(projectile.x, projectile.y, 48)).map((projectile) => ({
+            id: projectile.id,
+            kind: 'projectile',
+            faction: projectile.faction || '',
+            x: projectile.x,
+            y: projectile.y + (projectile.visualOffsetY || 0),
+            size: Math.max(4, projectile.size * 1.8),
+            color: hexColor(projectile.color, [1, 0.9, 0.2, 1]),
+            velocityX: projectile.vx,
+            velocityY: projectile.vy,
+            hasVelocity: true,
+            hpRatio: 1,
+            facingLeft: projectile.vx < 0,
+            layer: 30,
+            projectileType: projectile.type,
+            projectileRange: projectile.range,
+            tracerLength: projectile.tracerLength,
+            tracerWidth: projectile.tracerWidth,
+            distanceTraveled: projectile.distanceTraveled,
+          })),
+          ...curEngine.resourceNodes
+            .filter((node) => node.hp > 0 && inNativeView(node.x, node.y, 80))
+            .map((node) => ({
+              id: `resource:${node.id}`,
+              kind: 'resource',
+              faction: '',
+              x: node.x,
+              y: node.y,
+              size: Math.max(34, 52 * (node.scale || 1)),
+              color: nativeResourceColor(node.type),
+              velocityX: 0,
+              velocityY: 0,
+              hasVelocity: false,
+              hpRatio: node.maxHp > 0 ? node.hp / node.maxHp : 1,
+              facingLeft: false,
+              layer: 7,
+            })),
+          ...curEngine.dropItems.filter((drop) => inNativeView(drop.x, drop.y, 28)).map((drop) => ({
+            id: `drop:${drop.id}`,
+            kind: 'pickup',
+            faction: '',
+            x: drop.x,
+            y: drop.y - drop.bounceOffset,
+            size: drop.isXpGem ? 14 : 20,
+            color: drop.isXpGem ? [0.32, 1, 0.74, 1] as [number, number, number, number] : [1, 0.72, 0.16, 1] as [number, number, number, number],
+            velocityX: drop.vx || 0,
+            velocityY: drop.vy || 0,
+            hasVelocity: Boolean(drop.vx || drop.vy),
+            hpRatio: 1,
+            facingLeft: false,
+            layer: 14,
+          })),
+          ...curEngine.cars.filter((car) => inNativeView(car.x, car.y, 160)).map((car) => ({
+            id: `car:${car.id}`,
+            kind: 'vehicle',
+            faction: car.type === 'police_car' ? 'police' : 'punk_demon',
+            x: car.x,
+            y: car.y,
+            size: Math.max(car.width, car.height),
+            color: car.type === 'police_car' ? [0.08, 0.68, 1, 1] as [number, number, number, number] : [1, 0.14, 0.35, 1] as [number, number, number, number],
+            velocityX: car.vx,
+            velocityY: car.vy,
+            hasVelocity: true,
+            hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 1,
+            facingLeft: car.facing === 'left',
+            layer: 16,
+          })),
+          ...curEngine.worldPois.filter((poi) => inNativeView(poi.x, poi.y, 80)).map((poi) => ({
+            id: `poi:${poi.id}`,
+            kind: 'poi',
+            faction: '',
+            x: poi.x,
+            y: poi.y,
+            size: Math.max(20, poi.radius || Math.max(poi.width || 0, poi.height || 0) || 28),
+            color: nativePoiColor(poi.type),
+            velocityX: 0,
+            velocityY: 0,
+            hasVelocity: false,
+            hpRatio: 1,
+            facingLeft: false,
+            layer: 8,
+          })),
+        ].slice(0, 128);
+          sendNativeWorldRenderFrame({
+            cameraX: camera.x,
+            cameraY: camera.y,
+            zoom: camera.zoom,
+            viewportWidth,
+            viewportHeight,
+            timeSeconds: timeInSeconds,
+          theme: curEngine.player.currentZone,
+          entities,
+          });
+        }
+        perfMonitor.setExtras({
+          monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
+          particles: curEngine.particles.length,
+          projectiles: curEngine.projectiles.length,
+          zoom: camera.zoom,
+          canvasW: viewportWidth,
+          canvasH: viewportHeight,
+        });
+        if (nativeWorldRenderer) {
+          perfMonitor.recordDraw(0);
+          perfMonitor.recordFrame(frameIntervalMs);
+          animationId = requestAnimationFrame(render);
+          return;
+        }
       }
-      perfMonitor.setExtras({ quality });
+
+      perfMonitor.setExtras({
+        monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
+        particles: curEngine.particles.length,
+        projectiles: curEngine.projectiles.length,
+        zoom: getCameraState().zoom,
+        canvasW: viewportWidth,
+        canvasH: viewportHeight,
+      });
+
+      const worldRenderInput = buildWorldRenderInput();
+      const drawStart = performance.now();
+      drawWorldInput(ctx, worldRenderInput);
+      const callbackFinishedAt = performance.now();
+      perfMonitor.recordDraw(callbackFinishedAt - drawStart);
       perfMonitor.recordFrame(frameIntervalMs);
+      perfMonitor.recordWebViewFrame(callbackStartedAt, callbackFinishedAt);
       animationId = requestAnimationFrame(render);
     };
 
@@ -228,7 +563,7 @@ export function App() {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
     };
-  }, [createdPlayer]);
+  }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
 
   // Listen for Hold [C] to open Gunsmith Weapon Customization & RMB release
   useEffect(() => {
@@ -296,8 +631,37 @@ export function App() {
     engine.handleInteract();
   };
 
+  const handleWorldPointerDown = (e: React.MouseEvent<HTMLElement>) => {
+    if (engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete') {
+      return;
+    }
+    if (e.button === 2) {
+      e.preventDefault();
+      engine.setIsAiming(true);
+      return;
+    }
+    if (e.button !== 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const targetWorldPos = screenToWorld(
+      e.clientX - rect.left,
+      e.clientY - rect.top,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    engine.setFireHeld(true);
+    engine.handleAttack(targetWorldPos.x, targetWorldPos.y);
+  };
+
+  const handleWorldPointerUp = (e: React.MouseEvent<HTMLElement>) => {
+    if (e.button === 2) {
+      e.preventDefault();
+      engine.setIsAiming(false);
+    }
+    if (e.button === 0) engine.setFireHeld(false);
+  };
+
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-slate-950 select-none">
+    <div className={`relative w-screen h-screen overflow-hidden select-none ${nativeWorldRenderer ? 'bg-transparent' : 'bg-slate-950'}`}>
       {/* 1. Character Creation Screen if not yet spawned */}
       {!createdPlayer ? (
         <CharacterCreator
@@ -307,44 +671,25 @@ export function App() {
         />
       ) : (
         <>
-          {/* 2. Main Open World Canvas */}
-          <canvas
-            ref={canvasRef}
-            onContextMenu={(e) => e.preventDefault()}
-            onMouseDown={(e) => {
-              if (engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete') {
-                return;
-              }
-
-              const canvas = canvasRef.current;
-              if (!canvas) return;
-              if (e.button === 2) {
-                // Right Mouse Button: Aim Mode
-                e.preventDefault();
-                engine.setIsAiming(true);
-                return;
-              }
-              if (e.button === 0) {
-                // Left Mouse Button: Fire Weapon accurately using world coordinates
-                const rect = canvas.getBoundingClientRect();
-                const screenX = e.clientX - rect.left;
-                const screenY = e.clientY - rect.top;
-                const targetWorldPos = screenToWorld(screenX, screenY, canvas.width, canvas.height);
-                engine.setFireHeld(true);
-                engine.handleAttack(targetWorldPos.x, targetWorldPos.y);
-              }
-            }}
-            onMouseUp={(e) => {
-              if (e.button === 2) {
-                e.preventDefault();
-                engine.setIsAiming(false);
-              }
-              if (e.button === 0) {
-                engine.setFireHeld(false);
-              }
-            }}
-            className="absolute inset-0 block w-full h-full cursor-crosshair"
-          />
+          {/* Native mode deliberately has no Canvas element: the transparent
+              WebView only owns input/HUD, while Rust owns every world pixel. */}
+          {nativeWorldRenderer ? (
+            <div
+              aria-label="Game world input"
+              onContextMenu={(e) => e.preventDefault()}
+              onMouseDown={handleWorldPointerDown}
+              onMouseUp={handleWorldPointerUp}
+              className="absolute inset-0 cursor-crosshair"
+            />
+          ) : (
+            <canvas
+              ref={canvasRef}
+              onContextMenu={(e) => e.preventDefault()}
+              onMouseDown={handleWorldPointerDown}
+              onMouseUp={handleWorldPointerUp}
+              className="absolute inset-0 block w-full h-full cursor-crosshair"
+            />
+          )}
 
           {/* 3. Floating In-Game Toast Notifications */}
           <AnimatePresence>
@@ -409,7 +754,7 @@ export function App() {
                 onExtractHorde={engine.handleExtractHorde}
               />
 
-              <DebugOverlay />
+              <DebugOverlay nativeWorldActive={nativeWorldRenderer} />
 
               {/* 6. In-Game Chat & Emote Wheel */}
               <ChatAndEmotes

@@ -35,7 +35,7 @@ Rust world server
 - оружие, навыки, анимационные состояния и визуальные эффекты;
 - квесты, инвентарь, дропы и локальная прогрессия;
 - переходы в здания, Nullspace и обратно;
-- применение authoritative snapshot/delta кадров, если доступен Rust world server.
+- применение authoritative snapshots, если доступен Rust world server.
 
 Отрисовка отделена по назначению:
 
@@ -44,6 +44,7 @@ Rust world server
 - **buildingRenderer.ts** — фасады и интерьеры;
 - **audioEngine.ts** — процедурные звуки и музыка через Web Audio;
 - **viewCull.ts** и **performanceMonitor.ts** — ограничение работы вне viewport и runtime-метрики.
+- **renderScene.ts** и **renderScene.worker.ts** — запись Canvas display-list и разделение static/dynamic сцены для экспериментального native renderer.
 
 Контент и баланс пока хранятся в TypeScript:
 
@@ -64,7 +65,7 @@ Node-процесс объединяет Express, Vite middleware и WebSocket p
 
 Rust-процесс — production world server. Он слушает raw WebSocket, по умолчанию на 127.0.0.1:3010, и ожидает TLS termination/reverse proxy снаружи.
 
-Основной цикл работает с шагом 20 мс (50 Hz). Движение клиентов принимается и replication delta отправляются не чаще 20 Hz. Состояние хранится в памяти одного процесса.
+Основной цикл работает с шагом 20 мс (50 Hz). Движение клиентов принимается и полные world snapshots отправляются не чаще 20 Hz. Состояние хранится в памяти одного процесса.
 
 ## Границы authoritative состояния
 
@@ -80,7 +81,7 @@ Rust-процесс — production world server. Он слушает raw WebSock
 | Инвентарь, экипировка, золото и навыки | Клиент/localStorage |
 | Квесты, локальные дропы и эволюции | Клиент/localStorage |
 
-Legacy сообщения sync_monster_damage, sync_drop_spawn и sync_drop_pickup Rust-сервер намеренно игнорирует. Общий бой проходит через world_bootstrap, world_fire, полные world_snapshot и периодические world_delta.
+Legacy сообщения sync_monster_damage, sync_drop_spawn и sync_drop_pickup Rust-сервер намеренно игнорирует. Общий бой проходит через world_bootstrap, world_fire и world_snapshot.
 
 ## Сетевой поток
 
@@ -89,8 +90,8 @@ Legacy сообщения sync_monster_damage, sync_drop_spawn и sync_drop_pick
 3. В init_world возвращаются существующие игроки, недавний чат и resume token.
 4. Первый клиент передаёт authored monster manifest через world_bootstrap. Сервер очищает входные данные, применяет уровни NPC и становится владельцем мира.
 5. Клиенты отправляют movement не чаще 20 Hz и запросы действий.
-6. Rust loop двигает NPC/снаряды, считает попадания и каждые 50 мс формирует interest-scoped world_delta для каждой сессии.
-7. Клиент применяет upsert/remove delta, хранит короткую историю кадров и интерполирует мобов и снаряды с задержкой 80 мс. Полные world_snapshot остаются для bootstrap и немедленных переходов состояния.
+6. Rust loop двигает NPC/снаряды, считает попадания и каждые 50 мс рассылает world_snapshot.
+7. Клиент записывает snapshots в короткую историю и интерполирует мобов и снаряды с задержкой 80 мс.
 
 Resume token не является учётной записью. Он предотвращает замену активной сессии с тем же id и исчезает после остановки процесса.
 
@@ -133,6 +134,8 @@ Game host:
 
 Launcher хранит проверенные native-версии в **%LOCALAPPDATA%\ChibiMadness\native-versions** и откатывается к последнему валидному либо установленному host. Изменения game host распространяются через native patch; изменение самого launcher требует нового installer или portable package.
 
+Canvas2D остаётся production renderer по умолчанию. Флаг **--native-renderer** включает экспериментальный путь: browser worker компилирует исходные Canvas-команды в отдельные static/dynamic сцены, bridge передаёт их в game host, **scene_executor.rs** тесселирует display-list, а **world_renderer.rs** кэширует и выводит сцену через WGPU. HUD остаётся в прозрачном WebView overlay. Этот путь пока не гарантирует визуальную совместимость с Canvas2D.
+
 ## Как расширять проект
 
 - Новая UI-панель: **src/components/** и состояние в **App.tsx** или engine API.
@@ -142,5 +145,6 @@ Launcher хранит проверенные native-версии в **%LOCALAPPD
 - Изменение NPC decision model: **server/src/ai.rs**, без дублирования логики в renderer.
 - Изменение WebView/CSP/web updater: **desktop/src/main.rs** плюс unit test для validation boundary.
 - Изменение native launcher/updater: **desktop/src/launcher.rs**; такое обновление требует нового installer/portable package.
+- Изменение experimental native rendering: **src/game/renderScene.ts**, **renderScene.worker.ts**, **desktop/src/scene_executor.rs** и **world_renderer.rs**.
 
 Крупные файлы движка уже являются зонами концентрации сложности. Новая независимая подсистема предпочтительно получает отдельный модуль, а не ещё одну несвязанную ветку внутри useGameEngine.

@@ -3,9 +3,10 @@ import { perfMonitor, PerfSnapshot } from '../game/performanceMonitor';
 
 interface DebugOverlayProps {
   visible?: boolean;
+  nativeWorldActive?: boolean;
 }
 
-export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) => {
+export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true, nativeWorldActive = false }) => {
   const [stats, setStats] = useState<PerfSnapshot>(() => perfMonitor.getSnapshot());
 
   useEffect(() => {
@@ -18,28 +19,68 @@ export const DebugOverlay: React.FC<DebugOverlayProps> = ({ visible = true }) =>
 
   const frameColor =
     stats.frameMs > 33 ? 'text-rose-400' : stats.frameMs > 20 ? 'text-amber-300' : 'text-emerald-400';
+  const pacingDiagnosis = !stats.pageVisible || !stats.pageFocused
+    ? 'page is not foreground'
+    : stats.longTaskMaxMs >= 50
+      ? 'main-thread long task'
+      : stats.rafWaitP95Ms > 40 && stats.timerPulseAvgMs <= 32
+        ? 'rAF/compositor pacing'
+        : stats.rafWaitP95Ms > 40 && stats.timerPulseAvgMs > 40
+          ? 'host event-loop throttle'
+          : 'no pacing throttle seen';
+  const pacingColor = pacingDiagnosis === 'no pacing throttle seen'
+    ? 'text-emerald-300'
+    : pacingDiagnosis === 'rAF/compositor pacing'
+      ? 'text-amber-300'
+      : 'text-rose-300';
 
   return (
     <div className="fixed top-3 right-3 z-[60] pointer-events-none select-none font-mono text-[10px] leading-relaxed">
-      <div className="rounded-lg border border-white/10 bg-black/70 backdrop-blur-md px-3 py-2 text-slate-200 shadow-lg min-w-[148px]">
-        <div className="text-[9px] uppercase tracking-widest text-slate-500 mb-1">Debug</div>
+      <div className="rounded-lg border border-white/10 bg-black/70 backdrop-blur-md px-3 py-2 text-slate-200 shadow-lg min-w-[188px]">
+        <div className="text-[9px] uppercase tracking-widest text-slate-500 mb-1">WebView timing</div>
         <div className={`font-bold text-sm ${frameColor}`}>
           {stats.fps} FPS
           <span className="text-slate-400 font-normal text-[10px] ml-1.5">
             {stats.frameMs.toFixed(1)} ms
           </span>
         </div>
-        <div className="text-slate-400">
-          avg {stats.avgFrameMs.toFixed(1)} ms
-        </div>
+          <div className="text-slate-400">
+            avg {stats.avgFrameMs.toFixed(1)} ms · rAF p95 {stats.rafWaitP95Ms.toFixed(1)} ms
+          </div>
         <div className="mt-1 pt-1 border-t border-white/10 space-y-0.5">
-          <div>frame gap {stats.frameGapMs.toFixed(1)} ms</div>
-          <div>draw {stats.drawMs.toFixed(1)} ms</div>
-          <div>update {stats.updateMs.toFixed(1)} ms</div>
-          <div>parse/apply {stats.networkParseMs.toFixed(1)}/{stats.snapshotApplyMs.toFixed(1)} ms</div>
-          {stats.longTaskCount > 0 && <div className="text-rose-300">long task {stats.lastLongTaskMs.toFixed(0)} ms ×{stats.longTaskCount}</div>}
+          <div>callback {stats.frameCpuMs.toFixed(1)} ms · draw {stats.drawMs.toFixed(1)} ms</div>
+          <div className={stats.rafWaitMs > 33 ? 'text-amber-300' : 'text-slate-400'}>
+            rAF wait {stats.rafWaitMs.toFixed(1)} ms <span className="text-slate-500">after JS yields</span>
+          </div>
+          <div className={stats.timerPulseAvgMs > 32 ? 'text-amber-300' : 'text-slate-400'}>
+            16ms timer {stats.timerPulseMs.toFixed(1)} ms · avg {stats.timerPulseAvgMs.toFixed(1)} ms
+          </div>
+          <div className={stats.longTaskCount > 0 ? 'text-amber-300' : 'text-slate-400'}>
+            long tasks {stats.longTaskCount}/5s · max {stats.longTaskMaxMs.toFixed(1)} ms
+          </div>
+          <div className="text-slate-500">
+            {stats.pageVisible ? 'visible' : 'hidden'} · {stats.pageFocused ? 'focused' : 'blurred'} · DPR {stats.devicePixelRatio.toFixed(2)} · {stats.hardwareConcurrency ?? '?'} cores
+          </div>
+          <div className={`font-medium ${pacingColor}`}>probe: {pacingDiagnosis}</div>
+          {stats.nativeFps !== null && stats.nativeFrameMs !== null && (
+            <div className="text-cyan-300">
+              native {stats.nativeFps} FPS {stats.nativeFrameMs.toFixed(1)} ms
+            </div>
+          )}
+          {stats.nativeStaticCacheRedraws !== null && (
+            <div className="text-slate-400">
+              cache {stats.nativeStaticCacheRedraws}/0.5s · static {(stats.nativeStaticTriangles ?? 0).toLocaleString()} △ · dyn {(stats.nativeDynamicTriangles ?? 0).toLocaleString()} △
+            </div>
+          )}
+          {stats.nativeBridgeMs !== null && (
+            <div className={stats.nativeBridgeMs > 4 ? 'text-amber-300' : 'text-slate-400'}>
+              bridge {stats.nativeBridgeMs.toFixed(1)} ms · {(stats.nativeDynamicCommands ?? 0).toLocaleString()} cmd · {stats.nativeSceneTargetHz ?? 0} Hz
+            </div>
+          )}
+          <div className={nativeWorldActive ? 'text-emerald-300' : 'text-amber-300'}>
+            world {nativeWorldActive ? 'native active' : 'canvas fallback'}
+          </div>
           <div>zoom {stats.zoom.toFixed(2)}x</div>
-          <div>quality {stats.quality}</div>
           <div>
             {stats.canvasW}×{stats.canvasH}
           </div>

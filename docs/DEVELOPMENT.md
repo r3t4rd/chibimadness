@@ -116,12 +116,14 @@ cargo test --manifest-path desktop/Cargo.toml
 | Персонажи и оружие | src/game/chibiRenderer.ts, weaponAttachPoints.ts |
 | Контент и баланс | src/game/constants.ts |
 | Интерьеры и лифты | src/game/buildings.ts, buildingRenderer.ts |
-| Локальные сохранения | src/game/characterSave.tsд |
+| Локальные сохранения | src/game/characterSave.ts |
 | Сетевой клиент | src/game/multiplayerClient.ts |
 | Authoritative мир | server/src/main.rs |
 | Поведение NPC | server/src/ai.rs |
 | WebView game host, CSP и web updater | desktop/src/main.rs |
 | Native launcher и обновление game host | desktop/src/launcher.rs |
+| Experimental scene bridge | src/game/renderScene.ts, renderScene.worker.ts |
+| Rust/WGPU scene execution | desktop/src/scene_executor.rs, world_renderer.rs |
 
 ## Минимальная матрица проверки
 

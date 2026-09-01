@@ -1,10 +1,74 @@
 import { Player, DropItem, Monster, Projectile } from '../types/game';
 import { perfMonitor } from './performanceMonitor';
+import type { RenderScene } from './renderScene';
 
 export type NetEventListener = (type: string, data: any) => void;
 export type ContentBuildInfo = {
   version: string | null;
   source: 'embedded' | 'patch' | null;
+};
+
+export type NativeWorldRenderFrame = {
+  cameraX: number;
+  cameraY: number;
+  zoom: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  /** Source renderer time. Native rendering must use the same animation phase
+   * instead of inventing a separate visual timeline. */
+  timeSeconds: number;
+  theme: string;
+  entities: Array<{
+    id: string;
+    kind: string;
+    faction: string;
+    x: number;
+    y: number;
+    size: number;
+    color: [number, number, number, number];
+    velocityX: number;
+    velocityY: number;
+    hasVelocity: boolean;
+    hpRatio: number;
+    facingLeft: boolean;
+    layer: number;
+    projectileType?: string;
+    projectileRange?: number;
+    tracerLength?: number;
+    tracerWidth?: number;
+    distanceTraveled?: number;
+    chibi?: {
+      hairStyle?: string;
+      frontHairStyle?: string;
+      backHairStyle?: string;
+      hairColor?: string;
+      skinTone?: string;
+      eyeColor?: string;
+      eyeType?: string;
+      earType?: string;
+      earColor?: string;
+      innerEarColor?: string;
+      haloType?: string;
+      haloColor?: string;
+      outfitType?: string;
+      coatColor?: string;
+      skirtColor?: string;
+      accentColor?: string;
+      ribbonColor?: string;
+      hatType?: string;
+      hatColor?: string;
+      wingType?: string;
+      wingColor?: string;
+    };
+    animation?: {
+      state?: string;
+      isSprinting?: boolean;
+      jumpZ?: number;
+      spawnBounce?: number;
+      attackTimer?: number;
+      dodgeTimer?: number;
+    };
+  }>;
 };
 
 declare global {
@@ -17,6 +81,9 @@ let configuredServerUrl: string | null = null;
 const serverConfigurationListeners = new Set<() => void>();
 const contentBuildListeners = new Set<() => void>();
 let contentBuildInfo: ContentBuildInfo = { version: null, source: null };
+let nativeWorldRendererEnabled = false;
+let nativeWorldRendererReady = false;
+const nativeWorldRendererListeners = new Set<() => void>();
 let configurationRetryTimer: number | null = null;
 let nextBridgeMessageId = 1;
 
@@ -44,7 +111,17 @@ if (typeof window !== 'undefined') {
   window.addEventListener('yuyib:event', (event: Event) => {
     const detail = (event as CustomEvent<{
       event?: string;
-      payload?: { server_url?: unknown; content_version?: unknown; content_source?: unknown };
+      payload?: {
+        server_url?: unknown;
+        content_version?: unknown;
+        content_source?: unknown;
+        native_renderer?: unknown;
+        fps?: unknown;
+        frameMs?: unknown;
+        staticCacheRedraws?: unknown;
+        staticTriangles?: unknown;
+        dynamicTriangles?: unknown;
+      };
     }>).detail;
     if (detail?.event === 'game.configuration') {
       const candidate = detail.payload?.server_url;
@@ -57,12 +134,29 @@ if (typeof window !== 'undefined') {
         version: typeof version === 'string' && version.length > 0 ? version : null,
         source: source === 'embedded' || source === 'patch' ? source : null,
       };
+      const nativeRendererRequested = detail.payload?.native_renderer === true;
+      if (nativeRendererRequested !== nativeWorldRendererEnabled) {
+        nativeWorldRendererReady = false;
+      }
+      nativeWorldRendererEnabled = nativeRendererRequested;
       if (configuredServerUrl && configurationRetryTimer !== null) {
         window.clearTimeout(configurationRetryTimer);
         configurationRetryTimer = null;
       }
       serverConfigurationListeners.forEach((listener) => listener());
       contentBuildListeners.forEach((listener) => listener());
+      nativeWorldRendererListeners.forEach((listener) => listener());
+    } else if (detail?.event === 'world.renderer_ready' && nativeWorldRendererEnabled) {
+      nativeWorldRendererReady = true;
+      nativeWorldRendererListeners.forEach((listener) => listener());
+    } else if (detail?.event === 'world.renderer_metrics') {
+      perfMonitor.recordNativePresentation(
+        detail.payload?.fps,
+        detail.payload?.frameMs,
+        detail.payload?.staticCacheRedraws,
+        detail.payload?.staticTriangles,
+        detail.payload?.dynamicTriangles
+      );
     }
   });
 
@@ -76,6 +170,73 @@ export function getContentBuildInfo(): ContentBuildInfo {
 export function subscribeContentBuildInfo(listener: () => void) {
   contentBuildListeners.add(listener);
   return () => contentBuildListeners.delete(listener);
+}
+
+export function isNativeWorldRendererEnabled() {
+  return nativeWorldRendererEnabled;
+}
+
+export function isNativeWorldRendererReady() {
+  return nativeWorldRendererReady;
+}
+
+export function subscribeNativeWorldRenderer(listener: () => void) {
+  nativeWorldRendererListeners.add(listener);
+  return () => nativeWorldRendererListeners.delete(listener);
+}
+
+export function sendNativeWorldRenderFrame(frame: NativeWorldRenderFrame) {
+  if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint: 'world.frame',
+    payload: frame,
+  });
+}
+
+/**
+ * The canonical world display-list transport. It is kept separate from the
+ * old entity frame during the migration, so an incomplete WGPU executor can
+ * never silently replace the proven Canvas image.
+ */
+export function sendNativeRenderScene(scene: RenderScene) {
+  if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
+  if (scene.version !== 1 || scene.commands.length > 65_536) return;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint: 'world.scene',
+    payload: scene,
+  });
+}
+
+/**
+ * Retained native world transport. Static geometry is sent only on an
+ * invalidation; the dynamic list remains small and is the only realtime
+ * message crossing WebView2 on ordinary gameplay frames.
+ */
+export function sendNativeStaticRenderScene(scene: RenderScene) {
+  sendNativeLayeredRenderScene('world.scene.static', scene);
+}
+
+export function sendNativeDynamicRenderScene(scene: RenderScene) {
+  sendNativeLayeredRenderScene('world.scene.dynamic', scene);
+}
+
+function sendNativeLayeredRenderScene(endpoint: 'world.scene.static' | 'world.scene.dynamic', scene: RenderScene) {
+  if (!nativeWorldRendererEnabled || !window.yuyib?.post) return;
+  if (scene.version !== 1 || scene.commands.length > 65_536) return;
+  const startedAt = endpoint === 'world.scene.dynamic' ? performance.now() : 0;
+  window.yuyib.post({
+    version: 1,
+    id: nextBridgeMessageId++,
+    endpoint,
+    payload: scene,
+  });
+  if (endpoint === 'world.scene.dynamic') {
+    perfMonitor.recordNativeSceneBridge(scene.commands.length, performance.now() - startedAt);
+  }
 }
 
 class MultiplayerClient {
@@ -162,16 +323,13 @@ class MultiplayerClient {
 
       socket.onmessage = (event) => {
         if (this.ws !== socket) return;
-        const parseStartedAt = performance.now();
         try {
           const msg = JSON.parse(event.data);
-          perfMonitor.recordNetworkParse(performance.now() - parseStartedAt);
           if (msg.type === 'init_world' && typeof msg.resumeToken === 'string') {
             this.resumeToken = msg.resumeToken;
           }
           this.emitToListeners(msg.type, msg);
         } catch (e) {
-          perfMonitor.recordNetworkParse(performance.now() - parseStartedAt);
           console.error('Error parsing WS message:', e);
         }
       };

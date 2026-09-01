@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+/* WebView2 paints the document canvas white unless both the root viewport and
+   body explicitly opt into transparency. The native WGPU world is beneath it. */
+html.native-world,
+html.native-world body {
+  background: transparent !important;
+}

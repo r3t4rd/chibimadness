@@ -292,11 +292,16 @@ checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 name = "chibimadness-desktop"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
+ "bytemuck",
+ "lyon_path",
+ "lyon_tessellation",
  "serde",
  "serde_json",
  "sha2",
  "ureq",
  "url",
+ "wry",
  "yuyib",
  "zip",
 ]
@@ -638,6 +643,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "euclid"
+version = "0.22.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -659,6 +673,12 @@ dependencies = [
  "miniz_oxide",
  "zlib-rs",
 ]
+
+[[package]]
+name = "float_next_after"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
 
 [[package]]
 name = "foldhash"
@@ -1188,6 +1208,38 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "lyon_geom"
+version = "1.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4336502e29e32af93cf2dad2214ed6003c17ceb5bd499df77b1de663b9042b92"
+dependencies = [
+ "arrayvec",
+ "euclid",
+ "num-traits",
+]
+
+[[package]]
+name = "lyon_path"
+version = "1.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c463f9c428b7fc5ec885dcd39ce4aa61e29111d0e33483f6f98c74e89d8621e"
+dependencies = [
+ "lyon_geom",
+ "num-traits",
+]
+
+[[package]]
+name = "lyon_tessellation"
+version = "1.0.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dabea159dc6eea9171a541b458134b70ca95e3162d068132b2b3b9bc01aad06e"
+dependencies = [
+ "float_next_after",
+ "lyon_path",
+ "num-traits",
+]
 
 [[package]]
 name = "markup5ever"
@@ -3692,7 +3744,7 @@ dependencies = [
 [[package]]
 name = "yuyib"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=5b347c8ca07a234fb43fc80be051ed1eae145558#5b347c8ca07a234fb43fc80be051ed1eae145558"
 dependencies = [
  "yuyib-app",
  "yuyib-core",
@@ -3704,7 +3756,7 @@ dependencies = [
 [[package]]
 name = "yuyib-app"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=5b347c8ca07a234fb43fc80be051ed1eae145558#5b347c8ca07a234fb43fc80be051ed1eae145558"
 dependencies = [
  "yuyib-core",
  "yuyib-platform",
@@ -3715,12 +3767,12 @@ dependencies = [
 [[package]]
 name = "yuyib-core"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=5b347c8ca07a234fb43fc80be051ed1eae145558#5b347c8ca07a234fb43fc80be051ed1eae145558"
 
 [[package]]
 name = "yuyib-platform"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=5b347c8ca07a234fb43fc80be051ed1eae145558#5b347c8ca07a234fb43fc80be051ed1eae145558"
 dependencies = [
  "windows-sys 0.59.0",
  "winit",
@@ -3729,7 +3781,7 @@ dependencies = [
 [[package]]
 name = "yuyib-render"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=5b347c8ca07a234fb43fc80be051ed1eae145558#5b347c8ca07a234fb43fc80be051ed1eae145558"
 dependencies = [
  "pollster",
  "wgpu",
@@ -3739,7 +3791,7 @@ dependencies = [
 [[package]]
 name = "yuyib-webview"
 version = "0.1.0"
-source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8#3b82fb2e17e7af8811c1d959bfecd55dbd6f79a8"
+source = "git+https://github.com/Anerson-Auf/yuyib.git?rev=5b347c8ca07a234fb43fc80be051ed1eae145558#5b347c8ca07a234fb43fc80be051ed1eae145558"
 dependencies = [
  "serde",
  "serde_json",

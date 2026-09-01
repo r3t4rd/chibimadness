@@ -14,6 +14,7 @@ ChibiMadness — проект и Windows-дистрибутив 2D action RPG, �
 | Production world server | **server/src/main.rs** | Authoritative состояние игроков, мобов, снарядов, урона и Nullspace |
 | NPC runtime | **server/src/ai.rs** | Utility AI, архетипы, память цели, телеграфы, attack tokens и уровни 1–40 |
 | Windows-клиент | **desktop/src/launcher.rs**, **desktop/src/main.rs** | Стабильный launcher, обновляемый WebView game host, WSS и проверяемые web/native updates |
+| Native renderer | **src/game/renderScene.ts**, **desktop/src/scene_executor.rs** | Экспериментальная запись Canvas-команд и их выполнение через Rust/WGPU |
 
 **server.ts** и **server/** — разные серверы. Первый нужен для быстрого web-разработческого цикла. Rust-сервер используется там, где мир и бой должны быть authoritative.
 
@@ -102,7 +103,9 @@ Rust-процесс предоставляет только WebSocket. В produc
 ├── desktop/
 │   ├── build.rs                   # Встраивает разрешённые файлы dist/ в game host
 │   ├── src/launcher.rs            # Стабильный launcher и native self-update
-│   └── src/main.rs                # WebView game host, WSS и web patch validation
+│   ├── src/main.rs                # WebView game host, WSS и web patch validation
+│   ├── src/scene_executor.rs      # Canvas display-list → GPU triangles
+│   └── src/world_renderer.rs      # WGPU surface, scene cache и presentation
 ├── docs/
 │   ├── README.md                  # Индекс документации
 │   ├── ARCHITECTURE.md            # Runtime-границы и потоки данных
@@ -123,7 +126,9 @@ Rust-процесс предоставляет только WebSocket. В produc
 │   │   ├── worldRenderer.ts       # Мир, погода, эффекты и противники
 │   │   ├── chibiRenderer.ts       # Персонажи и экипировка
 │   │   ├── multiplayerClient.ts   # WebSocket/desktop bridge
-│   │   └── characterSave.ts       # Локальные слоты операторов
+│   │   ├── renderScene.ts          # Запись Canvas-команд для native renderer
+│   │   ├── renderScene.worker.ts   # Компиляция static/dynamic сцен вне UI thread
+│   │   └── characterSave.ts        # Локальные слоты операторов
 │   └── types/game.ts              # Общая модель игрового состояния
 ├── deploy-server.sh               # Sparse deploy Rust-сервера на текущий VPS layout
 ├── server.ts                      # Локальный/standalone Node web process
@@ -153,6 +158,12 @@ Rust-процесс предоставляет только WebSocket. В produc
 Workflow **.github/workflows/release.yml** собирает portable ZIP, Inno Setup installer, проверяемый web patch и native patch с обновляемым Rust game host. Push в main создаёт Actions artifact; тег v* дополнительно публикует все шесть файлов в GitHub Release.
 
 Стабильный **chibimadness-desktop.exe** запускает установленный или SHA-256-проверенный **chibimadness-game.exe**. Изменения launcher требуют нового installer/portable package; game host и web-контент обновляются своими patch-пакетами.
+
+Canvas2D остаётся production renderer по умолчанию и сохраняет текущий вид карты и персонажей. Экспериментальный Rust/WGPU renderer включается явно и пока не имеет полной визуальной совместимости:
+
+~~~powershell
+.\chibimadness-desktop.exe --native-renderer
+~~~
 
 Полная процедура и границы hot-update механизма описаны в [docs/RELEASES.md](docs/RELEASES.md).
 

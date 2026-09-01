@@ -2,37 +2,117 @@ export type PerfSnapshot = {
   fps: number;
   frameMs: number;
   avgFrameMs: number;
-  frameGapMs: number;
   drawMs: number;
-  updateMs: number;
-  networkParseMs: number;
-  snapshotApplyMs: number;
-  fogMs: number;
-  lastLongTaskMs: number;
+  /** CPU time spent inside the Canvas rAF callback. */
+  frameCpuMs: number;
+  /** Time after the previous callback finished until the next rAF began. */
+  rafWaitMs: number;
+  rafWaitP95Ms: number;
+  /** Actual cadence of a 16 ms timer; distinguishes rAF pacing from host throttling. */
+  timerPulseMs: number;
+  timerPulseAvgMs: number;
   longTaskCount: number;
+  longTaskMaxMs: number;
+  pageVisible: boolean;
+  pageFocused: boolean;
+  devicePixelRatio: number;
+  hardwareConcurrency: number | null;
+  nativeFps: number | null;
+  nativeFrameMs: number | null;
+  nativeStaticCacheRedraws: number | null;
+  nativeStaticTriangles: number | null;
+  nativeDynamicTriangles: number | null;
+  nativeBridgeMs: number | null;
+  nativeDynamicCommands: number | null;
+  nativeSceneTargetHz: number | null;
+  fogMs: number;
   monsters: number;
   particles: number;
   projectiles: number;
   zoom: number;
   canvasW: number;
   canvasH: number;
-  quality: string;
 };
 
 const ROLLING = 60;
+const LONG_TASK_WINDOW_MS = 5_000;
+
+type LongTask = { startedAt: number; duration: number };
 
 class PerformanceMonitor {
   private frameTimes: number[] = [];
+  private rafWaitTimes: number[] = [];
+  private timerPulseTimes: number[] = [];
+  private longTasks: LongTask[] = [];
   private frameMs = 0;
-  private frameGapMs = 0;
   private drawMs = 0;
-  private updateMs = 0;
-  private networkParseMs = 0;
-  private snapshotApplyMs = 0;
+  private frameCpuMs = 0;
+  private rafWaitMs = 0;
+  private timerPulseMs = 0;
+  private lastFrameFinishedAt: number | null = null;
+  private lastTimerAt: number | null = null;
+  private pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
+  private pageFocused = typeof document === 'undefined' || document.hasFocus();
+  private nativeFps: number | null = null;
+  private nativeFrameMs: number | null = null;
+  private nativeStaticCacheRedraws: number | null = null;
+  private nativeStaticTriangles: number | null = null;
+  private nativeDynamicTriangles: number | null = null;
+  private nativeBridgeMs: number | null = null;
+  private nativeDynamicCommands: number | null = null;
+  private nativeSceneTargetHz: number | null = null;
   private fogMs = 0;
-  private lastLongTaskMs = 0;
-  private longTaskCount = 0;
   private extras: Partial<PerfSnapshot> = {};
+
+  constructor() {
+    if (typeof window === 'undefined' || typeof performance === 'undefined') return;
+
+    // Timers and rAF use different schedulers in WebView2. A regular 16 ms
+    // pulse distinguishes a compositor/rAF cadence issue from a host event
+    // loop that is not waking the WebView promptly at all.
+    this.lastTimerAt = performance.now();
+    window.setInterval(() => {
+      const now = performance.now();
+      if (this.lastTimerAt !== null) {
+        this.timerPulseMs = now - this.lastTimerAt;
+        this.pushRolling(this.timerPulseTimes, this.timerPulseMs);
+      }
+      this.lastTimerAt = now;
+    }, 16);
+
+    const refreshPageState = () => {
+      this.pageVisible = document.visibilityState === 'visible';
+      this.pageFocused = document.hasFocus();
+    };
+    document.addEventListener('visibilitychange', refreshPageState);
+    window.addEventListener('focus', refreshPageState);
+    window.addEventListener('blur', refreshPageState);
+
+    if (typeof PerformanceObserver !== 'undefined') {
+      try {
+        const observer = new PerformanceObserver((list) => {
+          const now = performance.now();
+          for (const entry of list.getEntries()) {
+            this.longTasks.push({ startedAt: now, duration: entry.duration });
+          }
+          this.pruneLongTasks(now);
+        });
+        observer.observe({ type: 'longtask', buffered: true });
+      } catch {
+        // Long Tasks is Chromium-specific and optional. The probe remains
+        // useful when a WebView runtime does not expose this entry type.
+      }
+    }
+  }
+
+  private pushRolling(values: number[], value: number) {
+    values.push(value);
+    if (values.length > ROLLING) values.shift();
+  }
+
+  private pruneLongTasks(now: number) {
+    this.longTasks = this.longTasks.filter((task) => now - task.startedAt <= LONG_TASK_WINDOW_MS);
+  }
 
   recordFrame(totalMs: number) {
     this.frameMs = totalMs;
@@ -44,39 +124,54 @@ class PerformanceMonitor {
     this.drawMs = ms;
   }
 
-  recordFrameGap(ms: number) {
-    this.frameGapMs = ms;
-  }
-
-  recordUpdate(ms: number) {
-    this.updateMs = ms;
-  }
-
-  recordNetworkParse(ms: number) {
-    this.networkParseMs = ms;
-  }
-
-  recordSnapshotApply(ms: number) {
-    this.snapshotApplyMs = ms;
-  }
-
-  recordLongTask(ms: number) {
-    this.lastLongTaskMs = ms;
-    this.longTaskCount += 1;
-  }
-
-  observeLongTasks() {
-    if (typeof PerformanceObserver === 'undefined') return () => {};
-    const observer = new PerformanceObserver((list) => {
-      list.getEntries().forEach((entry) => this.recordLongTask(entry.duration));
-    });
-    try {
-      observer.observe({ entryTypes: ['longtask'] });
-      return () => observer.disconnect();
-    } catch {
-      observer.disconnect();
-      return () => {};
+  /**
+   * Canvas2D exposes no portable GPU-present fence. `rafWaitMs` is therefore
+   * intentionally only the observable gap after JS yields until WebView
+   * schedules the next animation callback.
+   */
+  recordWebViewFrame(callbackStartedAt: number, callbackFinishedAt: number) {
+    this.frameCpuMs = Math.max(0, callbackFinishedAt - callbackStartedAt);
+    this.rafWaitMs = this.lastFrameFinishedAt === null
+      ? 0
+      : Math.max(0, callbackStartedAt - this.lastFrameFinishedAt);
+    if (this.lastFrameFinishedAt !== null) {
+      this.pushRolling(this.rafWaitTimes, this.rafWaitMs);
     }
+    this.lastFrameFinishedAt = callbackFinishedAt;
+    this.pruneLongTasks(callbackFinishedAt);
+  }
+
+  recordNativePresentation(
+    fps: unknown,
+    frameMs: unknown,
+    staticCacheRedraws?: unknown,
+    staticTriangles?: unknown,
+    dynamicTriangles?: unknown
+  ) {
+    this.nativeFps = typeof fps === 'number' && Number.isFinite(fps)
+      ? Math.max(0, Math.round(fps))
+      : null;
+    this.nativeFrameMs = typeof frameMs === 'number' && Number.isFinite(frameMs)
+      ? Math.max(0, frameMs)
+      : null;
+    this.nativeStaticCacheRedraws = typeof staticCacheRedraws === 'number' && Number.isFinite(staticCacheRedraws)
+      ? Math.max(0, Math.round(staticCacheRedraws))
+      : null;
+    this.nativeStaticTriangles = typeof staticTriangles === 'number' && Number.isFinite(staticTriangles)
+      ? Math.max(0, Math.round(staticTriangles))
+      : null;
+    this.nativeDynamicTriangles = typeof dynamicTriangles === 'number' && Number.isFinite(dynamicTriangles)
+      ? Math.max(0, Math.round(dynamicTriangles))
+      : null;
+  }
+
+  recordNativeSceneBridge(commandCount: number, elapsedMs: number) {
+    this.nativeDynamicCommands = Math.max(0, Math.round(commandCount));
+    this.nativeBridgeMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) : null;
+  }
+
+  recordNativeSceneTargetHz(hz: number) {
+    this.nativeSceneTargetHz = Number.isFinite(hz) ? Math.max(0, Math.round(hz)) : null;
   }
 
   recordFog(ms: number) {
@@ -89,27 +184,52 @@ class PerformanceMonitor {
 
   getSnapshot(): PerfSnapshot {
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / (this.frameTimes.length || 1);
+    const rafWaitP95Ms = percentile(this.rafWaitTimes, 0.95);
+    const timerPulseAvgMs = average(this.timerPulseTimes);
+    const longTaskMaxMs = this.longTasks.reduce((max, task) => Math.max(max, task.duration), 0);
     return {
       fps: Math.round(1000 / Math.max(1, avg)),
       frameMs: this.frameMs,
       avgFrameMs: avg,
-      frameGapMs: this.frameGapMs,
       drawMs: this.drawMs,
-      updateMs: this.updateMs,
-      networkParseMs: this.networkParseMs,
-      snapshotApplyMs: this.snapshotApplyMs,
+      frameCpuMs: this.frameCpuMs,
+      rafWaitMs: this.rafWaitMs,
+      rafWaitP95Ms,
+      timerPulseMs: this.timerPulseMs,
+      timerPulseAvgMs,
+      longTaskCount: this.longTasks.length,
+      longTaskMaxMs,
+      pageVisible: this.pageVisible,
+      pageFocused: this.pageFocused,
+      devicePixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio,
+      hardwareConcurrency: typeof navigator === 'undefined' ? null : navigator.hardwareConcurrency ?? null,
+      nativeFps: this.nativeFps,
+      nativeFrameMs: this.nativeFrameMs,
+      nativeStaticCacheRedraws: this.nativeStaticCacheRedraws,
+      nativeStaticTriangles: this.nativeStaticTriangles,
+      nativeDynamicTriangles: this.nativeDynamicTriangles,
+      nativeBridgeMs: this.nativeBridgeMs,
+      nativeDynamicCommands: this.nativeDynamicCommands,
+      nativeSceneTargetHz: this.nativeSceneTargetHz,
       fogMs: this.fogMs,
-      lastLongTaskMs: this.lastLongTaskMs,
-      longTaskCount: this.longTaskCount,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
       projectiles: this.extras.projectiles ?? 0,
       zoom: this.extras.zoom ?? 1,
       canvasW: this.extras.canvasW ?? 0,
       canvasH: this.extras.canvasH ?? 0,
-      quality: this.extras.quality ?? 'high',
     };
   }
+}
+
+function average(values: number[]) {
+  return values.reduce((total, value) => total + value, 0) / (values.length || 1);
+}
+
+function percentile(values: number[], ratio: number) {
+  if (values.length === 0) return 0;
+  const index = Math.min(values.length - 1, Math.floor((values.length - 1) * ratio));
+  return [...values].sort((a, b) => a - b)[index];
 }
 
 export const perfMonitor = new PerformanceMonitor();

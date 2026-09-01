@@ -109,6 +109,8 @@ Native manifest format version равен 1, обязательно включа
 
 Изменения **desktop/src/main.rs** и native DLL распространяются через native patch. Сам launcher из **desktop/src/launcher.rs** не обновляет себя и требует нового installer/portable package.
 
+Canvas2D используется по умолчанию. Экспериментальный Rust/WGPU renderer включается флагом **--native-renderer**; его выпуск требует native patch и проверки визуальной совместимости отдельно от обычного web build.
+
 ## Production Rust server
 
 Server binary не входит в Windows artifact и не обновляется desktop patch-ом. Текущий VPS workflow вынесен в **deploy-server.sh**:
