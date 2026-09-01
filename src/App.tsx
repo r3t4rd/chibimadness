@@ -1,9 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChibiConfig, Player, Item, ChatMessage } from './types/game';
+import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
-import { drawWorldInput, screenToWorld, getCameraState, updateNativeCamera, type WorldRenderInput } from './game/worldRenderer';
-import { perfMonitor } from './game/performanceMonitor';
+import {
+  advanceCanvasCamera,
+  drawWorldInput,
+  getNativeMonsterSpriteFrame,
+  getNativePlayerSpriteFrame,
+  screenToWorld,
+  type WorldRenderInput,
+} from './game/worldRenderer';
+import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
+import {
+  createWebglHordeMobRenderer,
+  type WebglHordeMobRenderer,
+  type WebglStaticWorldView,
+} from './game/webglHordeMobRenderer';
 import { DebugOverlay } from './components/DebugOverlay';
 import { sound } from './game/audioEngine';
 import { CharacterCreator } from './components/CharacterCreator';
@@ -27,12 +39,32 @@ import {
   isNativeWorldRendererEnabled,
   isNativeWorldRendererReady,
   net,
-  sendNativeDynamicRenderScene,
-  sendNativeStaticRenderScene,
   sendNativeWorldRenderFrame,
   subscribeContentBuildInfo,
   subscribeNativeWorldRenderer,
+  type NativeWorldRenderFrame,
 } from './game/multiplayerClient';
+
+type NativeColor = [number, number, number, number];
+
+/** CSS world colours are converted once at the bridge boundary. Native never
+ * receives Canvas paint commands or browser-only colour objects. */
+function nativeColor(value: string | undefined, alpha = 1): NativeColor {
+  const hex = value?.trim();
+  if (hex?.startsWith('#')) {
+    const raw = hex.slice(1);
+    const expanded = raw.length === 3 ? raw.split('').map((channel) => channel + channel).join('') : raw;
+    if (/^[0-9a-fA-F]{6}$/.test(expanded)) {
+      return [
+        parseInt(expanded.slice(0, 2), 16) / 255,
+        parseInt(expanded.slice(2, 4), 16) / 255,
+        parseInt(expanded.slice(4, 6), 16) / 255,
+        Math.max(0, Math.min(1, alpha)),
+      ];
+    }
+  }
+  return [0.95, 0.82, 0.18, Math.max(0, Math.min(1, alpha))];
+}
 
 const FALLBACK_PLAYER: Player = {
   id: 'default',
@@ -85,81 +117,6 @@ const FALLBACK_PLAYER: Player = {
   pendingEvolutionPicks: 0,
 };
 
-function hexColor(color: string | undefined, fallback: [number, number, number, number]): [number, number, number, number] {
-  const match = color?.match(/^#([0-9a-f]{6})$/i);
-  if (!match) return fallback;
-  const value = Number.parseInt(match[1], 16);
-  return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255, 1];
-}
-
-/**
- * Native rendering deliberately consumes the same visual recipe as the Canvas
- * renderer. Do not reduce a player to a faction colour here: cosmetics are
- * part of the game state and native parity depends on carrying them across the
- * bridge intact.
- */
-function nativeChibiRecipe(chibi: ChibiConfig) {
-  return {
-    hairStyle: chibi.hairStyle,
-    frontHairStyle: chibi.frontHairStyle,
-    backHairStyle: chibi.backHairStyle,
-    hairColor: chibi.hairColor,
-    skinTone: chibi.skinTone,
-    eyeColor: chibi.eyeColor,
-    eyeType: chibi.eyeType,
-    earType: chibi.earType,
-    earColor: chibi.earColor,
-    innerEarColor: chibi.innerEarColor,
-    haloType: chibi.haloType,
-    haloColor: chibi.haloColor,
-    outfitType: chibi.outfitType,
-    coatColor: chibi.coatColor,
-    skirtColor: chibi.skirtColor,
-    accentColor: chibi.accentColor,
-    ribbonColor: chibi.ribbonColor,
-    hatType: chibi.hatType,
-    hatColor: chibi.hatColor,
-    wingType: chibi.wingType,
-    wingColor: chibi.wingColor,
-  };
-}
-
-function nativeAnimationRecipe(player: Player) {
-  return {
-    state: player.state,
-    isSprinting: player.isSprinting,
-    jumpZ: player.jumpZ,
-    spawnBounce: player.spawnBounce,
-    attackTimer: player.attackTimer,
-    dodgeTimer: player.dodgeTimer,
-  };
-}
-
-function nativeWeaponType(player: Player) {
-  return player.equipment?.weapon?.gunType || 'pistol';
-}
-
-function nativeMonsterColor(faction: string | undefined): [number, number, number, number] {
-  if (faction === 'police') return [0.12, 0.75, 1, 1];
-  if (faction === 'punk_demon') return [1, 0.2, 0.32, 1];
-  if (faction === 'bandit') return [1, 0.6, 0.12, 1];
-  return [0.75, 0.2, 0.9, 1];
-}
-
-function nativeResourceColor(type: string): [number, number, number, number] {
-  if (type === 'iron_ore') return [0.48, 0.58, 0.7, 1];
-  if (type === 'lumite_crystal') return [0.55, 0.25, 1, 1];
-  if (type === 'star_flower') return [1, 0.76, 0.18, 1];
-  return [0.12, 0.52, 0.28, 1];
-}
-
-function nativePoiColor(type: string): [number, number, number, number] {
-  if (type === 'fire_hydrant') return [1, 0.18, 0.22, 1];
-  if (type === 'vending_machine') return [0.08, 0.66, 1, 1];
-  if (type === 'steam_geyser') return [0.72, 0.86, 0.96, 1];
-  return [1, 0.68, 0.12, 1];
-}
-
 export function App() {
   const [createdPlayer, setCreatedPlayer] = useState<Player | null>(null);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -167,19 +124,51 @@ export function App() {
   const [contentBuild, setContentBuild] = useState(getContentBuildInfo);
   const [nativeWorldRendererRequested, setNativeWorldRendererRequested] = useState(isNativeWorldRendererEnabled);
   const [nativeWorldRendererReady, setNativeWorldRendererReady] = useState(isNativeWorldRendererReady);
+  const [canvasProbeMode, setCanvasProbeMode] = useState<CanvasProbeMode>('normal');
+  const canvasProbeModeRef = useRef<CanvasProbeMode>(canvasProbeMode);
+  const [dynamicRasterScale, setDynamicRasterScale] = useState(1);
+  const dynamicRasterScaleRef = useRef(dynamicRasterScale);
+  const [webglHordeMobBodies, setWebglHordeMobBodies] = useState(true);
+  const webglHordeMobBodiesRef = useRef(webglHordeMobBodies);
+  const [staticWorldLayerEnabled, setStaticWorldLayerEnabled] = useState(true);
+  const staticWorldLayerEnabledRef = useRef(staticWorldLayerEnabled);
+  // Canvas remains enabled until every actor state and combat effect has a
+  // visual-equivalent GPU path. F7 is deliberately diagnostic only: turning
+  // it off also removes Canvas fallback actors and is not a valid gameplay
+  // rendering mode yet.
+  const [dynamicCanvasLayerEnabled, setDynamicCanvasLayerEnabled] = useState(true);
+  const dynamicCanvasLayerEnabledRef = useRef(dynamicCanvasLayerEnabled);
+  const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
+  const forceStaticCanvasRef = useRef(forceStaticCanvas);
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lastNativeSceneAt = useRef(0);
-  const lastNativeEntityFrameAt = useRef(0);
-  const sceneWorkerRef = useRef<Worker | null>(null);
-  const sceneCompileInFlightRef = useRef(false);
-  const pendingSceneInputRef = useRef<{
-    input: WorldRenderInput;
-    staticOnly: boolean;
-    camera?: { x: number; y: number; zoom: number };
-  } | null>(null);
-  const nextSceneJobIdRef = useRef(1);
+
+  useEffect(() => {
+    canvasProbeModeRef.current = canvasProbeMode;
+  }, [canvasProbeMode]);
+
+  useEffect(() => {
+    dynamicRasterScaleRef.current = dynamicRasterScale;
+  }, [dynamicRasterScale]);
+
+  useEffect(() => {
+    webglHordeMobBodiesRef.current = webglHordeMobBodies;
+  }, [webglHordeMobBodies]);
+
+  useEffect(() => {
+    staticWorldLayerEnabledRef.current = staticWorldLayerEnabled;
+  }, [staticWorldLayerEnabled]);
+
+  useEffect(() => {
+    dynamicCanvasLayerEnabledRef.current = dynamicCanvasLayerEnabled;
+  }, [dynamicCanvasLayerEnabled]);
+
+  useEffect(() => {
+    forceStaticCanvasRef.current = forceStaticCanvas;
+  }, [forceStaticCanvas]);
 
   // Initialize game engine with created player or fallback
   const engine = useGameEngine(createdPlayer || FALLBACK_PLAYER);
@@ -222,61 +211,327 @@ export function App() {
     document.body.classList.toggle('bg-slate-950', !nativeWorldRenderer);
   }, [nativeWorldRenderer]);
 
-  // Scene compilation is intentionally outside the WebView's animation
-  // thread. A complete Canvas display-list is expensive to construct; doing
-  // it in requestAnimationFrame made the HUD/input loop fall to ~27 FPS even
-  // while the native WGPU surface was presenting at 240 FPS.
   useEffect(() => {
-    if (!nativeWorldRendererRequested || typeof Worker === 'undefined') return;
-    const worker = new Worker(new URL('./game/renderScene.worker.ts', import.meta.url), { type: 'module' });
-    sceneWorkerRef.current = worker;
-    const submit = (job: NonNullable<typeof pendingSceneInputRef.current>) => {
-      sceneCompileInFlightRef.current = true;
-      worker.postMessage({ id: nextSceneJobIdRef.current++, ...job });
+    const cycleDynamicRasterScale = (event: KeyboardEvent) => {
+      if (event.code !== 'F9' || event.repeat) return;
+      event.preventDefault();
+      setDynamicRasterScale((current) => current === 1 ? 0.75 : current === 0.75 ? 0.5 : 1);
     };
-    worker.onmessage = (event: MessageEvent<{
-      id: number;
-      staticScene?: unknown;
-      dynamicScene?: unknown;
-      error?: string;
-    }>) => {
-      sceneCompileInFlightRef.current = false;
-      if (event.data.staticScene) {
-        sendNativeStaticRenderScene(
-          event.data.staticScene as Parameters<typeof sendNativeStaticRenderScene>[0]
-        );
+    window.addEventListener('keydown', cycleDynamicRasterScale);
+    return () => window.removeEventListener('keydown', cycleDynamicRasterScale);
+  }, []);
+
+  useEffect(() => {
+    const toggleWebglHordeMobBodies = (event: KeyboardEvent) => {
+      if (event.code !== 'F10' || event.repeat || nativeWorldRenderer) return;
+      event.preventDefault();
+      setWebglHordeMobBodies((enabled) => !enabled);
+    };
+    window.addEventListener('keydown', toggleWebglHordeMobBodies);
+    return () => window.removeEventListener('keydown', toggleWebglHordeMobBodies);
+  }, [nativeWorldRenderer]);
+
+  useEffect(() => {
+    const toggleWebViewLayer = (event: KeyboardEvent) => {
+      if (event.repeat || nativeWorldRenderer) return;
+      if (event.code === 'F5') {
+        event.preventDefault();
+        setForceStaticCanvas((enabled) => !enabled);
+      } else if (event.code === 'F6') {
+        event.preventDefault();
+        setStaticWorldLayerEnabled((enabled) => !enabled);
+      } else if (event.code === 'F7') {
+        event.preventDefault();
+        setDynamicCanvasLayerEnabled((enabled) => !enabled);
       }
-      if (event.data.dynamicScene) {
-        sendNativeDynamicRenderScene(
-          event.data.dynamicScene as Parameters<typeof sendNativeDynamicRenderScene>[0]
-        );
-      }
-      const pending = pendingSceneInputRef.current;
-      pendingSceneInputRef.current = null;
-      // Keep one latest input while compilation runs, but always present the
-      // completed scene first. Dropping each finished result when a newer
-      // snapshot exists leaves WGPU rapidly repainting an old world.
-      if (pending) submit(pending);
     };
-    return () => {
-      worker.terminate();
-      if (sceneWorkerRef.current === worker) sceneWorkerRef.current = null;
-      sceneCompileInFlightRef.current = false;
-      pendingSceneInputRef.current = null;
+    window.addEventListener('keydown', toggleWebViewLayer);
+    return () => window.removeEventListener('keydown', toggleWebViewLayer);
+  }, [nativeWorldRenderer]);
+
+  useEffect(() => {
+    const nextMode: Record<CanvasProbeMode, CanvasProbeMode> = {
+      normal: 'static-only',
+      'static-only': 'dynamic-only',
+      'dynamic-only': 'webgl-atlas-only',
+      'webgl-atlas-only': 'present-only',
+      'present-only': 'raf-only',
+      'raf-only': 'normal',
     };
-  }, [nativeWorldRendererRequested]);
+    const cycleCanvasProbe = (event: KeyboardEvent) => {
+      if (event.code !== 'F8' || event.repeat || nativeWorldRenderer) return;
+      event.preventDefault();
+      setCanvasProbeMode((currentMode) => {
+        const next = nextMode[currentMode];
+        perfMonitor.setCanvasProbeMode(next);
+        return next;
+      });
+    };
+    window.addEventListener('keydown', cycleCanvasProbe);
+    return () => window.removeEventListener('keydown', cycleCanvasProbe);
+  }, [nativeWorldRenderer]);
 
   // Main Canvas Render Loop
   useEffect(() => {
     let animationId: number;
     let lastRenderedAt: number | null = null;
     const canvas = canvasRef.current;
-    if (!createdPlayer || (!nativeWorldRenderer && !canvas)) return;
+    const staticCanvas = staticCanvasRef.current;
+    const webglCanvas = webglCanvasRef.current;
+    if (!createdPlayer || !canvas) return;
 
-    const ctx = nativeWorldRenderer ? null : canvas?.getContext('2d');
-    if (!nativeWorldRenderer && !ctx) return;
+    // Canvas is only the compatibility renderer. The native world path never
+    // starts an OffscreenCanvas paint: WebView is reserved for DOM UI.
+    let dynamicCanvasWorker: Worker | null = null;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    if (!ctx) return;
+    let webglHordeMobRenderer: WebglHordeMobRenderer | null = webglCanvas
+      ? createWebglHordeMobRenderer(webglCanvas)
+      : null;
+    if (!nativeWorldRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        dynamicCanvasWorker = new Worker(new URL('./game/dynamicCanvas.worker.ts', import.meta.url), { type: 'module' });
+      } catch {
+        dynamicCanvasWorker = null;
+      }
+    }
+    const staticCtx = nativeWorldRenderer ? null : staticCanvas?.getContext('2d', { alpha: false }) ?? null;
+    if (!nativeWorldRenderer && (!staticCanvas || !staticCtx)) return;
+    const staticCacheCanvas = document.createElement('canvas');
+    const staticCacheCtx = nativeWorldRenderer ? null : staticCacheCanvas.getContext('2d', { alpha: false });
+    if (!nativeWorldRenderer && !staticCacheCtx) return;
     let viewportWidth = window.innerWidth;
     let viewportHeight = window.innerHeight;
+    const staticCacheMargin = 320;
+    type StaticCache = {
+      camera: { x: number; y: number; zoom: number };
+      revision: string;
+      width: number;
+      height: number;
+      image: CanvasImageSource;
+    };
+    type StaticCacheBuild = {
+      input: WorldRenderInput;
+      camera: { x: number; y: number; zoom: number };
+      revision: string;
+    };
+    let staticCache: StaticCache | null = null;
+    let uploadedStaticCache: StaticCache | null = null;
+    let webglStaticWorldView: WebglStaticWorldView | undefined;
+    let staticCacheWorker: Worker | null = null;
+    let staticCacheBuildInFlight = false;
+    let pendingStaticCacheBuild: StaticCacheBuild | null = null;
+    let nextStaticCacheBuildId = 1;
+    type DynamicRender = {
+      input: WorldRenderInput;
+      camera: { x: number; y: number; zoom: number };
+      webglHordeMobBodies: boolean;
+      nativeSpriteBodies: boolean;
+    };
+    let dynamicRenderInFlight = false;
+    let pendingDynamicRender: DynamicRender | null = null;
+    let nextDynamicRenderId = 1;
+    let dynamicRenderStartedAt: number | null = null;
+    let dynamicFrame: {
+      image: ImageBitmap;
+      width: number;
+      height: number;
+      camera: { x: number; y: number; zoom: number };
+      webglHordeMobBodies: boolean;
+      nativeSpriteBodies: boolean;
+    } | null = null;
+    let lastProbeMode = canvasProbeModeRef.current;
+    let lastLayerConfiguration = '';
+    // When every mutable pixel belongs to a native sprite, leaving even a
+    // transparent ImageBitmap canvas above WGPU makes WebView2 composite the
+    // whole window at rAF cadence. Sleep that overlay until an effect or an
+    // unsupported actor actually needs it again.
+    let nativeCanvasOverlaySleeping = false;
+
+    const releaseStaticCacheImage = (image: CanvasImageSource) => {
+      if ('close' in image && typeof image.close === 'function') {
+        image.close();
+      }
+    };
+    const replaceDynamicFrame = (
+      nextFrame: ImageBitmap,
+      width: number,
+      height: number,
+      camera: { x: number; y: number; zoom: number },
+      webglHordeMobBodies: boolean,
+      nativeSpriteBodies: boolean,
+    ) => {
+      if (dynamicFrame && dynamicFrame.image !== nextFrame) dynamicFrame.image.close();
+      dynamicFrame = { image: nextFrame, width, height, camera, webglHordeMobBodies, nativeSpriteBodies };
+    };
+    const clearDynamicFrame = () => {
+      if (dynamicFrame) dynamicFrame.image.close();
+      dynamicFrame = null;
+    };
+    const replaceStaticCache = (nextCache: StaticCache) => {
+      if (staticCache && staticCache.image !== nextCache.image) {
+        releaseStaticCacheImage(staticCache.image);
+      }
+      staticCache = nextCache;
+    };
+    const renderStaticCacheOnMainThread = (build: StaticCacheBuild) => {
+      if (!staticCacheCtx) return;
+      staticCacheCanvas.width = build.input.canvasWidth;
+      staticCacheCanvas.height = build.input.canvasHeight;
+      staticCacheCtx.clearRect(0, 0, build.input.canvasWidth, build.input.canvasHeight);
+      drawWorldInput(staticCacheCtx, build.input, { layer: 'static', camera: build.camera });
+      replaceStaticCache({
+        camera: { ...build.camera },
+        revision: build.revision,
+        width: build.input.canvasWidth,
+        height: build.input.canvasHeight,
+        image: staticCacheCanvas,
+      });
+    };
+    const startStaticCacheBuild = (build: StaticCacheBuild) => {
+      if (!staticCacheWorker) return;
+      staticCacheBuildInFlight = true;
+      try {
+        staticCacheWorker.postMessage({ id: nextStaticCacheBuildId++, ...build });
+      } catch {
+        staticCacheBuildInFlight = false;
+        staticCacheWorker.terminate();
+        staticCacheWorker = null;
+      }
+    };
+    const queueStaticCacheBuild = (build: StaticCacheBuild) => {
+      if (!staticCacheWorker) return false;
+      if (staticCacheBuildInFlight) {
+        // Never queue stale camera frames. The newest cache is the only one
+        // that can still cover the viewport when the worker becomes free.
+        pendingStaticCacheBuild = build;
+      } else {
+        startStaticCacheBuild(build);
+      }
+      return true;
+    };
+
+    const startDynamicRender = (renderInput: DynamicRender) => {
+      if (!dynamicCanvasWorker) return false;
+      dynamicRenderInFlight = true;
+      dynamicRenderStartedAt = performance.now();
+      try {
+        dynamicCanvasWorker.postMessage({ type: 'render', id: nextDynamicRenderId++, ...renderInput });
+        return true;
+      } catch {
+        dynamicRenderInFlight = false;
+        dynamicRenderStartedAt = null;
+        dynamicCanvasWorker.terminate();
+        dynamicCanvasWorker = null;
+        return false;
+      }
+    };
+    const queueDynamicRender = (renderInput: DynamicRender) => {
+      if (!dynamicCanvasWorker) return false;
+      if (dynamicRenderInFlight) {
+        // Rendering old actors after a dense scene changes is worse than
+        // skipping one presentation: retain exactly one newest snapshot.
+        pendingDynamicRender = renderInput;
+      } else {
+        return startDynamicRender(renderInput);
+      }
+      return true;
+    };
+
+    if (dynamicCanvasWorker) {
+      dynamicCanvasWorker.onmessage = (event: MessageEvent<{
+        id?: number;
+        error?: string;
+        image?: ImageBitmap;
+        width?: number;
+        height?: number;
+        camera?: { x: number; y: number; zoom: number };
+        webglHordeMobBodies?: boolean;
+        nativeSpriteBodies?: boolean;
+      }>) => {
+        if (event.data.error) {
+          dynamicRenderInFlight = false;
+          dynamicRenderStartedAt = null;
+          pendingDynamicRender = null;
+          dynamicCanvasWorker?.terminate();
+          dynamicCanvasWorker = null;
+          return;
+        }
+        if (event.data.id === undefined) return;
+        if (event.data.image && event.data.width && event.data.height && event.data.camera) {
+          if (nativeCanvasOverlaySleeping) {
+            event.data.image.close();
+          } else {
+            replaceDynamicFrame(
+              event.data.image,
+              event.data.width,
+              event.data.height,
+              event.data.camera,
+              event.data.webglHordeMobBodies === true,
+              event.data.nativeSpriteBodies === true,
+            );
+          }
+        }
+        if (dynamicRenderStartedAt !== null) {
+          perfMonitor.recordOffscreenDynamicFrame(performance.now() - dynamicRenderStartedAt);
+        }
+        dynamicRenderStartedAt = null;
+        dynamicRenderInFlight = false;
+        const pending = pendingDynamicRender;
+        pendingDynamicRender = null;
+        if (pending) startDynamicRender(pending);
+      };
+      dynamicCanvasWorker.onerror = () => {
+        dynamicRenderInFlight = false;
+        dynamicRenderStartedAt = null;
+        pendingDynamicRender = null;
+        dynamicCanvasWorker?.terminate();
+        dynamicCanvasWorker = null;
+      };
+    }
+
+    if (!nativeWorldRenderer && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined') {
+      try {
+        staticCacheWorker = new Worker(
+          new URL('./game/staticCanvasCache.worker.ts', import.meta.url),
+          { type: 'module' },
+        );
+        staticCacheWorker.onmessage = (event: MessageEvent<{
+          camera: { x: number; y: number; zoom: number };
+          revision: string;
+          width: number;
+          height: number;
+          image?: ImageBitmap;
+          error?: string;
+        }>) => {
+          staticCacheBuildInFlight = false;
+          if (event.data.image) {
+            replaceStaticCache({
+              camera: event.data.camera,
+              revision: event.data.revision,
+              width: event.data.width,
+              height: event.data.height,
+              image: event.data.image,
+            });
+          } else if (event.data.error) {
+            staticCacheWorker?.terminate();
+            staticCacheWorker = null;
+          }
+          const pending = pendingStaticCacheBuild;
+          pendingStaticCacheBuild = null;
+          if (pending && staticCacheWorker) startStaticCacheBuild(pending);
+        };
+        staticCacheWorker.onerror = () => {
+          staticCacheBuildInFlight = false;
+          staticCacheWorker?.terminate();
+          staticCacheWorker = null;
+        };
+      } catch {
+        // The synchronous HTMLCanvasElement cache below is the compatibility
+        // path for runtimes that cannot start module workers.
+        staticCacheWorker = null;
+      }
+    }
 
     // Responsive Canvas Resize Observer
     const handleResize = () => {
@@ -286,9 +541,147 @@ export function App() {
         canvas.width = viewportWidth;
         canvas.height = viewportHeight;
       }
+      if (webglCanvas) {
+        webglCanvas.width = viewportWidth;
+        webglCanvas.height = viewportHeight;
+      }
+      if (staticCanvas) {
+        staticCanvas.width = viewportWidth;
+        staticCanvas.height = viewportHeight;
+      }
+      staticCache = null;
+      uploadedStaticCache = null;
+      webglStaticWorldView = undefined;
+      if (staticCanvas) staticCanvas.style.visibility = 'visible';
+      webglHordeMobRenderer?.clear();
     };
     handleResize();
     window.addEventListener('resize', handleResize);
+
+    const renderWebglHordeMobBodies = (
+      input: WorldRenderInput,
+      camera: { x: number; y: number; zoom: number },
+    ) => {
+      if (!webglHordeMobRenderer) {
+        return false;
+      }
+      try {
+        if (!webglHordeMobRenderer.isAvailable) {
+          webglHordeMobRenderer.destroy();
+          webglHordeMobRenderer = null;
+          return false;
+        }
+        const drawActors = webglHordeMobBodiesRef.current;
+        if (drawActors || webglStaticWorldView) {
+          webglHordeMobRenderer.render(
+            input.monsters,
+            input.localPlayer,
+            camera,
+            input.players,
+            input.projectiles,
+            input.particles,
+            webglStaticWorldView,
+            drawActors,
+          );
+          return drawActors;
+        }
+        webglHordeMobRenderer.clear();
+        return false;
+      } catch {
+        // Context loss or an implementation-specific WebView GL failure must
+        // never hide a monster. The next Canvas worker frame owns every body.
+        webglHordeMobRenderer.destroy();
+        webglHordeMobRenderer = null;
+        return false;
+      }
+    };
+
+    const presentStaticWorld = (
+      worldInput: WorldRenderInput,
+      camera: { x: number; y: number; zoom: number },
+    ) => {
+      webglStaticWorldView = undefined;
+      if (nativeWorldRenderer || !staticCanvas || !staticCtx || !staticCacheCtx) return false;
+      if (!staticWorldLayerEnabledRef.current) {
+        staticCanvas.style.visibility = 'hidden';
+        return false;
+      }
+      const resourceRevision = worldInput.resourceNodes
+        .map((node) => `${node.id}:${node.hp > 0 ? 1 : 0}`)
+        .join(',');
+      const staticRevision = [
+        worldInput.localPlayer.currentZone,
+        worldInput.localPlayer.interiorBuildingId ?? '',
+        worldInput.localPlayer.interiorFloor ?? 0,
+        Math.floor((worldInput.gameTimePhase ?? 0.35) * 12),
+        resourceRevision,
+      ].join('|');
+      const cacheShiftX = staticCache
+        ? Math.abs(camera.x - staticCache.camera.x) * staticCache.camera.zoom
+        : Infinity;
+      const cacheShiftY = staticCache
+        ? Math.abs(camera.y - staticCache.camera.y) * staticCache.camera.zoom
+        : Infinity;
+      const cacheNeedsRefresh = !staticCache
+        || staticCache.revision !== staticRevision
+        || cacheShiftX > staticCacheMargin * 0.45
+        || cacheShiftY > staticCacheMargin * 0.45
+        || Math.abs(camera.zoom - staticCache.camera.zoom) > 0.025;
+
+      if (cacheNeedsRefresh) {
+        const cacheWidth = viewportWidth + staticCacheMargin * 2;
+        const cacheHeight = viewportHeight + staticCacheMargin * 2;
+        const build: StaticCacheBuild = {
+          input: { ...worldInput, canvasWidth: cacheWidth, canvasHeight: cacheHeight },
+          camera: { ...camera },
+          revision: staticRevision,
+        };
+        if (!staticCache || !queueStaticCacheBuild(build)) renderStaticCacheOnMainThread(build);
+      }
+      if (!staticCache) return false;
+
+      const sourceWidth = viewportWidth * staticCache.camera.zoom / camera.zoom;
+      const sourceHeight = viewportHeight * staticCache.camera.zoom / camera.zoom;
+      const rawSourceX = (staticCache.width - sourceWidth) / 2
+        + (camera.x - staticCache.camera.x) * staticCache.camera.zoom;
+      const rawSourceY = (staticCache.height - sourceHeight) / 2
+        + (camera.y - staticCache.camera.y) * staticCache.camera.zoom;
+      const sourceX = Math.max(0, Math.min(staticCache.width - sourceWidth, rawSourceX));
+      const sourceY = Math.max(0, Math.min(staticCache.height - sourceHeight, rawSourceY));
+      const canUseWebgl = !forceStaticCanvasRef.current && webglHordeMobRenderer?.isAvailable;
+      if (canUseWebgl && webglHordeMobRenderer) {
+        if (uploadedStaticCache !== staticCache) {
+          uploadedStaticCache = webglHordeMobRenderer.uploadStaticWorld(staticCache.image) ? staticCache : null;
+        }
+        if (uploadedStaticCache === staticCache) {
+          webglStaticWorldView = {
+            sourceX,
+            sourceY,
+            sourceWidth,
+            sourceHeight,
+            textureWidth: staticCache.width,
+            textureHeight: staticCache.height,
+          };
+          staticCanvas.style.visibility = 'hidden';
+          return true;
+        }
+      }
+
+      staticCanvas.style.visibility = 'visible';
+      staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+      staticCtx.drawImage(
+        staticCache.image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        viewportWidth,
+        viewportHeight,
+      );
+      return false;
+    };
 
     const render = (time: number) => {
       const callbackStartedAt = performance.now();
@@ -296,9 +689,7 @@ export function App() {
       lastRenderedAt = time;
       const timeInSeconds = (time % 10000000) / 1000;
       const curEngine = engineRef.current;
-      // Canvas keeps the complete presentation input. Native mode splits it:
-      // only map state reaches the static compiler, while a bounded entity
-      // snapshot reaches Rust at its own cadence.
+      // Native retains the map as a GPU texture. Dynamic actors stay on Canvas.
       const buildWorldRenderInput = (): WorldRenderInput => ({
         canvasWidth: viewportWidth,
         canvasHeight: viewportHeight,
@@ -319,212 +710,117 @@ export function App() {
         summons: curEngine.summons,
         gameTimePhase: curEngine.gameTimePhase,
       });
-      const buildStaticWorldRenderInput = (): WorldRenderInput => ({
-        canvasWidth: viewportWidth,
-        canvasHeight: viewportHeight,
-        localPlayer: curEngine.player,
-        players: {},
-        monsters: [],
-        resourceNodes: curEngine.resourceNodes,
-        dropItems: [],
-        projectiles: [],
-        particles: [],
-        damagePopups: [],
-        groundDecals: [],
-        time: timeInSeconds,
-        worldPois: curEngine.worldPois,
-        cars: [],
-        summons: [],
-        gameTimePhase: curEngine.gameTimePhase,
-      });
+      const camera = advanceCanvasCamera(
+        curEngine.player,
+        timeInSeconds,
+        curEngine.screenShake,
+        curEngine.introCinematic,
+      );
       if (nativeWorldRendererRequested) {
-        const camera = updateNativeCamera(curEngine.player, time);
-        // Desktop-native presentation owns actor geometry. The worker produces
-        // only cacheable map data once WGPU is ready; dynamic Canvas commands
-        // must never cross the WebView bridge in the gameplay hot path.
-        const staticOnly = nativeWorldRenderer;
-        const denseNativeScene = curEngine.monsters.length >= 20
-          || curEngine.particles.length >= 48
-          || curEngine.projectiles.length >= 16;
-        const nativeSceneTargetHz = staticOnly ? 15 : denseNativeScene ? 60 : 120;
-        const nativeSceneIntervalMs = 1000 / nativeSceneTargetHz;
-        perfMonitor.recordNativeSceneTargetHz(nativeSceneTargetHz);
-        if (time - lastNativeSceneAt.current >= nativeSceneIntervalMs) {
-          lastNativeSceneAt.current = time;
-          const worldRenderInput = staticOnly
-            ? buildStaticWorldRenderInput()
-            : buildWorldRenderInput();
-          const sceneJob = { input: worldRenderInput, staticOnly, camera };
-          if (sceneCompileInFlightRef.current) {
-            // Keep at most one newest snapshot; a queue would recreate the
-            // same long-task backlog after a dense horde arrives.
-            pendingSceneInputRef.current = sceneJob;
-          } else {
-            const worker = sceneWorkerRef.current;
-            if (worker) {
-              sceneCompileInFlightRef.current = true;
-              worker.postMessage({ id: nextSceneJobIdRef.current++, ...sceneJob });
-            }
-          }
-        }
-        const nativeEntityTargetHz = nativeWorldRenderer ? 60 : 30;
-        if (time - lastNativeEntityFrameAt.current >= 1000 / nativeEntityTargetHz) {
-          lastNativeEntityFrameAt.current = time;
-          const nativeViewPadding = 180;
-        const nativeHalfWidth = viewportWidth / camera.zoom / 2 + nativeViewPadding;
-        const nativeHalfHeight = viewportHeight / camera.zoom / 2 + nativeViewPadding;
-        const inNativeView = (x: number, y: number, size = 0) => (
-          Math.abs(x - camera.x) <= nativeHalfWidth + size
-          && Math.abs(y - camera.y) <= nativeHalfHeight + size
-        );
-        const entities = [
-          {
-            id: curEngine.player.id,
-            kind: 'player',
-            faction: '',
-            x: curEngine.player.x,
-            y: curEngine.player.y,
-            size: 38,
-            color: [0.1, 0.9, 1, 1] as [number, number, number, number],
-            velocityX: curEngine.player.vx,
-            velocityY: curEngine.player.vy,
-            hasVelocity: true,
-            hpRatio: curEngine.player.stats.maxHp > 0 ? curEngine.player.stats.hp / curEngine.player.stats.maxHp : 1,
-            facingLeft: curEngine.player.facing === 'left',
-            layer: 20,
-            chibi: nativeChibiRecipe(curEngine.player.chibi),
-            animation: nativeAnimationRecipe(curEngine.player),
-            weaponType: nativeWeaponType(curEngine.player),
-          },
-          ...(Object.values(curEngine.remotePlayers) as Player[])
-            .filter((player) => inNativeView(player.x, player.y, 48))
-            .map((player) => ({
-            id: player.id,
-            kind: 'player',
-            faction: '',
-            x: player.x,
-            y: player.y,
-            size: 34,
-            color: [0.35, 0.65, 1, 1] as [number, number, number, number],
-            velocityX: player.vx,
-            velocityY: player.vy,
-            hasVelocity: true,
-            hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 1,
-            facingLeft: player.facing === 'left',
-            layer: 18,
-            chibi: nativeChibiRecipe(player.chibi),
-            animation: nativeAnimationRecipe(player),
-            weaponType: nativeWeaponType(player),
-          })),
-          ...curEngine.monsters
-            .filter((monster) => monster.state !== 'dead' && monster.hp > 0 && inNativeView(monster.x, monster.y, 90))
-            .map((monster) => ({
+          const nativeMonsterSprites: NativeWorldRenderFrame['entities'] = curEngine.monsters
+            .filter((monster) => monster.hp > 0)
+            .map((monster) => {
+            const spriteKey = getNativeMonsterSpriteFrame(monster);
+            return {
               id: monster.id,
               kind: 'monster',
-              faction: monster.faction || '',
+              faction: monster.faction ?? '',
               x: monster.x,
-              y: monster.y - (monster.jumpZ || 0),
-              size: monster.isBoss ? 70 : monster.isJuggernaut ? 52 : 34,
-              color: nativeMonsterColor(monster.faction),
+              y: monster.y,
+              size: monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+              color: [1, 1, 1, 1] as [number, number, number, number],
               velocityX: 0,
               velocityY: 0,
               hasVelocity: false,
-              hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 1,
+              hpRatio: monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
               facingLeft: monster.facing === 'left',
-              layer: 10,
-              chibi: monster.humanChibi ? nativeChibiRecipe(monster.humanChibi) : undefined,
-              animation: {
-                state: monster.state === 'chase' ? 'walk' : monster.state,
-                jumpZ: monster.jumpZ || 0,
-                attackTimer: monster.attackCooldown,
-                dodgeTimer: monster.dodgeTimer || 0,
-              },
-              weaponType: monster.weaponType || 'pistol',
-              hasShield: Boolean(monster.hasShield),
-            })),
-          ...curEngine.projectiles.filter((projectile) => inNativeView(projectile.x, projectile.y, 48)).map((projectile) => ({
+              layer: Math.round(monster.y),
+              weaponType: monster.weaponType,
+              hasShield: monster.hasShield,
+              effectType: monster.type,
+              chibi: monster.humanChibi,
+              spriteKey: spriteKey ?? undefined,
+            };
+          });
+          const nativePlayerSprites: NativeWorldRenderFrame['entities'] = (Object.values(curEngine.remotePlayers) as Player[])
+            .concat(curEngine.remotePlayers[curEngine.player.id] ? [] : [curEngine.player])
+            .map((player) => {
+              const spriteKey = getNativePlayerSpriteFrame(player);
+              return {
+                id: player.id,
+                kind: 'player',
+                faction: '',
+                x: player.x,
+                y: player.y,
+                size: 48,
+                color: [1, 1, 1, 1] as [number, number, number, number],
+                velocityX: player.vx ?? 0,
+                velocityY: player.vy ?? 0,
+                hasVelocity: true,
+                hpRatio: player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 0,
+                facingLeft: player.facing === 'left',
+                layer: Math.round(player.y),
+                weaponType: player.equipment.weapon?.gunType,
+                chibi: player.chibi,
+                animation: {
+                  state: player.state,
+                  isSprinting: player.isSprinting,
+                  jumpZ: player.jumpZ,
+                  spawnBounce: player.spawnBounce,
+                  attackTimer: player.attackTimer,
+                  dodgeTimer: player.dodgeTimer,
+                },
+                spriteKey: spriteKey ?? undefined,
+              };
+            });
+          const nativeProjectiles: NativeWorldRenderFrame['entities'] = curEngine.projectiles.map((projectile) => ({
             id: projectile.id,
-            kind: 'projectile',
-            faction: projectile.faction || '',
-            x: projectile.x,
-            y: projectile.y + (projectile.visualOffsetY || 0),
-            size: Math.max(4, projectile.size * 1.8),
-            color: hexColor(projectile.color, [1, 0.9, 0.2, 1]),
-            velocityX: projectile.vx,
-            velocityY: projectile.vy,
-            hasVelocity: true,
-            hpRatio: 1,
-            facingLeft: projectile.vx < 0,
-            layer: 30,
-            projectileType: projectile.type,
-            projectileRange: projectile.range,
-            tracerLength: projectile.tracerLength,
-            tracerWidth: projectile.tracerWidth,
+            kind: 'projectile', faction: projectile.faction ?? '', x: projectile.x,
+            y: projectile.y + (projectile.visualOffsetY ?? 0) * Math.max(0, 1 - projectile.distanceTraveled / 260),
+            size: Math.max(1, projectile.size), color: nativeColor(projectile.color),
+            velocityX: projectile.vx, velocityY: projectile.vy, hasVelocity: true, hpRatio: 1,
+            facingLeft: projectile.vx < 0, layer: Math.round(projectile.y),
+            projectileType: projectile.type, projectileRange: projectile.range,
+            tracerLength: projectile.tracerLength, tracerWidth: projectile.tracerWidth,
             distanceTraveled: projectile.distanceTraveled,
-          })),
-          ...curEngine.resourceNodes
-            .filter((node) => node.hp > 0 && inNativeView(node.x, node.y, 80))
-            .map((node) => ({
-              id: `resource:${node.id}`,
-              kind: 'resource',
-              faction: '',
-              x: node.x,
-              y: node.y,
-              size: Math.max(34, 52 * (node.scale || 1)),
-              color: nativeResourceColor(node.type),
-              velocityX: 0,
-              velocityY: 0,
-              hasVelocity: false,
-              hpRatio: node.maxHp > 0 ? node.hp / node.maxHp : 1,
-              facingLeft: false,
-              layer: 7,
-            })),
-          ...curEngine.dropItems.filter((drop) => inNativeView(drop.x, drop.y, 28)).map((drop) => ({
-            id: `drop:${drop.id}`,
-            kind: 'pickup',
-            faction: '',
-            x: drop.x,
-            y: drop.y - drop.bounceOffset,
-            size: drop.isXpGem ? 14 : 20,
-            color: drop.isXpGem ? [0.32, 1, 0.74, 1] as [number, number, number, number] : [1, 0.72, 0.16, 1] as [number, number, number, number],
-            velocityX: drop.vx || 0,
-            velocityY: drop.vy || 0,
-            hasVelocity: Boolean(drop.vx || drop.vy),
-            hpRatio: 1,
-            facingLeft: false,
-            layer: 14,
-          })),
-          ...curEngine.cars.filter((car) => inNativeView(car.x, car.y, 160)).map((car) => ({
-            id: `car:${car.id}`,
-            kind: 'vehicle',
-            faction: car.type === 'police_car' ? 'police' : 'punk_demon',
-            x: car.x,
-            y: car.y,
-            size: Math.max(car.width, car.height),
-            color: car.type === 'police_car' ? [0.08, 0.68, 1, 1] as [number, number, number, number] : [1, 0.14, 0.35, 1] as [number, number, number, number],
-            velocityX: car.vx,
-            velocityY: car.vy,
-            hasVelocity: true,
-            hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 1,
-            facingLeft: car.facing === 'left',
-            layer: 16,
-          })),
-          ...curEngine.worldPois.filter((poi) => inNativeView(poi.x, poi.y, 80)).map((poi) => ({
-            id: `poi:${poi.id}`,
-            kind: 'poi',
-            faction: '',
-            x: poi.x,
-            y: poi.y,
-            size: Math.max(20, poi.radius || Math.max(poi.width || 0, poi.height || 0) || 28),
-            color: nativePoiColor(poi.type),
-            velocityX: 0,
-            velocityY: 0,
-            hasVelocity: false,
-            hpRatio: 1,
-            facingLeft: false,
-            layer: 8,
-          })),
-        ].slice(0, 128);
+          }));
+          const nativeParticles: NativeWorldRenderFrame['entities'] = curEngine.particles.map((particle, index) => ({
+            id: `particle:${index}:${particle.x}:${particle.y}`,
+            kind: 'particle', faction: '', x: particle.x, y: particle.y, size: Math.max(1, particle.size),
+            color: nativeColor(particle.color, particle.alpha), velocityX: particle.vx, velocityY: particle.vy,
+            hasVelocity: true, hpRatio: 1, facingLeft: particle.vx < 0, layer: Math.round(particle.y), effectType: particle.shape,
+          }));
+          const nativeDrops: NativeWorldRenderFrame['entities'] = curEngine.dropItems.map((drop) => ({
+            id: drop.id, kind: 'pickup', faction: '', x: drop.x,
+            y: drop.y - Math.abs(Math.sin(timeInSeconds * 4 + drop.x)) * 8,
+            size: drop.isXpGem ? 14 : 24, color: drop.isXpGem ? nativeColor('#FACC15') : nativeColor('#38BDF8'),
+            velocityX: drop.vx ?? 0, velocityY: drop.vy ?? 0, hasVelocity: Boolean(drop.vx || drop.vy),
+            hpRatio: 1, facingLeft: false, layer: Math.round(drop.y), effectType: drop.isXpGem ? 'xp_gem' : 'item',
+          }));
+          const nativeDecals: NativeWorldRenderFrame['entities'] = curEngine.groundDecals.map((decal) => ({
+            id: decal.id, kind: 'decal', faction: '', x: decal.x, y: decal.y, size: Math.max(1, decal.radius),
+            color: nativeColor(decal.color, decal.alpha), velocityX: 0, velocityY: 0, hasVelocity: false,
+            hpRatio: 1, facingLeft: false, layer: Math.round(decal.y) - 1, effectType: decal.type ?? 'blood',
+          }));
+          const nativeSummons: NativeWorldRenderFrame['entities'] = curEngine.summons.map((summon) => ({
+            id: summon.id, kind: 'summon', faction: '', x: summon.x, y: summon.y, size: 34 * summon.scale,
+            color: nativeColor(summon.kind === 'golem' ? '#A8A29E' : summon.kind === 'totem' ? '#C084FC' : '#F97316'),
+            velocityX: 0, velocityY: 0, hasVelocity: false, hpRatio: summon.maxHp > 0 ? summon.hp / summon.maxHp : 0,
+            facingLeft: summon.facing === 'left', layer: Math.round(summon.y), effectType: summon.kind,
+          }));
+          const nativeCars: NativeWorldRenderFrame['entities'] = curEngine.cars.map((car) => ({
+            id: car.id, kind: 'vehicle', faction: '', x: car.x, y: car.y, size: Math.max(car.width, car.height) * 0.5,
+            color: nativeColor(car.type === 'police_car' ? '#38BDF8' : '#FB2C4A'), velocityX: car.vx, velocityY: car.vy,
+            hasVelocity: true, hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 0,
+            facingLeft: car.facing === 'left', layer: Math.round(car.y), effectType: car.type,
+          }));
+          const nativePopups: NativeWorldRenderFrame['entities'] = curEngine.damagePopups.map((popup) => ({
+            id: popup.id, kind: 'popup', faction: '', x: popup.x, y: popup.y, size: 12 * (popup.scale ?? 1),
+            color: nativeColor(popup.color, popup.maxLife > 0 ? popup.life / popup.maxLife : 1),
+            velocityX: popup.vx ?? 0, velocityY: popup.vy ?? 0, hasVelocity: Boolean(popup.vx || popup.vy),
+            hpRatio: 1, facingLeft: false, layer: Math.round(popup.y),
+            effectType: popup.type ?? (popup.isCrit ? 'crit' : popup.isHeal ? 'heal' : 'damage'),
+          }));
           sendNativeWorldRenderFrame({
             cameraX: camera.x,
             cameraY: camera.y,
@@ -532,42 +828,199 @@ export function App() {
             viewportWidth,
             viewportHeight,
             timeSeconds: timeInSeconds,
-          theme: curEngine.player.currentZone,
-          entities,
+            theme: curEngine.player.currentZone,
+            entities: [
+              ...nativeDecals, ...nativeDrops, ...nativeCars, ...nativeSummons,
+              ...nativeMonsterSprites, ...nativePlayerSprites, ...nativeProjectiles,
+              ...nativeParticles, ...nativePopups,
+            ],
           });
-        }
-        perfMonitor.setExtras({
-          monsters: curEngine.monsters.filter((monster) => monster.state !== 'dead').length,
-          particles: curEngine.particles.length,
-          projectiles: curEngine.projectiles.length,
-          zoom: camera.zoom,
-          canvasW: viewportWidth,
-          canvasH: viewportHeight,
-        });
-        if (nativeWorldRenderer) {
-          perfMonitor.recordDraw(0);
-          perfMonitor.recordFrame(frameIntervalMs);
-          animationId = requestAnimationFrame(render);
-          return;
-        }
       }
 
+      const drawStart = performance.now();
+      const activeCanvasProbeMode = canvasProbeModeRef.current;
+      const probeModeChanged = activeCanvasProbeMode !== lastProbeMode;
+      const layerConfiguration = [
+        staticWorldLayerEnabledRef.current ? 1 : 0,
+        dynamicCanvasLayerEnabledRef.current ? 1 : 0,
+        forceStaticCanvasRef.current ? 1 : 0,
+      ].join('');
+      const layerConfigurationChanged = layerConfiguration !== lastLayerConfiguration;
+      if (layerConfigurationChanged) {
+        if (!dynamicCanvasLayerEnabledRef.current) {
+          dynamicCanvasWorker?.postMessage({ type: 'clear' });
+          clearDynamicFrame();
+          ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        }
+        if (!staticWorldLayerEnabledRef.current && staticCanvas) staticCanvas.style.visibility = 'hidden';
+        lastLayerConfiguration = layerConfiguration;
+      }
+      if (probeModeChanged) {
+        if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
+          dynamicCanvasWorker?.postMessage({ type: 'clear' });
+        }
+        if (activeCanvasProbeMode !== 'normal' && staticCanvas) staticCanvas.style.visibility = 'visible';
+        lastProbeMode = activeCanvasProbeMode;
+      }
+      if (activeCanvasProbeMode !== 'normal' && activeCanvasProbeMode !== 'dynamic-only') {
+        webglHordeMobRenderer?.clear();
+      }
+      const presentDynamicOverlay = (worldInput: WorldRenderInput) => {
+        // Native owns its generated atlas bodies. Do not leave a WebGL canvas
+        // sandwiched between WGPU and the UI: it would duplicate work and
+        // produce two independently paced actor layers.
+        const nativeSpriteBodies = nativeWorldRenderer;
+        if (nativeSpriteBodies) {
+          // `world.frame` above owns every mutable world entity. Do not
+          // rasterize or present a transparent Canvas bitmap over WGPU: that
+          // would reintroduce the 60 Hz WebView compositor cap even when the
+          // Canvas command list is otherwise empty.
+          if (!nativeCanvasOverlaySleeping) {
+            nativeCanvasOverlaySleeping = true;
+            pendingDynamicRender = null;
+            clearDynamicFrame();
+            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+            canvas.style.visibility = 'hidden';
+            if (staticCanvas) staticCanvas.style.visibility = 'hidden';
+            if (webglCanvas) webglCanvas.style.visibility = 'hidden';
+          }
+          return false;
+        }
+        canvas.style.visibility = 'visible';
+        if (webglCanvas) webglCanvas.style.visibility = 'visible';
+        const webglBodiesActive = nativeSpriteBodies
+          ? false
+          : renderWebglHordeMobBodies(worldInput, camera);
+        if (!dynamicCanvasLayerEnabledRef.current) return webglBodiesActive;
+        const allNativeActors = nativeSpriteBodies
+          // A dying enemy still has a Canvas ragdoll / death effect, so do
+          // not sleep the overlay merely because its state is already dead.
+          && worldInput.monsters.every((monster) => getNativeMonsterSpriteFrame(monster) !== null)
+          && [...Object.values(worldInput.players), worldInput.localPlayer]
+            .filter((player): player is Player => Boolean(player))
+            .every((player) => getNativePlayerSpriteFrame(player) !== null);
+        const noCanvasEffects = worldInput.dropItems.length === 0
+          && worldInput.projectiles.length === 0
+          && worldInput.particles.length === 0
+          && worldInput.damagePopups.length === 0
+          && worldInput.groundDecals.length === 0
+          && worldInput.cars.length === 0
+          && worldInput.summons.length === 0
+          && (!worldInput.introCinematic || worldInput.introCinematic.phase === 'none' || worldInput.introCinematic.phase === 'complete');
+        if (allNativeActors && noCanvasEffects) {
+          if (!nativeCanvasOverlaySleeping) {
+            nativeCanvasOverlaySleeping = true;
+            pendingDynamicRender = null;
+            clearDynamicFrame();
+            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+          }
+          return webglBodiesActive;
+        }
+        nativeCanvasOverlaySleeping = false;
+        const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
+        const workerInput = rasterScale === 1
+          ? worldInput
+          : {
+            ...worldInput,
+            canvasWidth: Math.max(1, Math.round(viewportWidth * rasterScale)),
+            canvasHeight: Math.max(1, Math.round(viewportHeight * rasterScale)),
+          };
+        const workerCamera = rasterScale === 1 ? camera : { ...camera, zoom: camera.zoom * rasterScale };
+        const workerQueued = queueDynamicRender({
+          input: workerInput,
+          camera: workerCamera,
+          webglHordeMobBodies: webglBodiesActive,
+          nativeSpriteBodies,
+        });
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        if (
+          dynamicFrame
+          && dynamicFrame.webglHordeMobBodies === webglBodiesActive
+          && dynamicFrame.nativeSpriteBodies === nativeSpriteBodies
+        ) {
+          // A worker frame was painted against its own camera. Reproject it
+          // while the next frame is in flight, otherwise actors visibly lag
+          // behind the camera at the worker cadence.
+          const sourceZoom = Math.max(0.01, dynamicFrame.camera.zoom);
+          const scale = camera.zoom / sourceZoom;
+          ctx.save();
+          ctx.translate(
+            viewportWidth / 2 + (dynamicFrame.camera.x - camera.x) * camera.zoom,
+            viewportHeight / 2 + (dynamicFrame.camera.y - camera.y) * camera.zoom,
+          );
+          ctx.scale(scale, scale);
+          ctx.drawImage(
+            dynamicFrame.image,
+            -dynamicFrame.width / 2,
+            -dynamicFrame.height / 2,
+          );
+          ctx.restore();
+        } else if (!nativeWorldRenderer || !workerQueued) {
+          // Native already shows the map. Skip a main-thread chibi paint while
+          // the overlay worker warms up — that paint is the freeze we removed.
+          drawWorldInput(ctx, worldInput, {
+            layer: 'dynamic',
+            camera,
+            skipWebglHordeMobBodies: webglBodiesActive,
+            skipWebglPlayerBodies: webglBodiesActive,
+            skipWebglProjectiles: webglBodiesActive,
+            skipWebglParticles: webglBodiesActive,
+            skipNativeSpriteBodies: nativeSpriteBodies,
+          });
+        }
+      };
+      if (nativeWorldRenderer || activeCanvasProbeMode === 'normal') {
+        const worldInput = buildWorldRenderInput();
+        if (!nativeWorldRenderer) presentStaticWorld(worldInput, camera);
+        presentDynamicOverlay(worldInput);
+      } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'static-only') {
+        // Terrain, buildings and world dressing. This is the candidate for a
+        // retained/tiled Canvas cache if it is the pacing bottleneck.
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        drawWorldInput(staticCtx, buildWorldRenderInput(), { layer: 'static', camera });
+      } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'dynamic-only') {
+        // Actors and screen-space effects, deliberately without static world
+        // geometry. Clear first so dynamic pixels do not accumulate between
+        // diagnostic frames.
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+        presentDynamicOverlay(buildWorldRenderInput());
+      } else if (!nativeWorldRenderer && activeCanvasProbeMode === 'webgl-atlas-only') {
+        if (probeModeChanged) ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+        const webglBodiesActive = renderWebglHordeMobBodies(buildWorldRenderInput(), camera);
+        if (webglBodiesActive && webglHordeMobRenderer?.lastDrawnMobCount === 0) {
+          webglHordeMobRenderer.renderCalibrationGrid();
+        }
+      } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'present-only') {
+        // Exercise the Canvas2D presentation path without constructing the
+        // game's display list. The slate page background stays visible.
+        staticCtx.clearRect(0, 0, viewportWidth, viewportHeight);
+        ctx.clearRect(0, 0, viewportWidth, viewportHeight);
+      }
+      // raf-only intentionally performs no Canvas calls. It isolates WebView
+      // scheduling from Canvas command submission and compositing.
       perfMonitor.setExtras({
         monsters: curEngine.monsters.filter((m) => m.state !== 'dead').length,
         particles: curEngine.particles.length,
         projectiles: curEngine.projectiles.length,
-        zoom: getCameraState().zoom,
+        zoom: camera.zoom,
         canvasW: viewportWidth,
         canvasH: viewportHeight,
+        dynamicRasterScale: dynamicRasterScaleRef.current,
+        webglHordeMobBodies: webglHordeMobBodiesRef.current && webglHordeMobRenderer !== null,
+        webglMonsterBodies: webglHordeMobRenderer?.lastDrawnMonsterCount ?? 0,
+        staticWorldLayerEnabled: staticWorldLayerEnabledRef.current,
+        dynamicCanvasLayerEnabled: dynamicCanvasLayerEnabledRef.current,
+        forceStaticCanvas: forceStaticCanvasRef.current,
+        webglStaticWorldActive: webglStaticWorldView !== undefined,
       });
-
-      const worldRenderInput = buildWorldRenderInput();
-      const drawStart = performance.now();
-      drawWorldInput(ctx, worldRenderInput);
       const callbackFinishedAt = performance.now();
-      perfMonitor.recordDraw(callbackFinishedAt - drawStart);
-      perfMonitor.recordFrame(frameIntervalMs);
-      perfMonitor.recordWebViewFrame(callbackStartedAt, callbackFinishedAt);
+      perfMonitor.recordCanvasWebViewFrame(
+        frameIntervalMs,
+        callbackStartedAt,
+        drawStart,
+        callbackFinishedAt,
+      );
       animationId = requestAnimationFrame(render);
     };
 
@@ -576,6 +1029,11 @@ export function App() {
     return () => {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
+      dynamicCanvasWorker?.terminate();
+      staticCacheWorker?.terminate();
+      dynamicFrame?.image.close();
+      webglHordeMobRenderer?.destroy();
+      if (staticCache) releaseStaticCacheImage(staticCache.image);
     };
   }, [createdPlayer, nativeWorldRenderer, nativeWorldRendererRequested]);
 
@@ -685,25 +1143,26 @@ export function App() {
         />
       ) : (
         <>
-          {/* Native mode deliberately has no Canvas element: the transparent
-              WebView only owns input/HUD, while Rust owns every world pixel. */}
-          {nativeWorldRenderer ? (
-            <div
-              aria-label="Game world input"
-              onContextMenu={(e) => e.preventDefault()}
-              onMouseDown={handleWorldPointerDown}
-              onMouseUp={handleWorldPointerUp}
-              className="absolute inset-0 cursor-crosshair"
-            />
-          ) : (
-            <canvas
-              ref={canvasRef}
-              onContextMenu={(e) => e.preventDefault()}
-              onMouseDown={handleWorldPointerDown}
-              onMouseUp={handleWorldPointerUp}
-              className="absolute inset-0 block w-full h-full cursor-crosshair"
-            />
-          )}
+          {/* Native owns the retained map. Dynamic canvas stays a transparent
+              overlay so chibis never cross the command-list bridge. WebGL atlas
+              quads sit between the two for eligible horde bodies. */}
+          <canvas
+            ref={staticCanvasRef}
+            aria-hidden="true"
+            className={`absolute inset-0 block w-full h-full pointer-events-none ${nativeWorldRenderer ? 'hidden' : ''}`}
+          />
+          <canvas
+            ref={webglCanvasRef}
+            aria-hidden="true"
+            className="absolute inset-0 block w-full h-full pointer-events-none"
+          />
+          <canvas
+            ref={canvasRef}
+            onContextMenu={(e) => e.preventDefault()}
+            onMouseDown={handleWorldPointerDown}
+            onMouseUp={handleWorldPointerUp}
+            className="absolute inset-0 block w-full h-full cursor-crosshair bg-transparent"
+          />
 
           {/* 3. Floating In-Game Toast Notifications */}
           <AnimatePresence>

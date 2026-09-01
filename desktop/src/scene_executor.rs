@@ -263,12 +263,20 @@ fn number_at(args: &[serde_json::Value], index: usize) -> Option<f32> {
     args.get(index).and_then(number)
 }
 
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 fn css_color(value: &str) -> Option<[f32; 4]> {
     let value = value.trim();
     let hex = |text: &str| {
         u8::from_str_radix(text, 16)
             .ok()
-            .map(|channel| channel as f32 / 255.0)
+            .map(|channel| srgb_to_linear(channel as f32 / 255.0))
     };
     match value.to_ascii_lowercase().as_str() {
         "transparent" => return Some([0.0, 0.0, 0.0, 0.0]),
@@ -328,9 +336,9 @@ fn css_color(value: &str) -> Option<[f32; 4]> {
         .and_then(|part| part.parse::<f32>().ok())
         .unwrap_or(1.0);
     Some([
-        channel(components[0])?.clamp(0.0, 1.0),
-        channel(components[1])?.clamp(0.0, 1.0),
-        channel(components[2])?.clamp(0.0, 1.0),
+        srgb_to_linear(channel(components[0])?.clamp(0.0, 1.0)),
+        srgb_to_linear(channel(components[1])?.clamp(0.0, 1.0)),
+        srgb_to_linear(channel(components[2])?.clamp(0.0, 1.0)),
         alpha.clamp(0.0, 1.0),
     ])
 }
@@ -1312,7 +1320,15 @@ mod tests {
         );
         assert_eq!(output.triangles.len(), 2);
         assert_eq!(output.triangles[0].positions[0], [11.0, 22.0]);
-        assert_eq!(output.triangles[0].colors[0], [0.2, 0.4, 0.6, 0.5]);
+        assert_eq!(
+            output.triangles[0].colors[0],
+            [
+                srgb_to_linear(0.2),
+                srgb_to_linear(0.4),
+                srgb_to_linear(0.6),
+                0.5,
+            ]
+        );
         assert_eq!(output.unsupported_commands, 0);
     }
 

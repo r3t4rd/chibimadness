@@ -1,0 +1,224 @@
+{
+  "name": "characters_operators_atlas",
+  "texture": "characters_operators_atlas.png",
+  "width": 1120,
+  "height": 1120,
+  "frames": {
+    "character_hatsune_miku_pistol": {
+      "x": 16,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_revolver": {
+      "x": 240,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_mac10": {
+      "x": 464,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_ak47": {
+      "x": 688,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_shotgun": {
+      "x": 912,
+      "y": 16,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_cheytac": {
+      "x": 16,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_katana": {
+      "x": 240,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_sledgehammer": {
+      "x": 464,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_throwing_knives": {
+      "x": 688,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_scythe": {
+      "x": 912,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_greatsword": {
+      "x": 16,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_staff": {
+      "x": 240,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_wand": {
+      "x": 464,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_grimoire": {
+      "x": 688,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_totem": {
+      "x": 912,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_millennium_student": {
+      "x": 16,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_trinity_scholar": {
+      "x": 240,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_gehenna_rebel": {
+      "x": 464,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_cyber_shinobi": {
+      "x": 688,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_tactical_vanguard": {
+      "x": 912,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_idol_superstar": {
+      "x": 16,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_modern_onmyoji": {
+      "x": 240,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "vehicle_police_cruiser": {
+      "x": 464,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "vehicle"
+    },
+    "vehicle_cyber_muscle_car": {
+      "x": 688,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "vehicle"
+    }
+  }
+}

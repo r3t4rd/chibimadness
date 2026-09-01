@@ -1,3 +1,11 @@
+export type CanvasProbeMode =
+  | 'normal'
+  | 'static-only'
+  | 'dynamic-only'
+  | 'webgl-atlas-only'
+  | 'present-only'
+  | 'raf-only';
+
 export type PerfSnapshot = {
   fps: number;
   frameMs: number;
@@ -17,6 +25,11 @@ export type PerfSnapshot = {
   pageFocused: boolean;
   devicePixelRatio: number;
   hardwareConcurrency: number | null;
+  canvasProbeMode: CanvasProbeMode;
+  timingSamples: number;
+  webViewEngineVersion: string | null;
+  gpuApi: 'WebGL2' | 'WebGL' | 'unavailable';
+  gpuRenderer: string | null;
   nativeFps: number | null;
   nativeFrameMs: number | null;
   nativeStaticCacheRedraws: number | null;
@@ -25,6 +38,19 @@ export type PerfSnapshot = {
   nativeBridgeMs: number | null;
   nativeDynamicCommands: number | null;
   nativeSceneTargetHz: number | null;
+  /** Completed visible OffscreenCanvas dynamic paints, not main-thread rAF. */
+  offscreenDynamicFps: number | null;
+  offscreenDynamicRoundTripMs: number | null;
+  dynamicRasterScale: number;
+  /** WebView hybrid path: horde bodies are batched as WebGL atlas quads. */
+  webglHordeMobBodies: boolean;
+  /** Number of enemy bodies emitted by the WebGL actor pass in this frame. */
+  webglMonsterBodies: number;
+  /** Live WebView layer switches used to isolate compositor pacing. */
+  staticWorldLayerEnabled: boolean;
+  dynamicCanvasLayerEnabled: boolean;
+  forceStaticCanvas: boolean;
+  webglStaticWorldActive: boolean;
   fogMs: number;
   monsters: number;
   particles: number;
@@ -51,6 +77,10 @@ class PerformanceMonitor {
   private timerPulseMs = 0;
   private lastFrameFinishedAt: number | null = null;
   private lastTimerAt: number | null = null;
+  private canvasProbeMode: CanvasProbeMode = 'normal';
+  private webViewEngineVersion: string | null = null;
+  private gpuApi: PerfSnapshot['gpuApi'] = 'unavailable';
+  private gpuRenderer: string | null = null;
   private pageVisible = typeof document === 'undefined' || document.visibilityState === 'visible';
   private pageFocused = typeof document === 'undefined' || document.hasFocus();
   private nativeFps: number | null = null;
@@ -61,11 +91,16 @@ class PerformanceMonitor {
   private nativeBridgeMs: number | null = null;
   private nativeDynamicCommands: number | null = null;
   private nativeSceneTargetHz: number | null = null;
+  private offscreenDynamicFrameTimes: number[] = [];
+  private offscreenDynamicRoundTripMs: number | null = null;
+  private lastOffscreenDynamicCompletedAt: number | null = null;
   private fogMs = 0;
   private extras: Partial<PerfSnapshot> = {};
 
   constructor() {
     if (typeof window === 'undefined' || typeof performance === 'undefined') return;
+    this.webViewEngineVersion = browserEngineVersion();
+    this.detectGpuPath();
 
     // Timers and rAF use different schedulers in WebView2. A regular 16 ms
     // pulse distinguishes a compositor/rAF cadence issue from a host event
@@ -114,6 +149,37 @@ class PerformanceMonitor {
     this.longTasks = this.longTasks.filter((task) => now - task.startedAt <= LONG_TASK_WINDOW_MS);
   }
 
+  private detectGpuPath() {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      if (!gl) return;
+      this.gpuApi = gl instanceof WebGL2RenderingContext ? 'WebGL2' : 'WebGL';
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      const renderer = debugInfo
+        ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL)
+        : gl.getParameter(gl.RENDERER);
+      this.gpuRenderer = typeof renderer === 'string' && renderer.length > 0 ? renderer : null;
+    } catch {
+      // The WebGL probe is diagnostic only; Canvas2D rendering must remain
+      // functional when GPU identification is restricted by the runtime.
+    }
+  }
+
+  setCanvasProbeMode(mode: CanvasProbeMode) {
+    if (this.canvasProbeMode === mode) return;
+    this.canvasProbeMode = mode;
+    this.frameTimes = [];
+    this.rafWaitTimes = [];
+    this.timerPulseTimes = [];
+    this.frameMs = 0;
+    this.drawMs = 0;
+    this.frameCpuMs = 0;
+    this.rafWaitMs = 0;
+    this.timerPulseMs = 0;
+    this.lastFrameFinishedAt = null;
+  }
+
   recordFrame(totalMs: number) {
     this.frameMs = totalMs;
     this.frameTimes.push(totalMs);
@@ -122,6 +188,22 @@ class PerformanceMonitor {
 
   recordDraw(ms: number) {
     this.drawMs = ms;
+  }
+
+  /**
+   * Commits a Canvas frame as one record so the overlay cannot combine draw
+   * time from one rAF callback with callback time from another one.
+   */
+  recordCanvasWebViewFrame(
+    frameIntervalMs: number,
+    callbackStartedAt: number,
+    drawStartedAt: number,
+    callbackFinishedAt: number,
+  ) {
+    this.frameMs = frameIntervalMs;
+    this.pushRolling(this.frameTimes, frameIntervalMs);
+    this.drawMs = Math.max(0, callbackFinishedAt - drawStartedAt);
+    this.recordWebViewFrame(callbackStartedAt, callbackFinishedAt);
   }
 
   /**
@@ -174,6 +256,15 @@ class PerformanceMonitor {
     this.nativeSceneTargetHz = Number.isFinite(hz) ? Math.max(0, Math.round(hz)) : null;
   }
 
+  recordOffscreenDynamicFrame(roundTripMs: number) {
+    const now = performance.now();
+    this.offscreenDynamicRoundTripMs = Number.isFinite(roundTripMs) ? Math.max(0, roundTripMs) : null;
+    if (this.lastOffscreenDynamicCompletedAt !== null) {
+      this.pushRolling(this.offscreenDynamicFrameTimes, now - this.lastOffscreenDynamicCompletedAt);
+    }
+    this.lastOffscreenDynamicCompletedAt = now;
+  }
+
   recordFog(ms: number) {
     this.fogMs = ms;
   }
@@ -203,6 +294,11 @@ class PerformanceMonitor {
       pageFocused: this.pageFocused,
       devicePixelRatio: typeof window === 'undefined' ? 1 : window.devicePixelRatio,
       hardwareConcurrency: typeof navigator === 'undefined' ? null : navigator.hardwareConcurrency ?? null,
+      canvasProbeMode: this.canvasProbeMode,
+      timingSamples: this.frameTimes.length,
+      webViewEngineVersion: this.webViewEngineVersion,
+      gpuApi: this.gpuApi,
+      gpuRenderer: this.gpuRenderer,
       nativeFps: this.nativeFps,
       nativeFrameMs: this.nativeFrameMs,
       nativeStaticCacheRedraws: this.nativeStaticCacheRedraws,
@@ -211,6 +307,17 @@ class PerformanceMonitor {
       nativeBridgeMs: this.nativeBridgeMs,
       nativeDynamicCommands: this.nativeDynamicCommands,
       nativeSceneTargetHz: this.nativeSceneTargetHz,
+      offscreenDynamicFps: this.offscreenDynamicFrameTimes.length > 0
+        ? Math.round(1000 / Math.max(1, average(this.offscreenDynamicFrameTimes)))
+        : null,
+      offscreenDynamicRoundTripMs: this.offscreenDynamicRoundTripMs,
+      dynamicRasterScale: this.extras.dynamicRasterScale ?? 1,
+      webglHordeMobBodies: this.extras.webglHordeMobBodies === true,
+      webglMonsterBodies: this.extras.webglMonsterBodies ?? 0,
+      staticWorldLayerEnabled: this.extras.staticWorldLayerEnabled !== false,
+      dynamicCanvasLayerEnabled: this.extras.dynamicCanvasLayerEnabled !== false,
+      forceStaticCanvas: this.extras.forceStaticCanvas === true,
+      webglStaticWorldActive: this.extras.webglStaticWorldActive === true,
       fogMs: this.fogMs,
       monsters: this.extras.monsters ?? 0,
       particles: this.extras.particles ?? 0,
@@ -230,6 +337,12 @@ function percentile(values: number[], ratio: number) {
   if (values.length === 0) return 0;
   const index = Math.min(values.length - 1, Math.floor((values.length - 1) * ratio));
   return [...values].sort((a, b) => a - b)[index];
+}
+
+function browserEngineVersion() {
+  if (typeof navigator === 'undefined') return null;
+  const match = navigator.userAgent.match(/(?:Edg|Chrome)\/([\d.]+)/);
+  return match?.[1] ?? null;
 }
 
 export const perfMonitor = new PerformanceMonitor();

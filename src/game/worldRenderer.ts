@@ -10,6 +10,8 @@ import { compileRenderScene, recordRenderScene, type RenderScene } from './rende
 
 type RenderSceneLayerContext = CanvasRenderingContext2D & {
   __renderSceneLayer?: (name: 'screen' | 'static' | 'dynamic') => void;
+  /** Scene recorders must retain vector commands, never embed raster sprites. */
+  __disableSpriteCache?: boolean;
 };
 
 function markRenderSceneLayer(ctx: CanvasRenderingContext2D, name: 'screen' | 'static' | 'dynamic') {
@@ -53,6 +55,16 @@ type WorldDrawOptions = {
   layer?: WorldPaintLayer;
   /** Reuses the dynamic pass camera while compiling static invalidations. */
   camera?: { x: number; y: number; zoom: number };
+  /** WebView-only hybrid path: a WebGL atlas owns eligible monster bodies. */
+  skipWebglHordeMobBodies?: boolean;
+  /** WebView-only hybrid path: a WebGL atlas owns eligible player bodies. */
+  skipWebglPlayerBodies?: boolean;
+  /** WebView-only hybrid path: WebGL owns basic bullet/tracer geometry. */
+  skipWebglProjectiles?: boolean;
+  /** WebView-only hybrid path: WebGL owns basic particle geometry. */
+  skipWebglParticles?: boolean;
+  /** Native WGPU owns the generated atlas bodies for this frame. */
+  skipNativeSpriteBodies?: boolean;
 };
 
 export function getCameraState() {
@@ -116,6 +128,93 @@ export function worldToScreen(
   };
 }
 
+/**
+ * Advances the Canvas camera once and returns the exact transform required by
+ * a renderer running outside the page's main thread. Keeping this state here
+ * makes the Canvas, OffscreenCanvas and native paths share one camera model.
+ */
+export function advanceCanvasCamera(
+  localPlayer: Player,
+  time: number,
+  screenShake: { intensity: number; duration: number } = { intensity: 0, duration: 0 },
+  introCinematic?: IntroCinematicState,
+) {
+  let shakeX = 0;
+  let shakeY = 0;
+  if (screenShake.duration > 0 && screenShake.intensity > 0) {
+    const factor = Math.min(1, screenShake.duration * 5);
+    shakeX = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
+    shakeY = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
+  }
+
+  const activeGunType = localPlayer?.equipment?.weapon?.gunType || 'pistol';
+  const maxLookAhead =
+    activeGunType === 'cheytac' ? 880 :
+    activeGunType === 'ak47' ? 500 :
+    activeGunType === 'revolver' ? 440 :
+    activeGunType === 'pistol' ? 380 :
+    activeGunType === 'shotgun' ? 360 :
+    activeGunType === 'mac10' ? 360 : 280;
+  const isInspecting = Boolean(localPlayer?.isInspectingWeapon);
+  const aimAngle = localPlayer?.aimAngle || 0;
+  let targetCamX = (localPlayer?.x ?? 650) + shakeX
+    + (!isInspecting && localPlayer?.isAiming ? Math.cos(aimAngle) * maxLookAhead : isInspecting ? (localPlayer?.facing === 'left' ? -14 : 14) : 0);
+  let targetCamY = (localPlayer?.y ?? 750) + shakeY
+    + (isInspecting ? -3 : !isInspecting && localPlayer?.isAiming ? Math.sin(aimAngle) * maxLookAhead : 0);
+
+  const isCinematicActive = introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete';
+  if (isCinematicActive) {
+    if (introCinematic.phase === 'dive') {
+      targetCamX = 650 + shakeX;
+      targetCamY = Math.max(350, (localPlayer?.y ?? 0) + 120) + shakeY;
+    } else if (introCinematic.phase === 'impact' || introCinematic.phase === 'skid') {
+      targetCamX = (localPlayer?.x ?? 650) + shakeX;
+      targetCamY = 750 + shakeY;
+    } else {
+      targetCamX = 880 + shakeX;
+      targetCamY = 745 + shakeY;
+    }
+  }
+
+  const dt = (lastRenderTimestamp > 0 && time > lastRenderTimestamp) ? Math.min(0.1, time - lastRenderTimestamp) : 0.016;
+  lastRenderTimestamp = time;
+  const camLerpSpeed = isCinematicActive ? 12 : isInspecting ? 9 : localPlayer?.isAiming ? 6.5 : 8;
+  if (isNaN(smoothedCameraX) || Math.abs(smoothedCameraX - targetCamX) > 4000) {
+    smoothedCameraX = targetCamX;
+    smoothedCameraY = targetCamY;
+  } else {
+    const factor = 1 - Math.exp(-dt * camLerpSpeed);
+    smoothedCameraX += (targetCamX - smoothedCameraX) * factor;
+    smoothedCameraY += (targetCamY - smoothedCameraY) * factor;
+  }
+
+  const speed = Math.hypot(localPlayer?.vx || 0, localPlayer?.vy || 0);
+  let targetZoom = Math.max(0.4, (1 - Math.min(0.2, (speed / 650) * 0.16))
+    * (localPlayer?.isAiming ? (activeGunType === 'cheytac' ? 0.46 : 0.68) : 1));
+  if (localPlayer?.isInspectingWeapon) targetZoom = 5.2;
+  if (isInHordeArena(localPlayer?.x ?? 0, localPlayer?.y ?? 0) && !localPlayer?.isInspectingWeapon) {
+    targetZoom = Math.min(targetZoom, 0.72);
+  }
+  if (isCinematicActive) {
+    if (introCinematic.phase === 'dive') targetZoom = 0.85;
+    else if (introCinematic.phase === 'impact' || introCinematic.phase === 'skid') targetZoom = 0.8;
+    else if (introCinematic.phase === 'dazed' || introCinematic.phase === 'brush' || introCinematic.phase === 'gun_fall_bonk') targetZoom = 1.3;
+    else if (introCinematic.phase === 'pickup_ready') targetZoom = 1.15;
+  }
+  const zoomLerpSpeed = isCinematicActive ? 7 : localPlayer?.isInspectingWeapon ? 8 : localPlayer?.isAiming ? 5.5 : 6;
+  if (isNaN(smoothedZoom) || smoothedZoom <= 0.1 || smoothedZoom > 8) {
+    smoothedZoom = 1;
+  } else {
+    smoothedZoom += (targetZoom - smoothedZoom) * (1 - Math.exp(-0.016 * zoomLerpSpeed));
+  }
+
+  return {
+    x: Math.round(smoothedCameraX),
+    y: Math.round(smoothedCameraY),
+    zoom: (!isNaN(smoothedZoom) && smoothedZoom > 0.2 && smoothedZoom < 8) ? smoothedZoom : 1,
+  };
+}
+
 export function drawWorld(
   ctx: CanvasRenderingContext2D,
   canvasWidth: number,
@@ -138,73 +237,11 @@ export function drawWorld(
   gameTimePhase: number = 0.35,
   options: WorldDrawOptions = {}
 ) {
-  let camera: { x: number; y: number };
+  let camera: { x: number; y: number; zoom?: number };
   if (options.camera) {
     camera = { x: options.camera.x, y: options.camera.y };
   } else {
-  // Screen shake offset calculation with smooth decay
-  let shakeX = 0;
-  let shakeY = 0;
-  if (screenShake.duration > 0 && screenShake.intensity > 0) {
-    const factor = Math.min(1, screenShake.duration * 5);
-    shakeX = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
-    shakeY = (Math.random() - 0.5) * screenShake.intensity * 2 * factor;
-  }
-
-  // Calculate Weapon-Specific Look-Ahead offset
-  const activeGunType = localPlayer?.equipment?.weapon?.gunType || 'pistol';
-  const maxLookAhead =
-    activeGunType === 'cheytac' ? 880 :
-    activeGunType === 'ak47' ? 500 :
-    activeGunType === 'revolver' ? 440 :
-    activeGunType === 'pistol' ? 380 :
-    activeGunType === 'shotgun' ? 360 :
-    activeGunType === 'mac10' ? 360 : 280;
-
-  const aimAngle = localPlayer?.aimAngle || 0;
-  const isInspecting = !!localPlayer?.isInspectingWeapon;
-  const targetLookAheadX = (!isInspecting && localPlayer?.isAiming) ? Math.cos(aimAngle) * maxLookAhead : 0;
-  const targetLookAheadY = (!isInspecting && localPlayer?.isAiming) ? Math.sin(aimAngle) * maxLookAhead : 0;
-
-  const inspectOffsetX = (localPlayer?.facing === 'left' ? -14 : 14);
-  const inspectOffsetY = -3;
-
-  let targetCamX = (localPlayer?.x ?? 650) + shakeX + (isInspecting ? inspectOffsetX : targetLookAheadX);
-  let targetCamY = (localPlayer?.y ?? 750) + shakeY + (isInspecting ? inspectOffsetY : targetLookAheadY);
-
-  // Cinematic Camera Target Overrides
-  const isCinematicActive = introCinematic && introCinematic.phase !== 'none' && introCinematic.phase !== 'complete';
-  if (isCinematicActive) {
-    const phase = introCinematic.phase;
-    if (phase === 'dive') {
-      targetCamX = 650 + shakeX;
-      targetCamY = Math.max(350, (localPlayer?.y ?? 0) + 120) + shakeY;
-    } else if (phase === 'impact' || phase === 'skid') {
-      targetCamX = (localPlayer?.x ?? 650) + shakeX;
-      targetCamY = 750 + shakeY;
-    } else {
-      targetCamX = 880 + shakeX;
-      targetCamY = 745 + shakeY;
-    }
-  }
-
-  const dt = (lastRenderTimestamp > 0 && time > lastRenderTimestamp) ? Math.min(0.1, (time - lastRenderTimestamp)) : 0.016;
-  lastRenderTimestamp = time;
-
-  // Exponential framerate-independent lerp for smooth camera look-ahead
-  const camLerpSpeed = isCinematicActive ? 12.0 : isInspecting ? 9.0 : localPlayer?.isAiming ? 6.5 : 8.0;
-  if (isNaN(smoothedCameraX) || Math.abs(smoothedCameraX - targetCamX) > 4000) {
-    smoothedCameraX = targetCamX;
-    smoothedCameraY = targetCamY;
-  } else {
-    smoothedCameraX += (targetCamX - smoothedCameraX) * (1 - Math.exp(-dt * camLerpSpeed));
-    smoothedCameraY += (targetCamY - smoothedCameraY) * (1 - Math.exp(-dt * camLerpSpeed));
-  }
-
-  camera = {
-    x: Math.round(smoothedCameraX),
-    y: Math.round(smoothedCameraY),
-  };
+    camera = advanceCanvasCamera(localPlayer, time, screenShake, introCinematic);
   }
 
   const npcs = Object.values(NPCS_DATABASE);
@@ -232,7 +269,12 @@ export function drawWorld(
     summons,
     gameTimePhase,
     options.layer ?? 'full',
-    options.camera?.zoom
+    options.camera?.zoom ?? camera.zoom,
+    options.skipWebglHordeMobBodies ?? false,
+    options.skipWebglPlayerBodies ?? false,
+    options.skipWebglProjectiles ?? false,
+    options.skipWebglParticles ?? false,
+    options.skipNativeSpriteBodies ?? false,
   );
 }
 
@@ -318,18 +360,19 @@ export function compileWorldScene(
  */
 export function compileDynamicWorldScene(
   measurementContext: Pick<CanvasRenderingContext2D, 'font' | 'measureText'>,
-  input: WorldRenderInput
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number }
 ): RenderScene {
   const compiled = compileRenderScene(
     measurementContext,
     {
       viewport: { width: input.canvasWidth, height: input.canvasHeight },
-      camera: getCameraState(),
+      camera,
       timeSeconds: input.time ?? 0,
     },
-    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'dynamic' })
+    (sceneContext) => drawWorldInput(sceneContext, input, { layer: 'dynamic', camera })
   );
-  compiled.scene.camera = getCameraState();
+  compiled.scene.camera = camera;
   return compiled.scene;
 }
 
@@ -380,7 +423,12 @@ export function renderWorld(
   summons: SummonedAlly[] = [],
   gameTimePhase: number = 0.35,
   layer: WorldPaintLayer = 'full',
-  fixedZoom?: number
+  fixedZoom?: number,
+  skipWebglHordeMobBodies = false,
+  skipWebglPlayerBodies = false,
+  skipWebglProjectiles = false,
+  skipWebglParticles = false,
+  skipNativeSpriteBodies = false,
 ) {
   const renderStatic = layer !== 'dynamic';
   const renderDynamic = layer !== 'static';
@@ -540,7 +588,7 @@ export function renderWorld(
       drawMonsterTelegraphs(ctx, visibleMonsters, time);
     }
     drawHordeHazards(ctx, getHordeHazards().filter((h) => inView(h.x, h.y)), time);
-    drawMonsters(ctx, visibleMonsters, time);
+    drawMonsters(ctx, visibleMonsters, time, skipWebglHordeMobBodies, skipNativeSpriteBodies);
     if (blinded) {
       drawBlindScreams(ctx, monsters.filter((m) => m.battleBark && m.battleBark.timer > 0 && inView(m.x, m.y)), time);
     }
@@ -563,6 +611,9 @@ export function renderWorld(
       const isOmni = (p.omnislashStrikesLeft ?? 0) > 0;
       const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
 
+      const useWebglPlayerBody = skipWebglPlayerBodies && getWebglPlayerAtlasKey(p) !== null;
+      const useNativeSpriteBody = skipNativeSpriteBodies && getNativePlayerSpriteFrame(p) !== null;
+      if (useWebglPlayerBody || useNativeSpriteBody) continue;
       if (isOmni) {
         ctx.save();
         ctx.globalAlpha = 0.25;
@@ -777,8 +828,9 @@ export function renderWorld(
 
   // 9. Draw Projectiles (Bullets, Lasers, Shotgun pellets, Slash waves)
   const visProj = projectiles.filter((p) => inView(p.x, p.y));
-  drawProjectiles(ctx, visProj);
-  drawParticles(ctx, particles.filter((p) => inView(p.x, p.y)));
+  drawProjectiles(ctx, skipWebglProjectiles ? visProj.filter((p) => !isWebglProjectile(p)) : visProj);
+  const visibleParticles = particles.filter((p) => inView(p.x, p.y));
+  drawParticles(ctx, skipWebglParticles ? visibleParticles.filter((p) => !isWebglParticle(p)) : visibleParticles);
   drawDamagePopups(ctx, damagePopups.filter((p) => inView(p.x, p.y)));
 
   ctx.restore();
@@ -790,27 +842,29 @@ export function renderWorld(
   // the entire world appear frozen.
   markRenderSceneLayer(ctx, 'screen');
 
-  // 12. Day/night ambient tint
-  if (!inHorde) {
-    drawDayNightOverlay(ctx, canvasWidth, canvasHeight, gameTimePhase);
-  }
+  if (renderDynamic) {
+    // 12. Day/night ambient tint
+    if (!inHorde) {
+      drawDayNightOverlay(ctx, canvasWidth, canvasHeight, gameTimePhase);
+    }
 
-  // 13. Draw Atmospheric Ambient Lighting & Low HP Blood Heartbeat Overlay
-  drawAtmosphericOverlay(ctx, canvasWidth, canvasHeight, camera, localPlayer, time);
-  if (blinded) {
-    ctx.fillStyle = 'rgba(232, 121, 249, 0.8)';
-    ctx.font = 'bold 13px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('VISION NULL — HUNT THE SCREAM', canvasWidth / 2, canvasHeight * 0.16);
-  }
+    // 13. Draw Atmospheric Ambient Lighting & Low HP Blood Heartbeat Overlay
+    drawAtmosphericOverlay(ctx, canvasWidth, canvasHeight, camera, localPlayer, time);
+    if (blinded) {
+      ctx.fillStyle = 'rgba(232, 121, 249, 0.8)';
+      ctx.font = 'bold 13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('VISION NULL — HUNT THE SCREAM', canvasWidth / 2, canvasHeight * 0.16);
+    }
 
-  // 14. Draw Fullscreen Tactical Sniper HUD Scope Overlay (when aiming with CheyTac or Firearms)
-  if (localPlayer.isAiming) {
-    drawTacticalAimOverlay(ctx, canvasWidth, canvasHeight, localPlayer, activeGunType, laserHitDistance, lockedMonster, time);
-  }
+    // 14. Draw Fullscreen Tactical Sniper HUD Scope Overlay (when aiming with CheyTac or Firearms)
+    if (localPlayer.isAiming) {
+      drawTacticalAimOverlay(ctx, canvasWidth, canvasHeight, localPlayer, activeGunType, laserHitDistance, lockedMonster, time);
+    }
 
-  // 15. Draw Cinematic Re-Entry Speed Lines, Black Fade, Letterbox & Tech HUD Overlays
-  drawCinematicOverlays(ctx, canvasWidth, canvasHeight, introCinematic, localPlayer, time);
+    // 15. Draw Cinematic Re-Entry Speed Lines, Black Fade, Letterbox & Tech HUD Overlays
+    drawCinematicOverlays(ctx, canvasWidth, canvasHeight, introCinematic, localPlayer, time);
+  }
 
   ctx.restore();
 }
@@ -4388,7 +4442,312 @@ function drawMonsterTelegraphs(ctx: CanvasRenderingContext2D, monsters: Monster[
   });
 }
 
-function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
+const hordeSpriteCache = new Map<string, OffscreenCanvas>();
+const CACHEABLE_HORDE_KINDS = new Set([
+  'mite', 'shade', 'raider', 'shotgun', 'bomber', 'dasher', 'sniper',
+  'splitter', 'boss_titan', 'boss_storm',
+]);
+
+const HORDE_ATLAS_SPRITES = [
+  { kind: 'mite', boss: false, color: '#22D3EE' },
+  { kind: 'shade', boss: false, color: '#6D28D9' },
+  { kind: 'raider', boss: false, color: '#64748B' },
+  { kind: 'shotgun', boss: false, color: '#F59E0B' },
+  { kind: 'bomber', boss: false, color: '#F97316' },
+  { kind: 'dasher', boss: false, color: '#F43F5E' },
+  { kind: 'sniper', boss: false, color: '#EF4444' },
+  { kind: 'splitter', boss: false, color: '#E879F9' },
+  { kind: 'boss_titan', boss: true, color: '#334155' },
+  { kind: 'boss_storm', boss: true, color: '#C026D3' },
+] as const;
+
+export type HordeMobAtlasSprite = (typeof HORDE_ATLAS_SPRITES)[number];
+
+/** Runtime atlas source. The established vector body remains authoritative. */
+export function getHordeMobAtlasSprites(): readonly HordeMobAtlasSprite[] {
+  return HORDE_ATLAS_SPRITES;
+}
+
+export function drawHordeMobAtlasSprite(
+  ctx: CanvasRenderingContext2D,
+  sprite: HordeMobAtlasSprite,
+) {
+  drawCachedHordeMobBody(ctx, sprite.kind, sprite.boss, sprite.color);
+}
+
+/** Hit flashes are a shader tint, so combat never evicts horde bodies from the GPU atlas. */
+export function getWebglHordeMobAtlasKey(monster: Monster): string | null {
+  const kind = monster.hordeKind;
+  if (!kind || !CACHEABLE_HORDE_KINDS.has(kind)) return null;
+  const boss = Boolean(monster.isBoss);
+  const sprite = HORDE_ATLAS_SPRITES.find((candidate) => candidate.kind === kind && candidate.boss === boss);
+  return sprite ? `${sprite.kind}:${sprite.boss ? 1 : 0}` : null;
+}
+
+/**
+ * First WebGL production set: static horde bodies and ordinary idle humanoid
+ * enemies. Anything with a visible transient transform stays on Canvas so
+ * the atlas can never freeze a hit reaction, jump, dash or death animation.
+ */
+export function getWebglMonsterAtlasKey(monster: Monster): string | null {
+  const hordeKey = getWebglHordeMobAtlasKey(monster);
+  if (hordeKey) return `horde:${hordeKey}`;
+  if (
+    monster.hordeKind ||
+    monster.type === 'forest_wolf' ||
+    monster.hp <= 0 ||
+    (monster.hitFlash || 0) > 0 ||
+    (monster.jumpZ || 0) > 0 ||
+    (monster.dodgeTimer || 0) > 0 ||
+    monster.isCharging ||
+    monster.isPinned ||
+    monster.isJuggernaut ||
+    monster.humanChibi ||
+    (monster.attackCooldown || 0) > 1
+  ) return null;
+  return `humanoid:${monster.type}:${monster.weaponType ?? 'pistol'}:${monster.isBoss ? 1 : 0}:${monster.faction ?? 'none'}`;
+}
+
+const NATIVE_FACTION_SPRITES = new Set([
+  'police_cop_officer', 'police_cop_swat', 'police_cop_enforcer', 'police_cop_marksman',
+  'punk_punk_grunt', 'punk_punk_anarchist', 'punk_punk_molotov',
+  'bandit_bandit_grunt', 'bandit_bandit_scout', 'bandit_bandit_gunner',
+  'bandit_bandit_shotgunner', 'bandit_bandit_sniper', 'bandit_bandit_brawler',
+  'cadet_cadet_bat', 'cadet_cadet_gunner', 'cadet_cadet_mage', 'cadet_human_target',
+]);
+
+const NATIVE_BOSS_SPRITES: Record<string, string> = {
+  boss_welder: 'boss_boss_welder',
+  boss_outlaw_viktor: 'boss_boss_outlaw_viktor',
+  bandit_boss: 'boss_boss_bandit_warlord',
+  cop_juggernaut: 'boss_boss_police_juggernaut',
+  punk_juggernaut: 'boss_boss_punk_juggernaut',
+};
+
+/**
+ * Native actor sprites deliberately stay selected through combat state.
+ *
+ * The atlas cells are generated from the source Canvas routines, so a
+ * cooldown, a charged shot, or a `humanChibi` descriptor is not a different
+ * body asset. Treating those flags as a Canvas fallback made every crowded
+ * firefight re-rasterize the complete WebView layer and capped the picture at
+ * the browser rAF cadence. Transient muzzle flashes, telegraphs and damage
+ * effects remain an overlay; the actor body itself is always a sprite.
+ */
+export function getNativeMonsterSpriteFrame(monster: Monster): string | null {
+  if (monster.hp <= 0) return null;
+  const horde = getWebglHordeMobAtlasKey(monster);
+  if (horde) {
+    const [kind, boss] = horde.split(':');
+    return `horde_${kind}${boss === '1' ? '_boss' : ''}`;
+  }
+  const bossFrame = NATIVE_BOSS_SPRITES[monster.type];
+  if (bossFrame) return bossFrame;
+  if (
+    monster.hordeKind
+    || monster.type === 'forest_wolf'
+  ) return null;
+  const faction = monster.faction === 'punk_demon' ? 'punk' : monster.faction;
+  const frame = `${faction}_${monster.type}`;
+  return NATIVE_FACTION_SPRITES.has(frame) ? frame : null;
+}
+
+/** Full-frame Miku is generated from the exact character-creator recipe. */
+export function getNativePlayerSpriteFrame(player: Player): string | null {
+  const chibi = player.chibi;
+  if (
+    player.state === 'dead'
+    || player.isRiding
+    || player.activeVehicleId
+    || player.emote
+    || (player.chatTimer ?? 0) > 0
+    || player.isReloading
+    || (player.dodgeTimer ?? 0) > 0
+    || (player.jumpZ ?? 0) > 0
+    || (player.omnislashStrikesLeft ?? 0) > 0
+    || (player.dashSlashTimer ?? 0) > 0
+    || (player.bhopStreak ?? 0) >= 2
+    || (player.coolStreak ?? 0) >= 2
+    || player.attackTimer > 0
+    || !chibi
+  ) return null;
+  const isMiku = chibi.frontHairStyle === 'miku_fringe'
+    && chibi.backHairStyle === 'miku_twintails'
+    && chibi.hairColor.toUpperCase() === '#06B6D4'
+    && chibi.hatType === 'headphones'
+    && chibi.outfitType === 'idol_stage';
+  if (!isMiku) return null;
+  const weapon = player.equipment.weapon?.gunType ?? 'pistol';
+  return `character_hatsune_miku_${weapon}`;
+}
+
+/**
+ * Runtime visual key for procedural players. Position and combat state are
+ * intentionally excluded: moving a player must never allocate a new raster.
+ */
+export function getWebglPlayerAtlasKey(player: Player): string | null {
+  if (
+    player.state === 'dead' ||
+    player.isRiding ||
+    player.activeVehicleId ||
+    player.emote ||
+    (player.chatTimer ?? 0) > 0 ||
+    player.isReloading ||
+    (player.dodgeTimer ?? 0) > 0 ||
+    (player.jumpZ ?? 0) > 0 ||
+    (player.omnislashStrikesLeft ?? 0) > 0 ||
+    (player.dashSlashTimer ?? 0) > 0 ||
+    (player.bhopStreak ?? 0) >= 2 ||
+    (player.coolStreak ?? 0) >= 2 ||
+    (player.skateTrickTimer ?? 0) > 0
+  ) return null;
+  return `player:${JSON.stringify(player.chibi)}:${player.equipment.weapon?.id ?? 'none'}:${player.equipment.outfit?.id ?? 'none'}:${player.equipment.headwear?.id ?? 'none'}:${player.state}:${player.isAiming ? 1 : 0}:${player.isReloading ? 1 : 0}:${player.attackTimer > 0 ? 1 : 0}`;
+}
+
+/** Invoked only while a new runtime atlas slot is created, never per frame. */
+export function drawWebglMonsterAtlasSprite(ctx: CanvasRenderingContext2D, monster: Monster) {
+  if (monster.hordeKind) {
+    const key = getWebglHordeMobAtlasKey(monster);
+    const sprite = key
+      ? HORDE_ATLAS_SPRITES.find((candidate) => `${candidate.kind}:${candidate.boss ? 1 : 0}` === key)
+      : undefined;
+    if (sprite) drawHordeMobAtlasSprite(ctx, sprite);
+    return;
+  }
+  drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
+}
+
+/** Invoked only while a player visual enters the runtime atlas. */
+export function drawWebglPlayerAtlasSprite(ctx: CanvasRenderingContext2D, player: Player) {
+  drawChibiCharacter(
+    ctx,
+    {
+      ...player,
+      x: 0,
+      y: 0,
+      vx: 0,
+      vy: 0,
+      previewOffsetX: 0,
+      previewOffsetY: 0,
+      spawnBounce: 1,
+      jumpZ: 0,
+      jumpVz: 0,
+      isJumping: false,
+      bhopStreak: 0,
+      isSprinting: false,
+      dodgeTimer: 0,
+      attackTimer: 0,
+      cinematicPose: 'none',
+    },
+    0,
+    true,
+    { bodyOnly: true },
+  );
+}
+
+function drawWebglHumanoidHealthBar(ctx: CanvasRenderingContext2D, monster: Monster) {
+  if (monster.hp <= 0) return;
+  const isBossBandit = monster.type === 'bandit_boss' || Boolean(monster.isBoss);
+  const isDummy = monster.type === 'human_target';
+  const barW = isBossBandit ? 90 : 44;
+  const barH = isBossBandit ? 8 : 5;
+  const barY = isBossBandit ? -65 : -46;
+  const hpRatio = Math.max(0, monster.hp / monster.maxHp);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
+  ctx.fillStyle = isBossBandit ? '#EF4444' : isDummy ? '#F59E0B' : '#38BDF8';
+  ctx.fillRect(-barW / 2, barY, barW * hpRatio, barH);
+}
+
+function drawCachedHordeMobBody(
+  ctx: CanvasRenderingContext2D,
+  kind: string,
+  boss: boolean,
+  color: string,
+) {
+  if (kind === 'mite') {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ECFEFF';
+    ctx.fillRect(-3, -2, 2, 2);
+    ctx.fillRect(2, -2, 2, 2);
+  } else if (kind === 'shade') {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-14, 10);
+    ctx.quadraticCurveTo(-18, -8, 0, -16);
+    ctx.quadraticCurveTo(18, -8, 14, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#F472B6';
+    ctx.beginPath();
+    ctx.arc(5, -6, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (kind === 'bomber') {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(-14, -10, 28, 24, 8);
+    ctx.fill();
+    ctx.fillStyle = '#1C1917';
+    ctx.beginPath();
+    ctx.arc(0, -4, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FACC15';
+    ctx.beginPath();
+    ctx.arc(0, -4, 3, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#0F172A';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(-14, -16, 28, 32, boss ? 6 : 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = kind === 'sniper' ? '#FECACA' : '#E2E8F0';
+    ctx.beginPath();
+    ctx.arc(8, -10, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = kind === 'dasher' ? '#F43F5E' : '#22D3EE';
+    ctx.beginPath();
+    ctx.arc(11, -11, 2, 0, Math.PI * 2);
+    ctx.fill();
+    if (kind === 'shotgun') {
+      ctx.fillStyle = '#78350F';
+      ctx.fillRect(10, -2, 16, 4);
+    }
+    if (kind === 'splitter') {
+      ctx.strokeStyle = '#F5D0FE';
+      ctx.setLineDash([3, 3]);
+      ctx.strokeRect(-18, -20, 36, 40);
+      ctx.setLineDash([]);
+    }
+  }
+}
+
+function getCachedHordeMobSprite(kind: string, boss: boolean, color: string) {
+  if (typeof OffscreenCanvas === 'undefined' || !CACHEABLE_HORDE_KINDS.has(kind)) return null;
+  const key = `${kind}:${boss ? 1 : 0}:${color}`;
+  const cached = hordeSpriteCache.get(key);
+  if (cached) return cached;
+
+  const sprite = new OffscreenCanvas(72, 72);
+  const spriteContext = sprite.getContext('2d');
+  if (!spriteContext) return null;
+  spriteContext.translate(36, 36);
+  drawCachedHordeMobBody(spriteContext as unknown as CanvasRenderingContext2D, kind, boss, color);
+  hordeSpriteCache.set(key, sprite);
+  return sprite;
+}
+
+function drawHordeMob(
+  ctx: CanvasRenderingContext2D,
+  m: Monster,
+  time: number,
+  skipWebglHordeMobBody = false,
+) {
   const kind = m.hordeKind || 'shade';
   const flash = (m.hitFlash || 0) > 0;
   const boss = !!m.isBoss;
@@ -4422,7 +4781,16 @@ function drawHordeMob(ctx: CanvasRenderingContext2D, m: Monster, time: number) {
   ctx.ellipse(0, 16, 16, 5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if (kind === 'mite') {
+  const atlasOwnedByWebgl = skipWebglHordeMobBody && getWebglHordeMobAtlasKey(m) !== null;
+  const cachedSprite = !atlasOwnedByWebgl && !flash && !(ctx as RenderSceneLayerContext).__disableSpriteCache
+    ? getCachedHordeMobSprite(kind, boss, col)
+    : null;
+  if (atlasOwnedByWebgl) {
+    // The transparent WebGL layer draws just this body. Leave the Canvas
+    // shadow and status UI below/above it in their established draw order.
+  } else if (cachedSprite) {
+    ctx.drawImage(cachedSprite, -36, -36);
+  } else if (kind === 'mite') {
     ctx.fillStyle = col;
     ctx.beginPath();
     ctx.arc(0, 0, 8, 0, Math.PI * 2);
@@ -4602,17 +4970,46 @@ function drawMonsterAiTelegraph(
   ctx.restore();
 }
 
-function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: number) {
+function drawMonsterAiLevelLabel(ctx: CanvasRenderingContext2D, monster: Monster) {
+  if (monster.hp <= 0 || !Number.isFinite(monster.aiLevel)) return;
+
+  const level = Math.max(1, Math.min(40, Math.round(monster.aiLevel ?? 20)));
+  const tierColors = ['#72E6A5', '#54C8FF', '#F5BC61', '#F07A8F', '#D08BFF'];
+  ctx.fillStyle = tierColors[Math.min(4, Math.floor((level - 1) / 8))];
+  ctx.font = '700 8px ui-monospace, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`AI ${level}`, 0, monster.isBoss ? -78 : -54);
+}
+
+function drawMonsters(
+  ctx: CanvasRenderingContext2D,
+  monsters: Monster[],
+  time: number,
+  skipWebglHordeMobBodies = false,
+  skipNativeSpriteBodies = false,
+) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
     if (m.hp <= 0 && (m.deathProgress === undefined || m.deathProgress >= 1.0)) return;
+    // Stable bodies and their HP bars are emitted by the WebGL actor pass.
+    // Transient states deliberately fall through to Canvas for visual parity.
+    const bodyRenderedOutsideCanvas = (
+      (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null)
+      || (skipNativeSpriteBodies && getNativeMonsterSpriteFrame(m) !== null)
+    );
 
     ctx.save();
     ctx.translate(m.x, m.y);
     drawMonsterAiTelegraph(ctx, m, time);
+    if (bodyRenderedOutsideCanvas) {
+      drawMonsterAiLevelLabel(ctx, m);
+      ctx.restore();
+      return;
+    }
 
     if (m.hordeKind) {
-      drawHordeMob(ctx, m, time);
+      drawHordeMob(ctx, m, time, skipWebglHordeMobBodies);
     } else if (m.type === 'forest_wolf') {
       // Draw Forest Feral Wolf
       ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
@@ -4650,18 +5047,14 @@ function drawMonsters(ctx: CanvasRenderingContext2D, monsters: Monster[], time: 
       }
     } else {
       // Draw Humanoid Bandits, Outlaws, and "Iron Mask" Sledge Boss
-      drawHumanoidEnemy(ctx, m, time);
+      if (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null) {
+        drawWebglHumanoidHealthBar(ctx, m);
+      } else {
+        drawHumanoidEnemy(ctx, m, time);
+      }
     }
 
-    if (m.hp > 0 && Number.isFinite(m.aiLevel)) {
-      const level = Math.max(1, Math.min(40, Math.round(m.aiLevel ?? 20)));
-      const tierColors = ['#72E6A5', '#54C8FF', '#F5BC61', '#F07A8F', '#D08BFF'];
-      ctx.fillStyle = tierColors[Math.min(4, Math.floor((level - 1) / 8))];
-      ctx.font = '700 8px ui-monospace, monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(`AI ${level}`, 0, m.isBoss ? -78 : -54);
-    }
+    drawMonsterAiLevelLabel(ctx, m);
 
     ctx.restore();
   });
@@ -4761,6 +5154,16 @@ function drawSummons(ctx: CanvasRenderingContext2D, summons: SummonedAlly[], tim
     ctx.fillStyle = ally.kind === 'golem' ? '#A8A29E' : '#F97316';
     ctx.fillRect(ally.x - 16, ally.y - 28 * ally.scale - 8, 32 * hpRatio, 4);
   });
+}
+
+/** Basic repeated trails are visually represented by the GPU soft-sprite pass. */
+export function isWebglProjectile(projectile: Projectile) {
+  return projectile.type === 'bullet' || projectile.type === 'enemy_bullet';
+}
+
+/** Keep smoke, casings and rings on Canvas until their dedicated GPU variants land. */
+export function isWebglParticle(particle: VisualParticle) {
+  return particle.shape === 'circle' || particle.shape === 'spark';
 }
 
 function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[]) {

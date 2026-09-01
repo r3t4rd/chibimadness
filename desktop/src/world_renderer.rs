@@ -3,8 +3,8 @@ use std::{
     collections::HashMap,
     env, fs,
     sync::{
-        mpsc::{self, Receiver, TryRecvError},
         Arc, Condvar, Mutex,
+        mpsc::{self, Receiver, TryRecvError},
     },
     thread,
     time::Instant,
@@ -13,9 +13,13 @@ use std::{
 use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
-use yuyib::render::{wgpu, RenderFrame};
+use yuyib::render::{RenderFrame, wgpu};
 
 use crate::scene_executor;
+use crate::{
+    chibi_assets::{self, Paint, PathCommand, Primitive},
+    native_sprites::{self, SpriteAtlasDefinition, SpriteFrame},
+};
 
 const MAX_RENDER_ENTITIES: usize = 2_048;
 // The display list crosses the WebView bridge, so it is untrusted input even
@@ -37,6 +41,14 @@ const MAX_ENTITY_SPEED: f32 = 10_000.0;
 const SOURCE_WORLD_WIDTH: f32 = 5_400.0;
 const SOURCE_WORLD_HEIGHT: f32 = 4_400.0;
 
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// Converts the source renderer's CSS palette to linear bridge colours once,
 /// avoiding a second, hand-maintained palette in the native renderer.
 fn hex(value: &str) -> [f32; 4] {
@@ -48,7 +60,7 @@ fn hex(value: &str) -> [f32; 4] {
         std::str::from_utf8(&bytes[offset..offset + 2])
             .ok()
             .and_then(|part| u8::from_str_radix(part, 16).ok())
-            .map_or(0.0, |channel| channel as f32 / 255.0)
+            .map_or(0.0, |channel| srgb_to_linear(channel as f32 / 255.0))
     };
     [parse(1), parse(3), parse(5), 1.0]
 }
@@ -151,6 +163,33 @@ fn fs_main(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
+// Atlas pixels are authored in sRGB PNGs and uploaded as `Rgba8UnormSrgb`,
+// therefore textureSample returns linear values suitable for the native
+// surface. Keeping this distinct from WORLD_SHADER avoids putting UVs on the
+// large retained terrain vertex format.
+const SPRITE_SHADER: &str = r#"
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec2<f32>, @location(1) uv: vec2<f32>) -> VertexOutput {
+    var output: VertexOutput;
+    output.position = vec4<f32>(position, 0.0, 1.0);
+    output.uv = uv;
+    return output;
+}
+
+@group(0) @binding(0) var sprite_atlas: texture_2d<f32>;
+@group(0) @binding(1) var sprite_sampler: sampler;
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(sprite_atlas, sprite_sampler, input.uv);
+}
+"#;
+
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeChibiRecipe {
@@ -245,6 +284,12 @@ pub struct NativeRenderEntity {
     pub weapon_type: String,
     #[serde(default)]
     pub has_shield: bool,
+    #[serde(default)]
+    pub effect_type: String,
+    /// Stable generated-atlas frame name (for example `horde_mite`). The
+    /// bridge sends state, never image bytes or Canvas commands.
+    #[serde(default)]
+    pub sprite_key: String,
     #[serde(default)]
     pub projectile_range: f32,
     #[serde(default)]
@@ -476,6 +521,8 @@ impl NativeWorldState {
                 && entity.faction.len() <= 32
                 && entity.projectile_type.len() <= 32
                 && entity.weapon_type.len() <= 32
+                && entity.effect_type.len() <= 32
+                && entity.sprite_key.len() <= 96
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
                     .animation
@@ -530,9 +577,10 @@ impl NativeWorldState {
                     animation.dodge_timer = animation.dodge_timer.clamp(0.0, 10.0);
                 }
             }
-            for channel in &mut entity.color {
-                *channel = channel.clamp(0.0, 1.0);
+            for channel in &mut entity.color[..3] {
+                *channel = srgb_to_linear(channel.clamp(0.0, 1.0));
             }
+            entity.color[3] = entity.color[3].clamp(0.0, 1.0);
         }
         frame.entities.sort_by_key(|entity| entity.layer);
         self.frame = Some(frame);
@@ -647,6 +695,43 @@ struct Vertex {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
+struct SpriteVertex {
+    position: [f32; 2],
+    uv: [f32; 2],
+}
+
+struct NativeSpriteAtlas {
+    id: &'static str,
+    png: &'static [u8],
+    width: u32,
+    height: u32,
+    frames: HashMap<String, SpriteFrame>,
+    texture: Option<wgpu::Texture>,
+    bind_group: Option<wgpu::BindGroup>,
+    vertex_buffer: Option<wgpu::Buffer>,
+    vertex_capacity: usize,
+    vertices: Vec<SpriteVertex>,
+}
+
+impl From<SpriteAtlasDefinition> for NativeSpriteAtlas {
+    fn from(definition: SpriteAtlasDefinition) -> Self {
+        Self {
+            id: definition.id,
+            png: definition.png,
+            width: definition.width,
+            height: definition.height,
+            frames: definition.frames,
+            texture: None,
+            bind_group: None,
+            vertex_buffer: None,
+            vertex_capacity: 0,
+            vertices: Vec::new(),
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
 struct CameraUniform {
     viewport: [f32; 2],
     position: [f32; 2],
@@ -730,40 +815,42 @@ fn start_dynamic_scene_compiler(
     let (result_tx, result_rx) = mpsc::channel();
     thread::Builder::new()
         .name("native-world-scene-compiler".to_owned())
-        .spawn(move || loop {
-            let job = {
-                let (lock, ready) = &*worker_pending;
-                let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                while slot.is_none() {
-                    slot = ready
-                        .wait(slot)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .spawn(move || {
+            loop {
+                let job = {
+                    let (lock, ready) = &*worker_pending;
+                    let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while slot.is_none() {
+                        slot = ready
+                            .wait(slot)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    slot.take().expect("scene compiler notified without a job")
+                };
+                let Some(vertices) = scene_vertices_for(
+                    &job.scene,
+                    SceneVertexSelection::Dynamic,
+                    text_font.as_ref(),
+                ) else {
+                    continue;
+                };
+                let Some(overlay_vertices) = scene_vertices_for(
+                    &job.scene,
+                    SceneVertexSelection::DynamicOverlay,
+                    text_font.as_ref(),
+                ) else {
+                    continue;
+                };
+                if result_tx
+                    .send(DynamicSceneCompileResult {
+                        revision: job.revision,
+                        vertices,
+                        overlay_vertices,
+                    })
+                    .is_err()
+                {
+                    break;
                 }
-                slot.take().expect("scene compiler notified without a job")
-            };
-            let Some(vertices) = scene_vertices_for(
-                &job.scene,
-                SceneVertexSelection::Dynamic,
-                text_font.as_ref(),
-            ) else {
-                continue;
-            };
-            let Some(overlay_vertices) = scene_vertices_for(
-                &job.scene,
-                SceneVertexSelection::DynamicOverlay,
-                text_font.as_ref(),
-            ) else {
-                continue;
-            };
-            if result_tx
-                .send(DynamicSceneCompileResult {
-                    revision: job.revision,
-                    vertices,
-                    overlay_vertices,
-                })
-                .is_err()
-            {
-                break;
             }
         })
         .expect("native dynamic scene compiler thread must start");
@@ -780,33 +867,37 @@ fn start_static_scene_compiler(
     let (result_tx, result_rx) = mpsc::channel();
     thread::Builder::new()
         .name("native-world-static-compiler".to_owned())
-        .spawn(move || loop {
-            let job = {
-                let (lock, ready) = &*worker_pending;
-                let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                while slot.is_none() {
-                    slot = ready
-                        .wait(slot)
-                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+        .spawn(move || {
+            loop {
+                let job = {
+                    let (lock, ready) = &*worker_pending;
+                    let mut slot = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    while slot.is_none() {
+                        slot = ready
+                            .wait(slot)
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    }
+                    slot.take()
+                        .expect("static scene compiler notified without a job")
+                };
+                let view = StaticSceneView::from(&job.scene);
+                let Some(vertices) = scene_vertices_for(
+                    &job.scene,
+                    SceneVertexSelection::Static,
+                    text_font.as_ref(),
+                ) else {
+                    continue;
+                };
+                if result_tx
+                    .send(StaticSceneCompileResult {
+                        revision: job.revision,
+                        vertices,
+                        view,
+                    })
+                    .is_err()
+                {
+                    break;
                 }
-                slot.take()
-                    .expect("static scene compiler notified without a job")
-            };
-            let view = StaticSceneView::from(&job.scene);
-            let Some(vertices) =
-                scene_vertices_for(&job.scene, SceneVertexSelection::Static, text_font.as_ref())
-            else {
-                continue;
-            };
-            if result_tx
-                .send(StaticSceneCompileResult {
-                    revision: job.revision,
-                    vertices,
-                    view,
-                })
-                .is_err()
-            {
-                break;
             }
         })
         .expect("native static scene compiler thread must start");
@@ -825,6 +916,10 @@ pub struct NativeWorldRenderer {
     static_vertex_capacity: usize,
     static_vertices: Vec<Vertex>,
     static_vertices_dirty: bool,
+    /// Key for the fully-native static map. Unlike `static_scene_view`, this
+    /// path is generated in Rust and never depends on a WebView Canvas
+    /// display-list worker.
+    native_static_key: Option<(String, u32, u32)>,
     last_static_scene_submitted_revision: Option<u64>,
     last_static_scene_applied_revision: Option<u64>,
     static_scene_view: Option<StaticSceneView>,
@@ -838,6 +933,10 @@ pub struct NativeWorldRenderer {
     composite_bind_group: Option<wgpu::BindGroup>,
     composite_uniform_buffer: Option<wgpu::Buffer>,
     static_sampler: Option<wgpu::Sampler>,
+    sprite_pipeline: Option<wgpu::RenderPipeline>,
+    sprite_bind_group_layout: Option<wgpu::BindGroupLayout>,
+    sprite_sampler: Option<wgpu::Sampler>,
+    sprite_atlases: Vec<NativeSpriteAtlas>,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_capacity: usize,
     vertices: Vec<Vertex>,
@@ -847,7 +946,6 @@ pub struct NativeWorldRenderer {
     overlay_vertices: Vec<Vertex>,
     overlay_vertices_dirty: bool,
     last_scene_revision: Option<u64>,
-    last_frame_revision: Option<u64>,
     last_dynamic_scene_submitted_revision: Option<u64>,
     last_dynamic_scene_applied_revision: Option<u64>,
     latest_dynamic_scene: LatestDynamicScene,
@@ -909,6 +1007,7 @@ impl Default for NativeWorldRenderer {
             static_vertex_capacity: 0,
             static_vertices: Vec::new(),
             static_vertices_dirty: false,
+            native_static_key: None,
             last_static_scene_submitted_revision: None,
             last_static_scene_applied_revision: None,
             static_scene_view: None,
@@ -922,6 +1021,13 @@ impl Default for NativeWorldRenderer {
             composite_bind_group: None,
             composite_uniform_buffer: None,
             static_sampler: None,
+            sprite_pipeline: None,
+            sprite_bind_group_layout: None,
+            sprite_sampler: None,
+            sprite_atlases: native_sprites::load_definitions()
+                .into_iter()
+                .map(NativeSpriteAtlas::from)
+                .collect(),
             vertex_buffer: None,
             vertex_capacity: 0,
             vertices: Vec::new(),
@@ -931,7 +1037,6 @@ impl Default for NativeWorldRenderer {
             overlay_vertices: Vec::new(),
             overlay_vertices_dirty: false,
             last_scene_revision: None,
-            last_frame_revision: None,
             last_dynamic_scene_submitted_revision: None,
             last_dynamic_scene_applied_revision: None,
             latest_dynamic_scene,
@@ -1043,24 +1148,22 @@ impl NativeWorldRenderer {
         let mut rendering_retained_scene = false;
         let rendered_scene = if let (
             Some((static_scene, static_revision)),
-            Some((world, prediction_seconds, frame_revision)),
+            Some((world, prediction_seconds, _frame_revision)),
         ) = (
             state.static_scene_with_revision(),
             state.frame_with_prediction_and_revision(),
         ) {
-            // `world.frame` is a bounded presentation snapshot. It replaces
-            // the old JS Canvas dynamic display list in the gameplay hot path:
-            // WGPU owns actor geometry while the worker supplies only static
-            // cacheable map commands.
+            // Static display-list + camera frame. Sprite atlas actors are
+            // retained by WGPU, so rebuild their tiny dynamic vertex buffers
+            // on every presentation. The WebView only sends position updates
+            // at rAF cadence; deriving prediction here lets native frames
+            // continue moving smoothly between those bridge messages.
             if self.last_static_scene_submitted_revision != Some(static_revision) {
                 self.submit_static_scene(static_revision, static_scene.clone());
                 self.last_static_scene_submitted_revision = Some(static_revision);
             }
-            if self.last_frame_revision != Some(frame_revision) {
-                self.build_dynamic_frame_vertices(world, prediction_seconds);
-                self.last_frame_revision = Some(frame_revision);
-                self.vertices_dirty = true;
-            }
+            self.build_dynamic_frame_vertices(world, prediction_seconds);
+            self.vertices_dirty = true;
             frame_scene = NativeRenderScene {
                 version: 1,
                 viewport: NativeSceneViewport {
@@ -1078,20 +1181,6 @@ impl NativeWorldRenderer {
             retained_scene = Some(&frame_scene);
             rendering_retained_scene = true;
             true
-        } else if let Some(((static_scene, static_revision), (dynamic_scene, dynamic_revision))) =
-            state.retained_scenes_with_revisions()
-        {
-            if self.last_static_scene_submitted_revision != Some(static_revision) {
-                self.submit_static_scene(static_revision, static_scene.clone());
-                self.last_static_scene_submitted_revision = Some(static_revision);
-            }
-            if self.last_dynamic_scene_submitted_revision != Some(dynamic_revision) {
-                self.submit_dynamic_scene(dynamic_revision, dynamic_scene.clone());
-                self.last_dynamic_scene_submitted_revision = Some(dynamic_revision);
-            }
-            retained_scene = Some(dynamic_scene);
-            rendering_retained_scene = true;
-            true
         } else if let Some((scene, revision)) = state.scene_with_revision() {
             if self.last_scene_revision != Some(revision) {
                 let Some(vertices) = self.scene_vertices(scene, SceneVertexSelection::All) else {
@@ -1105,12 +1194,36 @@ impl NativeWorldRenderer {
         } else if let Some((world, prediction_seconds, _)) =
             state.frame_with_prediction_and_revision()
         {
-            // Compatibility fallback for an older bundle which has not yet
-            // produced a retained static scene. It still owns the map
-            // geometry, unlike the `static scene + world.frame` path above.
-            self.build_vertices(world, prediction_seconds);
-            self.last_scene_revision = None;
+            // Native-only world path: build the authored base map once in
+            // Rust, then submit only mutable entities every presentation.
+            // This replaces the old TS OffscreenCanvas scene compiler.
+            let static_key = (
+                world.theme.clone(),
+                world.viewport_width.max(1.0).round() as u32,
+                world.viewport_height.max(1.0).round() as u32,
+            );
+            if self.native_static_key.as_ref() != Some(&static_key) {
+                self.rebuild_native_static_world(world);
+                self.native_static_key = Some(static_key);
+            }
+            self.build_dynamic_frame_vertices(world, prediction_seconds);
             self.vertices_dirty = true;
+            self.last_scene_revision = None;
+            frame_scene = NativeRenderScene {
+                version: 1,
+                viewport: NativeSceneViewport {
+                    width: world.viewport_width,
+                    height: world.viewport_height,
+                },
+                camera: NativeSceneCamera {
+                    x: world.camera_x,
+                    y: world.camera_y,
+                    zoom: world.zoom,
+                },
+                time_seconds: world.time_seconds,
+                commands: Vec::new(),
+            };
+            retained_scene = Some(&frame_scene);
             true
         } else {
             false
@@ -1126,10 +1239,18 @@ impl NativeWorldRenderer {
         if rendering_retained_scene && self.static_scene_view.is_none() {
             return false;
         }
-        if self.vertices.is_empty() && self.static_vertices.is_empty() {
+        if self.vertices.is_empty()
+            && self.static_vertices.is_empty()
+            && self
+                .sprite_atlases
+                .iter()
+                .all(|atlas| atlas.vertices.is_empty())
+        {
             return false;
         }
         self.ensure_pipeline(frame);
+        self.ensure_sprite_pipeline(frame);
+        self.ensure_sprite_atlas_textures(frame);
         let static_scene_view = self.static_scene_view;
         if let Some(static_view) = static_scene_view {
             self.ensure_static_cache(frame, static_view);
@@ -1149,6 +1270,7 @@ impl NativeWorldRenderer {
             self.upload_overlay_vertices(frame);
             self.overlay_vertices_dirty = false;
         }
+        self.upload_sprite_vertices(frame);
         let static_vertex_count = self.static_vertices.len() as u32;
         let dynamic_vertex_count = self.vertices.len() as u32;
         let overlay_vertex_count = self.overlay_vertices.len() as u32;
@@ -1183,6 +1305,8 @@ impl NativeWorldRenderer {
         let static_vertex_buffer = self.static_vertex_buffer.as_ref();
         let dynamic_vertex_buffer = self.vertex_buffer.as_ref();
         let overlay_vertex_buffer = self.overlay_vertex_buffer.as_ref();
+        let sprite_pipeline = self.sprite_pipeline.as_ref();
+        let sprite_atlases = &self.sprite_atlases;
         frame.with_surface_pass(wgpu::LoadOp::Load, |pass| {
             if let Some((composite_pipeline, composite_bind_group)) = composite {
                 pass.set_pipeline(composite_pipeline);
@@ -1212,6 +1336,23 @@ impl NativeWorldRenderer {
                     pass.draw(0..overlay_vertex_count, 0..1);
                 }
             }
+            if let Some(sprite_pipeline) = sprite_pipeline {
+                pass.set_pipeline(sprite_pipeline);
+                for atlas in sprite_atlases {
+                    let vertex_count = atlas.vertices.len() as u32;
+                    let (Some(bind_group), Some(vertex_buffer)) =
+                        (&atlas.bind_group, &atlas.vertex_buffer)
+                    else {
+                        continue;
+                    };
+                    if vertex_count == 0 {
+                        continue;
+                    }
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(0..vertex_count, 0..1);
+                }
+            }
         });
         true
     }
@@ -1233,6 +1374,13 @@ impl NativeWorldRenderer {
         self.composite_bind_group = None;
         self.composite_uniform_buffer = None;
         self.static_sampler = None;
+        self.sprite_pipeline = None;
+        self.sprite_bind_group_layout = None;
+        self.sprite_sampler = None;
+        for atlas in &mut self.sprite_atlases {
+            atlas.texture = None;
+            atlas.bind_group = None;
+        }
         let device = frame.device();
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("chibimadness native world shader"),
@@ -1657,10 +1805,207 @@ impl NativeWorldRenderer {
         true
     }
 
+    fn ensure_sprite_pipeline(&mut self, frame: &RenderFrame<'_>) {
+        if self.sprite_pipeline.is_some() && self.sprite_bind_group_layout.is_some() {
+            return;
+        }
+        let device = frame.device();
+        let format = frame.surface_format();
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("chibimadness native sprite atlas layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("chibimadness native sprite atlas sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("chibimadness native sprite atlas shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(SPRITE_SHADER)),
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("chibimadness native sprite atlas pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        let attributes = [
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x2,
+                offset: std::mem::size_of::<[f32; 2]>() as u64,
+                shader_location: 1,
+            },
+        ];
+        self.sprite_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("chibimadness native sprite atlas pipeline"),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<SpriteVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &attributes,
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            },
+        ));
+        self.sprite_bind_group_layout = Some(bind_group_layout);
+        self.sprite_sampler = Some(sampler);
+    }
+
+    fn ensure_sprite_atlas_textures(&mut self, frame: &RenderFrame<'_>) {
+        let (Some(layout), Some(sampler)) = (
+            self.sprite_bind_group_layout.as_ref(),
+            self.sprite_sampler.as_ref(),
+        ) else {
+            return;
+        };
+        let device = frame.device();
+        let queue = frame.queue();
+        for atlas in &mut self.sprite_atlases {
+            if atlas.bind_group.is_some() {
+                continue;
+            }
+            let Ok(decoded) = image::load_from_memory(atlas.png) else {
+                continue;
+            };
+            let rgba = decoded.to_rgba8();
+            if rgba.width() != atlas.width || rgba.height() != atlas.height {
+                continue;
+            }
+            let row_bytes = atlas.width.saturating_mul(4) as usize;
+            let padded_row_bytes = (row_bytes + 255) & !255;
+            let mut upload = vec![0; padded_row_bytes * atlas.height as usize];
+            for (row, source) in rgba.as_raw().chunks_exact(row_bytes).enumerate() {
+                let start = row * padded_row_bytes;
+                upload[start..start + row_bytes].copy_from_slice(source);
+            }
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("chibimadness generated sprite atlas"),
+                size: wgpu::Extent3d {
+                    width: atlas.width,
+                    height: atlas.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &upload,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_row_bytes as u32),
+                    rows_per_image: Some(atlas.height),
+                },
+                wgpu::Extent3d {
+                    width: atlas.width,
+                    height: atlas.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            atlas.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("chibimadness native sprite atlas bindings"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            }));
+            atlas.texture = Some(texture);
+        }
+    }
+
+    fn upload_sprite_vertices(&mut self, frame: &RenderFrame<'_>) {
+        use wgpu::util::DeviceExt;
+
+        for atlas in &mut self.sprite_atlases {
+            let bytes = bytemuck::cast_slice(&atlas.vertices);
+            if bytes.is_empty() {
+                continue;
+            }
+            if atlas.vertex_capacity < bytes.len() {
+                atlas.vertex_buffer = Some(frame.device().create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("chibimadness native sprite vertices"),
+                        contents: bytes,
+                        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    },
+                ));
+                atlas.vertex_capacity = bytes.len();
+            } else if let Some(buffer) = &atlas.vertex_buffer {
+                frame.queue().write_buffer(buffer, 0, bytes);
+            }
+        }
+    }
+
     fn upload_vertices(&mut self, frame: &RenderFrame<'_>) {
         use wgpu::util::DeviceExt;
 
         let bytes = bytemuck::cast_slice(&self.vertices);
+        if bytes.is_empty() {
+            return;
+        }
         if self.vertex_capacity < bytes.len() {
             self.vertex_buffer = Some(frame.device().create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
@@ -1679,6 +2024,9 @@ impl NativeWorldRenderer {
         use wgpu::util::DeviceExt;
 
         let bytes = bytemuck::cast_slice(&self.overlay_vertices);
+        if bytes.is_empty() {
+            return;
+        }
         if self.overlay_vertex_capacity < bytes.len() {
             self.overlay_vertex_buffer = Some(frame.device().create_buffer_init(
                 &wgpu::util::BufferInitDescriptor {
@@ -1711,22 +2059,17 @@ impl NativeWorldRenderer {
         }
     }
 
-    fn build_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
+    fn rebuild_native_static_world(&mut self, world: &NativeRenderFrame) {
         self.vertices.clear();
-        // The native pass intentionally owns the world surface. The WebView
-        // stays transparent and therefore cannot force WebView2 to composite
-        // a full-screen Canvas2D texture every gameplay frame.
         self.add_source_world(world);
-        for entity in &world.entities {
-            let x = entity.x + entity.velocity_x * prediction_seconds;
-            let y = entity.y + entity.velocity_y * prediction_seconds;
-            self.add_entity(entity, x, y, world);
-        }
+        self.static_vertices = std::mem::take(&mut self.vertices);
+        self.static_vertices_dirty = true;
     }
 
     fn build_dynamic_frame_vertices(&mut self, world: &NativeRenderFrame, prediction_seconds: f32) {
         self.vertices.clear();
         self.overlay_vertices.clear();
+        self.clear_sprite_vertices();
         for entity in &world.entities {
             let x = entity.x + entity.velocity_x * prediction_seconds;
             let y = entity.y + entity.velocity_y * prediction_seconds;
@@ -1740,6 +2083,12 @@ impl NativeWorldRenderer {
         selection: SceneVertexSelection,
     ) -> Option<Vec<Vertex>> {
         scene_vertices_for(scene, selection, self.text_font.as_ref())
+    }
+
+    fn clear_sprite_vertices(&mut self) {
+        for atlas in &mut self.sprite_atlases {
+            atlas.vertices.clear();
+        }
     }
 
     /// Faithful fixed-layout base layer mirrored from `worldRenderer.ts`.
@@ -2418,7 +2767,7 @@ impl NativeWorldRenderer {
         y: f32,
         world: &NativeRenderFrame,
     ) {
-        if entity.kind != "projectile" {
+        if !matches!(entity.kind.as_str(), "projectile" | "particle") {
             let shadow = [0.0, 0.0, 0.0, (entity.color[3] * 0.34).min(0.34)];
             self.add_world_ellipse(
                 x + entity.size * 0.10,
@@ -2430,13 +2779,147 @@ impl NativeWorldRenderer {
                 world,
             );
         }
+        if self.add_generated_sprite(entity, x, y, world) {
+            self.add_sprite_health_bar(entity, x, y, world);
+            return;
+        }
         match entity.kind.as_str() {
             "projectile" => self.add_projectile(entity, x, y, world),
+            "particle" => self.add_particle(entity, x, y, world),
             "resource" => self.add_resource(entity, x, y, world),
             "vehicle" => self.add_vehicle(entity, x, y, world),
             "pickup" | "poi" => self.add_pickup(entity, x, y, world),
+            "decal" => self.add_decal(entity, x, y, world),
+            "summon" => self.add_summon(entity, x, y, world),
+            "popup" => self.add_popup(entity, x, y, world),
+            "monster" if entity.effect_type == "forest_wolf" => self.add_forest_wolf(entity, x, y, world),
             _ => self.add_humanoid(entity, x, y, world),
         }
+    }
+
+    fn add_generated_sprite(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) -> bool {
+        if entity.sprite_key.is_empty() {
+            return false;
+        }
+        let Some(atlas_id) = native_sprites::atlas_for_frame(&entity.sprite_key) else {
+            return false;
+        };
+        let world_to_ndc = |world_x: f32, world_y: f32| {
+            [
+                ((world_x - world.camera_x) * world.zoom + world.viewport_width * 0.5)
+                    / world.viewport_width
+                    * 2.0
+                    - 1.0,
+                1.0 - ((world_y - world.camera_y) * world.zoom + world.viewport_height * 0.5)
+                    / world.viewport_height
+                    * 2.0,
+            ]
+        };
+        let Some(atlas) = self
+            .sprite_atlases
+            .iter_mut()
+            .find(|atlas| atlas.id == atlas_id)
+        else {
+            return false;
+        };
+        let Some(frame) = atlas.frames.get(&entity.sprite_key).copied() else {
+            return false;
+        };
+        if frame.w == 0 || frame.h == 0 {
+            return false;
+        }
+        // The generated cells preserve the source renderer's full canvas
+        // bounds. Map those bounds to the native entity footprint rather than
+        // cropping artwork per frame; this keeps wing/weapon silhouettes and
+        // avoids a per-entity texture allocation.
+        let scale = if atlas_id == "horde" { 2.05 } else { 2.55 };
+        let height = entity.size * scale;
+        let width = height * frame.w as f32 / frame.h as f32;
+        let center_x = x;
+        let center_y = y - entity.size * 0.08;
+        let left = center_x - width * frame.pivot_x.clamp(0.0, 1.0);
+        let top = center_y - height * frame.pivot_y.clamp(0.0, 1.0);
+        let right = left + width;
+        let bottom = top + height;
+        let inset_u = 0.5 / atlas.width as f32;
+        let inset_v = 0.5 / atlas.height as f32;
+        let mut u0 = frame.x as f32 / atlas.width as f32 + inset_u;
+        let mut u1 = (frame.x + frame.w) as f32 / atlas.width as f32 - inset_u;
+        let v0 = frame.y as f32 / atlas.height as f32 + inset_v;
+        let v1 = (frame.y + frame.h) as f32 / atlas.height as f32 - inset_v;
+        if entity.facing_left {
+            std::mem::swap(&mut u0, &mut u1);
+        }
+        let top_left = world_to_ndc(left, top);
+        let top_right = world_to_ndc(right, top);
+        let bottom_right = world_to_ndc(right, bottom);
+        let bottom_left = world_to_ndc(left, bottom);
+        atlas.vertices.extend_from_slice(&[
+            SpriteVertex {
+                position: top_left,
+                uv: [u0, v0],
+            },
+            SpriteVertex {
+                position: bottom_left,
+                uv: [u0, v1],
+            },
+            SpriteVertex {
+                position: bottom_right,
+                uv: [u1, v1],
+            },
+            SpriteVertex {
+                position: top_left,
+                uv: [u0, v0],
+            },
+            SpriteVertex {
+                position: bottom_right,
+                uv: [u1, v1],
+            },
+            SpriteVertex {
+                position: top_right,
+                uv: [u1, v0],
+            },
+        ]);
+        true
+    }
+
+    fn add_sprite_health_bar(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        if entity.kind != "monster" {
+            return;
+        }
+        let bar_width = entity.size * 1.28;
+        self.add_world_rect(
+            x,
+            y - entity.size * 0.86,
+            bar_width,
+            entity.size * 0.11,
+            [0.008, 0.014, 0.035, 0.94],
+            world,
+        );
+        self.add_world_rect(
+            x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
+            y - entity.size * 0.86,
+            bar_width * entity.hp_ratio,
+            entity.size * 0.065,
+            if entity.faction == "police" {
+                hex("#22D3EE")
+            } else {
+                hex("#FB2C4A")
+            },
+            world,
+        );
     }
 
     fn add_humanoid(
@@ -2499,12 +2982,39 @@ impl NativeWorldRenderer {
             .map(|state| (state.dodge_timer / 0.24).clamp(0.0, 1.0))
             .unwrap_or_default();
         if dodge_progress > 0.0 {
-            x += if entity.facing_left { -1.0 } else { 1.0 }
-                * size
-                * 0.34
-                * dodge_progress;
+            x += if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34 * dodge_progress;
         }
         y -= animation.map_or(0.0, |state| state.jump_z) + bob + spawn_lift;
+
+        if let Some(style) = recipe.filter(|style| {
+            chibi_assets::is_miku(
+                &style.front_hair_style,
+                &style.back_hair_style,
+                &style.hair_style,
+                &style.hat_type,
+                &style.outfit_type,
+            )
+        }) {
+            self.add_miku_asset(style, entity, x, y, size, world);
+            self.add_weapon_asset(entity, x, y, size, outline, world);
+            if entity.kind == "monster" {
+                let bar_width = size * 1.28;
+                self.add_world_rect(x, y - size * 0.86, bar_width, size * 0.11, outline, world);
+                self.add_world_rect(
+                    x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
+                    y - size * 0.86,
+                    bar_width * entity.hp_ratio,
+                    size * 0.065,
+                    if entity.faction == "police" {
+                        hex("#22D3EE")
+                    } else {
+                        hex("#FB2C4A")
+                    },
+                    world,
+                );
+            }
+            return;
+        }
 
         // The source Chibi order is shadow -> back hair/wings -> outfit ->
         // face/front hair -> cosmetics/weapon. The primitives below retain
@@ -2532,8 +3042,22 @@ impl NativeWorldRenderer {
                 );
                 match style.halo_type.as_str() {
                     "cross" => {
-                        self.add_world_rect(x, y - size * 0.83, size * 0.055, size * 0.30, halo, world);
-                        self.add_world_rect(x, y - size * 0.83, size * 0.22, size * 0.055, halo, world);
+                        self.add_world_rect(
+                            x,
+                            y - size * 0.83,
+                            size * 0.055,
+                            size * 0.30,
+                            halo,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x,
+                            y - size * 0.83,
+                            size * 0.22,
+                            size * 0.055,
+                            halo,
+                            world,
+                        );
                     }
                     "star" | "floral" => {
                         for point in 0..5 {
@@ -2564,7 +3088,31 @@ impl NativeWorldRenderer {
                 }
             }
             let wing = recipe_color(&style.wing_color, [0.38, 0.76, 1.0, 1.0]);
-            if style.wing_type != "none" && !style.wing_type.is_empty() {
+            if style.wing_type == "pixel_wings" {
+                // Miku's preset has pixel wings, not the generic angel
+                // triangles. Keep the stepped silhouette from the source
+                // asset recipe so it remains recognisable at gameplay scale.
+                for side in [-1.0_f32, 1.0] {
+                    for (index, (offset_x, offset_y, scale)) in [
+                        (0.25_f32, -0.10_f32, 0.12_f32),
+                        (0.39_f32, -0.02_f32, 0.10_f32),
+                        (0.51_f32, 0.10_f32, 0.08_f32),
+                    ]
+                    .iter()
+                    .enumerate()
+                    {
+                        let alpha = 0.92 - index as f32 * 0.16;
+                        self.add_world_rect(
+                            x + side * size * *offset_x,
+                            y + size * *offset_y,
+                            size * *scale,
+                            size * *scale,
+                            [wing[0], wing[1], wing[2], alpha],
+                            world,
+                        );
+                    }
+                }
+            } else if style.wing_type != "none" && !style.wing_type.is_empty() {
                 self.add_world_triangle(
                     [x - size * 0.16, y - size * 0.08],
                     [x - size * 0.68, y - size * 0.36],
@@ -2586,8 +3134,48 @@ impl NativeWorldRenderer {
                 style.back_hair_style.as_str()
             };
             match back_hair {
-                "twintails" | "miku_twintails" | "low_twintails" | "twin_bubble_tails"
-                | "twin_drill_tails" => {
+                "miku_twintails" => {
+                    let clip = recipe_color(&style.ribbon_color, hex("#EC4899"));
+                    for side in [-1.0_f32, 1.0] {
+                        // Long, tapered tails: the source reaches below the
+                        // waist rather than stopping in two round puffs.
+                        self.add_world_ellipse(
+                            x + side * size * 0.34,
+                            y + size * 0.03,
+                            size * 0.17,
+                            size * 0.52,
+                            outline,
+                            14,
+                            world,
+                        );
+                        self.add_world_ellipse(
+                            x + side * size * 0.34,
+                            y + size * 0.02,
+                            size * 0.135,
+                            size * 0.48,
+                            hair,
+                            14,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x + side * size * 0.29,
+                            y - size * 0.47,
+                            size * 0.13,
+                            size * 0.11,
+                            outline,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x + side * size * 0.29,
+                            y - size * 0.47,
+                            size * 0.090,
+                            size * 0.066,
+                            clip,
+                            world,
+                        );
+                    }
+                }
+                "twintails" | "low_twintails" | "twin_bubble_tails" | "twin_drill_tails" => {
                     self.add_world_circle(
                         x - size * 0.36,
                         y - size * 0.35,
@@ -2752,6 +3340,9 @@ impl NativeWorldRenderer {
             12,
             world,
         );
+        if let Some(style) = recipe {
+            self.add_outfit_asset(style, x, y, size, coat, skirt, outline, world);
+        }
         self.add_world_circle(x, y - size * 0.28, size * 0.34, outline, 12, world);
         self.add_world_circle(x, y - size * 0.30, size * 0.29, skin, 12, world);
         self.add_world_circle(x, y - size * 0.43, size * 0.30, hair, 12, world);
@@ -2766,7 +3357,29 @@ impl NativeWorldRenderer {
         );
         if let Some(style) = recipe {
             match style.front_hair_style.as_str() {
-                "miku_fringe" | "straight_bangs" | "blunt_fringe" => {
+                "miku_fringe" | "miku_twintails" => {
+                    // Center notch plus two long sidelocks, matching the
+                    // Miku-specific source path rather than four bob bangs.
+                    self.add_world_triangle(
+                        [x - size * 0.29, y - size * 0.53],
+                        [x, y - size * 0.25],
+                        [x + size * 0.29, y - size * 0.53],
+                        hair,
+                        world,
+                    );
+                    for side in [-1.0_f32, 1.0] {
+                        self.add_world_ellipse(
+                            x + side * size * 0.26,
+                            y - size * 0.26,
+                            size * 0.065,
+                            size * 0.24,
+                            hair,
+                            9,
+                            world,
+                        );
+                    }
+                }
+                "straight_bangs" | "blunt_fringe" => {
                     for offset in [-0.18_f32, -0.06, 0.06, 0.18] {
                         self.add_world_ellipse(
                             x + size * offset,
@@ -2791,29 +3404,143 @@ impl NativeWorldRenderer {
                 _ => {}
             }
         }
-        let facing = if entity.facing_left { -1.0 } else { 1.0 };
-        self.add_world_circle(
-            x + facing * size * 0.10,
-            y - size * 0.30,
-            size * 0.055,
-            eye,
-            8,
-            world,
-        );
-        self.add_world_circle(
-            x - facing * size * 0.10,
-            y - size * 0.30,
-            size * 0.055,
-            eye,
-            8,
-            world,
-        );
-        self.add_world_circle(
-            x + facing * size * 0.10,
-            y - size * 0.30,
+        // The first native pass represented an eye as one coloured dot. That
+        // disappears behind saturated hair/skin and is why operators read as
+        // featureless silhouettes. Preserve the source's readable anime eye
+        // stack: dark lash, white sclera, iris, pupil and two highlights.
+        let face_ink = hex("#1A1816");
+        let blush = hex("#F472B6");
+        for cheek_x in [-0.18_f32, 0.18] {
+            self.add_world_ellipse(
+                x + size * cheek_x,
+                y - size * 0.18,
+                size * 0.065,
+                size * 0.032,
+                [blush[0], blush[1], blush[2], 0.42],
+                8,
+                world,
+            );
+        }
+        let eye_type = recipe.map_or("", |style| style.eye_type.as_str());
+        if matches!(eye_type, "happy" | "sleepy_closed") {
+            for eye_x in [-0.11_f32, 0.11] {
+                self.add_world_line(
+                    x + size * (eye_x - 0.055),
+                    y - size * 0.29,
+                    x + size * eye_x,
+                    y - size * 0.25,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+                self.add_world_line(
+                    x + size * eye_x,
+                    y - size * 0.25,
+                    x + size * (eye_x + 0.055),
+                    y - size * 0.29,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+            }
+        } else if matches!(eye_type, "dead_x" | "dizzy_spiral") {
+            for eye_x in [-0.11_f32, 0.11] {
+                self.add_world_line(
+                    x + size * (eye_x - 0.052),
+                    y - size * 0.35,
+                    x + size * (eye_x + 0.052),
+                    y - size * 0.24,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+                self.add_world_line(
+                    x + size * (eye_x - 0.052),
+                    y - size * 0.24,
+                    x + size * (eye_x + 0.052),
+                    y - size * 0.35,
+                    size * 0.030,
+                    face_ink,
+                    world,
+                );
+            }
+        } else {
+            for eye_x in [-0.11_f32, 0.11] {
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.30,
+                    size * 0.090,
+                    face_ink,
+                    10,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.295,
+                    size * 0.073,
+                    hex("#FFFFFF"),
+                    10,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.292,
+                    size * 0.060,
+                    eye,
+                    10,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * eye_x,
+                    y - size * 0.287,
+                    size * 0.032,
+                    hex("#09090B"),
+                    9,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * (eye_x - 0.021),
+                    y - size * 0.322,
+                    size * 0.023,
+                    hex("#FFFFFF"),
+                    7,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * (eye_x + 0.024),
+                    y - size * 0.267,
+                    size * 0.010,
+                    hex("#FFFFFF"),
+                    6,
+                    world,
+                );
+                self.add_world_line(
+                    x + size * (eye_x - 0.074),
+                    y - size * 0.358,
+                    x + size * (eye_x + 0.074),
+                    y - size * 0.358,
+                    size * 0.018,
+                    face_ink,
+                    world,
+                );
+            }
+        }
+        self.add_world_ellipse(
+            x,
+            y - size * 0.155,
+            size * 0.060,
             size * 0.022,
-            [1.0, 1.0, 1.0, 0.92],
-            6,
+            face_ink,
+            8,
+            world,
+        );
+        self.add_world_ellipse(
+            x,
+            y - size * 0.160,
+            size * 0.044,
+            size * 0.013,
+            skin,
+            8,
             world,
         );
         if let Some(style) = recipe {
@@ -2822,26 +3549,6 @@ impl NativeWorldRenderer {
                 recipe_color(&style.accent_color, [0.96, 0.36, 0.55, 1.0]),
             );
             self.add_world_circle(x, y + size * 0.01, size * 0.06, accent, 8, world);
-            if style.eye_type == "dead_x" || style.eye_type == "dizzy_spiral" {
-                self.add_world_line(
-                    x - size * 0.16,
-                    y - size * 0.36,
-                    x - size * 0.04,
-                    y - size * 0.24,
-                    size * 0.025,
-                    hex("#0F172A"),
-                    world,
-                );
-                self.add_world_line(
-                    x - size * 0.16,
-                    y - size * 0.24,
-                    x - size * 0.04,
-                    y - size * 0.36,
-                    size * 0.025,
-                    hex("#0F172A"),
-                    world,
-                );
-            }
             if matches!(
                 style.outfit_type.as_str(),
                 "magic_robe" | "kimono_yukata" | "goth_lolita" | "winter_coat" | "detective_coat"
@@ -2856,8 +3563,69 @@ impl NativeWorldRenderer {
                     world,
                 );
             }
-            if style.hat_type != "none" && !style.hat_type.is_empty() {
-                let hat = recipe_color(&style.hat_color, hair);
+            let hat = recipe_color(&style.hat_color, hair);
+            if style.hat_type == "headphones" {
+                // The preset's headphones are an identifying part of its
+                // silhouette. Build the band and padded cups as native mesh
+                // pieces instead of collapsing them into a generic cap.
+                let cup = hex("#0F172A");
+                for side in [-1.0_f32, 1.0] {
+                    self.add_world_ellipse(
+                        x + side * size * 0.37,
+                        y - size * 0.39,
+                        size * 0.090,
+                        size * 0.19,
+                        outline,
+                        10,
+                        world,
+                    );
+                    self.add_world_ellipse(
+                        x + side * size * 0.37,
+                        y - size * 0.39,
+                        size * 0.060,
+                        size * 0.145,
+                        cup,
+                        10,
+                        world,
+                    );
+                    self.add_world_ellipse(
+                        x + side * size * 0.37,
+                        y - size * 0.39,
+                        size * 0.025,
+                        size * 0.095,
+                        hat,
+                        8,
+                        world,
+                    );
+                }
+                let band_points = [
+                    (-0.34_f32, -0.48_f32),
+                    (-0.22_f32, -0.67_f32),
+                    (0.0_f32, -0.74_f32),
+                    (0.22_f32, -0.67_f32),
+                    (0.34_f32, -0.48_f32),
+                ];
+                for pair in band_points.windows(2) {
+                    self.add_world_line(
+                        x + size * pair[0].0,
+                        y + size * pair[0].1,
+                        x + size * pair[1].0,
+                        y + size * pair[1].1,
+                        size * 0.060,
+                        outline,
+                        world,
+                    );
+                    self.add_world_line(
+                        x + size * pair[0].0,
+                        y + size * pair[0].1,
+                        x + size * pair[1].0,
+                        y + size * pair[1].1,
+                        size * 0.030,
+                        hat,
+                        world,
+                    );
+                }
+            } else if style.hat_type != "none" && !style.hat_type.is_empty() {
                 self.add_world_ellipse(
                     x,
                     y - size * 0.62,
@@ -2872,15 +3640,28 @@ impl NativeWorldRenderer {
         }
         self.add_weapon_asset(entity, x, y, size, outline, world);
         if entity.has_shield {
-            let shield_x = x
-                + if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34;
+            let shield_x = x + if entity.facing_left { -1.0 } else { 1.0 } * size * 0.34;
             let shield = if entity.faction == "police" {
                 [0.06, 0.18, 0.42, 0.94]
             } else {
                 [0.12, 0.10, 0.13, 0.94]
             };
-            self.add_world_rect(shield_x, y + size * 0.02, size * 0.28, size * 0.64, outline, world);
-            self.add_world_rect(shield_x, y + size * 0.02, size * 0.22, size * 0.56, shield, world);
+            self.add_world_rect(
+                shield_x,
+                y + size * 0.02,
+                size * 0.28,
+                size * 0.64,
+                outline,
+                world,
+            );
+            self.add_world_rect(
+                shield_x,
+                y + size * 0.02,
+                size * 0.22,
+                size * 0.56,
+                shield,
+                world,
+            );
             self.add_world_rect(
                 shield_x,
                 y - size * 0.10,
@@ -2909,6 +3690,433 @@ impl NativeWorldRenderer {
                 },
                 world,
             );
+        }
+    }
+
+    /// Tessellates one complete bounded asset recipe in the source Chibi
+    /// coordinate system. This is intentionally local Rust geometry: the
+    /// WebView sends cosmetic data, never a Canvas command stream.
+    fn add_miku_asset(
+        &mut self,
+        style: &NativeChibiRecipe,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        size: f32,
+        world: &NativeRenderFrame,
+    ) {
+        // The source Miku art spans roughly 72 design units. Keeping that
+        // scale makes its source paths visually stable regardless of camera.
+        let scale = (size / 72.0).max(0.1);
+        for primitive in chibi_assets::MIKU {
+            match *primitive {
+                Primitive::Path {
+                    commands,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => self.add_asset_path(
+                    commands,
+                    x,
+                    y,
+                    scale,
+                    self.asset_paint(style, entity, fill),
+                    stroke.map(|paint| self.asset_paint(style, entity, paint)),
+                    stroke_width * scale,
+                    world,
+                ),
+                Primitive::Rect {
+                    x: local_x,
+                    y: local_y,
+                    width,
+                    height,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
+                    let fill = self.asset_paint(style, entity, fill);
+                    let center_x = x + local_x * scale;
+                    let center_y = y + local_y * scale;
+                    if let Some(stroke) = stroke {
+                        self.add_world_rect(
+                            center_x,
+                            center_y,
+                            (width + stroke_width) * scale,
+                            (height + stroke_width) * scale,
+                            self.asset_paint(style, entity, stroke),
+                            world,
+                        );
+                    }
+                    self.add_world_rect(
+                        center_x,
+                        center_y,
+                        width * scale,
+                        height * scale,
+                        fill,
+                        world,
+                    );
+                }
+                Primitive::Ellipse {
+                    x: local_x,
+                    y: local_y,
+                    radius_x,
+                    radius_y,
+                    fill,
+                    stroke,
+                    stroke_width,
+                } => {
+                    let center_x = x + local_x * scale;
+                    let center_y = y + local_y * scale;
+                    if let Some(stroke) = stroke {
+                        self.add_world_ellipse(
+                            center_x,
+                            center_y,
+                            (radius_x + stroke_width * 0.5) * scale,
+                            (radius_y + stroke_width * 0.5) * scale,
+                            self.asset_paint(style, entity, stroke),
+                            14,
+                            world,
+                        );
+                    }
+                    self.add_world_ellipse(
+                        center_x,
+                        center_y,
+                        radius_x * scale,
+                        radius_y * scale,
+                        self.asset_paint(style, entity, fill),
+                        14,
+                        world,
+                    );
+                }
+                Primitive::Line {
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    width,
+                    paint,
+                } => self.add_world_line(
+                    x + start_x * scale,
+                    y + start_y * scale,
+                    x + end_x * scale,
+                    y + end_y * scale,
+                    width * scale,
+                    self.asset_paint(style, entity, paint),
+                    world,
+                ),
+            }
+        }
+    }
+
+    fn asset_paint(
+        &self,
+        style: &NativeChibiRecipe,
+        entity: &NativeRenderEntity,
+        paint: Paint,
+    ) -> [f32; 4] {
+        match paint {
+            Paint::Hair => recipe_color(&style.hair_color, entity.color),
+            Paint::Skin => recipe_color(&style.skin_tone, hex("#FFE4D6")),
+            Paint::Eye => recipe_color(&style.eye_color, hex("#38BDF8")),
+            Paint::Accent => recipe_color(
+                &style.accent_color,
+                recipe_color(&style.ribbon_color, hex("#06B6D4")),
+            ),
+            Paint::Ribbon => recipe_color(&style.ribbon_color, hex("#EC4899")),
+            Paint::Hat => recipe_color(&style.hat_color, hex("#06B6D4")),
+            Paint::Wing => recipe_color(&style.wing_color, hex("#67E8F9")),
+            Paint::Outline => hex("#1E1B18"),
+            Paint::Dark => hex("#0F172A"),
+            Paint::White => hex("#FFFFFF"),
+        }
+    }
+
+    fn add_asset_path(
+        &mut self,
+        commands: &[PathCommand],
+        origin_x: f32,
+        origin_y: f32,
+        scale: f32,
+        fill: [f32; 4],
+        stroke: Option<[f32; 4]>,
+        stroke_width: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let mut points = Vec::with_capacity(commands.len() * 8);
+        let mut current = [0.0_f32, 0.0_f32];
+        let mut closed = false;
+        for command in commands {
+            match *command {
+                PathCommand::Move(x, y) => {
+                    current = [x, y];
+                    points.push(current);
+                }
+                PathCommand::Line(x, y) => {
+                    current = [x, y];
+                    points.push(current);
+                }
+                PathCommand::Cubic(c1x, c1y, c2x, c2y, end_x, end_y) => {
+                    let start = current;
+                    for step in 1..=8 {
+                        let t = step as f32 / 8.0;
+                        let inv = 1.0 - t;
+                        points.push([
+                            inv.powi(3) * start[0]
+                                + 3.0 * inv.powi(2) * t * c1x
+                                + 3.0 * inv * t.powi(2) * c2x
+                                + t.powi(3) * end_x,
+                            inv.powi(3) * start[1]
+                                + 3.0 * inv.powi(2) * t * c1y
+                                + 3.0 * inv * t.powi(2) * c2y
+                                + t.powi(3) * end_y,
+                        ]);
+                    }
+                    current = [end_x, end_y];
+                }
+                PathCommand::Close => closed = true,
+            }
+        }
+        if points.len() < 3 {
+            return;
+        }
+        let world_points = points
+            .iter()
+            .map(|point| [origin_x + point[0] * scale, origin_y + point[1] * scale])
+            .collect::<Vec<_>>();
+        self.add_world_polygon(&world_points, fill, world);
+        if let Some(stroke) = stroke {
+            for pair in world_points.windows(2) {
+                self.add_world_line(
+                    pair[0][0],
+                    pair[0][1],
+                    pair[1][0],
+                    pair[1][1],
+                    stroke_width,
+                    stroke,
+                    world,
+                );
+            }
+            if closed {
+                let first = world_points[0];
+                let last = world_points[world_points.len() - 1];
+                self.add_world_line(
+                    last[0],
+                    last[1],
+                    first[0],
+                    first[1],
+                    stroke_width,
+                    stroke,
+                    world,
+                );
+            }
+        }
+    }
+
+    fn add_world_polygon(
+        &mut self,
+        points: &[[f32; 2]],
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        for index in 1..points.len() - 1 {
+            self.add_world_triangle(points[0], points[index], points[index + 1], color, world);
+        }
+    }
+
+    /// Native equivalent of the source outfit pass. It keeps the recipe
+    /// vocabulary in Rust so an entity only transfers cosmetic state, never
+    /// a list of Canvas drawing commands.
+    fn add_outfit_asset(
+        &mut self,
+        style: &NativeChibiRecipe,
+        x: f32,
+        y: f32,
+        size: f32,
+        coat: [f32; 4],
+        skirt: [f32; 4],
+        outline: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let accent = recipe_color(
+            &style.accent_color,
+            recipe_color(&style.ribbon_color, [0.22, 0.74, 1.0, 1.0]),
+        );
+        match style.outfit_type.as_str() {
+            "cyber_hoodie" => {
+                self.add_world_rect(x, y + size * 0.02, size * 0.58, size * 0.44, coat, world);
+                self.add_world_rect(x, y + size * 0.13, size * 0.34, size * 0.12, accent, world);
+                self.add_world_line(
+                    x - size * 0.08,
+                    y - size * 0.10,
+                    x - size * 0.08,
+                    y + size * 0.08,
+                    size * 0.025,
+                    [1.0, 1.0, 1.0, 0.92],
+                    world,
+                );
+                self.add_world_line(
+                    x + size * 0.08,
+                    y - size * 0.10,
+                    x + size * 0.08,
+                    y + size * 0.08,
+                    size * 0.025,
+                    [1.0, 1.0, 1.0, 0.92],
+                    world,
+                );
+            }
+            "maid_idol" => {
+                self.add_world_rect(x, y + size * 0.02, size * 0.52, size * 0.42, coat, world);
+                self.add_world_triangle(
+                    [x - size * 0.15, y - size * 0.15],
+                    [x + size * 0.15, y - size * 0.15],
+                    [x, y + size * 0.22],
+                    [1.0, 1.0, 1.0, 1.0],
+                    world,
+                );
+                self.add_world_circle(x, y - size * 0.10, size * 0.07, accent, 8, world);
+            }
+            "magic_robe" | "kimono_yukata" | "shrine_miko" => {
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.23,
+                    size * 0.43,
+                    size * 0.30,
+                    coat,
+                    14,
+                    world,
+                );
+                self.add_world_rect(x, y + size * 0.08, size * 0.62, size * 0.07, accent, world);
+                if style.outfit_type == "magic_robe" {
+                    self.add_world_circle(
+                        x,
+                        y - size * 0.03,
+                        size * 0.07,
+                        hex("#FDE047"),
+                        8,
+                        world,
+                    );
+                }
+            }
+            "goth_lolita" | "magical_girl" | "idol_stage" | "sailor_uniform" => {
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.30,
+                    size * 0.40,
+                    size * 0.22,
+                    skirt,
+                    14,
+                    world,
+                );
+                for offset in [-0.22_f32, -0.07, 0.07, 0.22] {
+                    self.add_world_circle(
+                        x + size * offset,
+                        y + size * 0.46,
+                        size * 0.052,
+                        if style.outfit_type == "goth_lolita" {
+                            [1.0, 1.0, 1.0, 0.96]
+                        } else {
+                            accent
+                        },
+                        7,
+                        world,
+                    );
+                }
+                if style.outfit_type == "idol_stage" {
+                    // Long cyan detached sleeves give the virtual-idol
+                    // recipe its recognisable silhouette in motion.
+                    for side in [-1.0_f32, 1.0] {
+                        self.add_world_ellipse(
+                            x + side * size * 0.37,
+                            y + size * 0.05,
+                            size * 0.105,
+                            size * 0.29,
+                            outline,
+                            10,
+                            world,
+                        );
+                        self.add_world_ellipse(
+                            x + side * size * 0.37,
+                            y + size * 0.05,
+                            size * 0.074,
+                            size * 0.25,
+                            accent,
+                            10,
+                            world,
+                        );
+                        self.add_world_rect(
+                            x + side * size * 0.37,
+                            y + size * 0.19,
+                            size * 0.105,
+                            size * 0.045,
+                            hex("#0F172A"),
+                            world,
+                        );
+                    }
+                }
+                if style.outfit_type == "sailor_uniform" {
+                    self.add_world_triangle(
+                        [x - size * 0.16, y - size * 0.12],
+                        [x + size * 0.16, y - size * 0.12],
+                        [x, y + size * 0.12],
+                        accent,
+                        world,
+                    );
+                }
+            }
+            "tactical_shinobi" | "cyber_ninja" | "combat_commando" | "mecha_pilot"
+            | "military_officer" | "techwear_poncho" => {
+                self.add_world_rect(x, y + size * 0.22, size * 0.54, size * 0.20, outline, world);
+                self.add_world_rect(x, y + size * 0.18, size * 0.47, size * 0.13, skirt, world);
+                self.add_world_rect(x, y + size * 0.05, size * 0.54, size * 0.052, accent, world);
+                self.add_world_rect(
+                    x - size * 0.16,
+                    y + size * 0.25,
+                    size * 0.10,
+                    size * 0.07,
+                    accent,
+                    world,
+                );
+                self.add_world_rect(
+                    x + size * 0.16,
+                    y + size * 0.25,
+                    size * 0.10,
+                    size * 0.07,
+                    accent,
+                    world,
+                );
+            }
+            "bunny_suit" => {
+                self.add_world_rect(x, y + size * 0.08, size * 0.46, size * 0.43, coat, world);
+                self.add_world_circle(
+                    x,
+                    y + size * 0.38,
+                    size * 0.10,
+                    [1.0, 1.0, 1.0, 1.0],
+                    8,
+                    world,
+                );
+            }
+            "vampire_noble" | "detective_coat" | "winter_coat" | "sukeban_trench" => {
+                self.add_world_ellipse(
+                    x,
+                    y + size * 0.23,
+                    size * 0.42,
+                    size * 0.32,
+                    coat,
+                    14,
+                    world,
+                );
+                self.add_world_line(
+                    x,
+                    y - size * 0.12,
+                    x,
+                    y + size * 0.43,
+                    size * 0.028,
+                    accent,
+                    world,
+                );
+            }
+            _ => {}
         }
     }
 
@@ -2944,7 +4152,11 @@ impl NativeWorldRenderer {
                     origin_x + direction * size * 0.48,
                     y - size * 0.26,
                     size * 0.052,
-                    if entity.weapon_type == "baton" { metal } else { hex("#7C3F1D") },
+                    if entity.weapon_type == "baton" {
+                        metal
+                    } else {
+                        hex("#7C3F1D")
+                    },
                     world,
                 );
             }
@@ -3069,8 +4281,22 @@ impl NativeWorldRenderer {
                 }
             }
             _ => {
-                self.add_world_rect(origin_x, y + size * 0.04, size * 0.46, size * 0.12, outline, world);
-                self.add_world_rect(origin_x, y + size * 0.01, size * 0.34, size * 0.06, metal, world);
+                self.add_world_rect(
+                    origin_x,
+                    y + size * 0.04,
+                    size * 0.46,
+                    size * 0.12,
+                    outline,
+                    world,
+                );
+                self.add_world_rect(
+                    origin_x,
+                    y + size * 0.01,
+                    size * 0.34,
+                    size * 0.06,
+                    metal,
+                    world,
+                );
             }
         }
     }
@@ -3195,9 +4421,30 @@ impl NativeWorldRenderer {
                 }
             }
             "falling_sword" => {
-                self.add_world_rect(x, y - radius * 0.45, radius * 0.34, radius * 2.2, hex("#0F172A"), world);
-                self.add_world_rect(x, y - radius * 0.45, radius * 0.22, radius * 1.95, hex("#E0F2FE"), world);
-                self.add_world_rect(x, y + radius * 0.60, radius * 0.78, radius * 0.20, hex("#F59E0B"), world);
+                self.add_world_rect(
+                    x,
+                    y - radius * 0.45,
+                    radius * 0.34,
+                    radius * 2.2,
+                    hex("#0F172A"),
+                    world,
+                );
+                self.add_world_rect(
+                    x,
+                    y - radius * 0.45,
+                    radius * 0.22,
+                    radius * 1.95,
+                    hex("#E0F2FE"),
+                    world,
+                );
+                self.add_world_rect(
+                    x,
+                    y + radius * 0.60,
+                    radius * 0.78,
+                    radius * 0.20,
+                    hex("#F59E0B"),
+                    world,
+                );
             }
             "lightning_bolt" => {
                 let mut previous = [x, y - radius * 18.0];
@@ -3243,7 +4490,7 @@ impl NativeWorldRenderer {
                 self.add_world_circle(x, y, radius * 0.45, hex("#0F172A"), 14, world);
                 self.add_world_circle(x, y, radius * 0.15, [0.96, 0.45, 0.71, 0.92], 10, world);
             }
-            "laser" if entity.projectile_range > 1_800.0 => {
+            "laser" => {
                 self.add_world_line(
                     x - direction_x * tracer,
                     y - direction_y * tracer,
@@ -3299,6 +4546,94 @@ impl NativeWorldRenderer {
                     world,
                 );
             }
+        }
+    }
+
+    fn add_particle(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(1.0);
+        let color = entity.color;
+        match entity.effect_type.as_str() {
+            "spark" => {
+                let speed = entity.velocity_x.hypot(entity.velocity_y);
+                let (dx, dy) = if speed > 0.01 {
+                    (entity.velocity_x / speed, entity.velocity_y / speed)
+                } else {
+                    (1.0, 0.0)
+                };
+                self.add_world_line(
+                    x - dx * size * 2.8,
+                    y - dy * size * 2.8,
+                    x + dx * size * 0.7,
+                    y + dy * size * 0.7,
+                    (size * 0.42).max(0.7),
+                    color,
+                    world,
+                );
+            }
+            "star" => {
+                for point in 0..5 {
+                    let a0 =
+                        std::f32::consts::TAU * point as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+                    let a1 = std::f32::consts::TAU * (point + 1) as f32 / 5.0
+                        - std::f32::consts::FRAC_PI_2;
+                    self.add_world_triangle(
+                        [x, y],
+                        [x + a0.cos() * size, y + a0.sin() * size],
+                        [x + a1.cos() * size * 0.52, y + a1.sin() * size * 0.52],
+                        color,
+                        world,
+                    );
+                }
+            }
+            "ring" => {
+                let radius = size * 0.95;
+                let width = (size * 0.22).max(0.8);
+                for segment in 0..12 {
+                    let start = std::f32::consts::TAU * segment as f32 / 12.0;
+                    let end = std::f32::consts::TAU * (segment + 1) as f32 / 12.0;
+                    self.add_world_line(
+                        x + start.cos() * radius,
+                        y + start.sin() * radius,
+                        x + end.cos() * radius,
+                        y + end.sin() * radius,
+                        width,
+                        color,
+                        world,
+                    );
+                }
+            }
+            "casing" => {
+                self.add_world_rect(x, y, size * 0.70, size * 1.9, hex("#78350F"), world);
+                self.add_world_rect(x, y - size * 0.35, size * 0.60, size * 0.48, color, world);
+            }
+            "smoke" => {
+                self.add_world_circle(
+                    x,
+                    y,
+                    size * 1.22,
+                    [color[0], color[1], color[2], color[3] * 0.42],
+                    14,
+                    world,
+                );
+                self.add_world_circle(
+                    x + size * 0.44,
+                    y - size * 0.28,
+                    size * 0.82,
+                    [color[0], color[1], color[2], color[3] * 0.30],
+                    12,
+                    world,
+                );
+            }
+            "petal" => {
+                self.add_world_ellipse(x, y, size * 0.68, size * 0.36, color, 10, world);
+            }
+            _ => self.add_world_circle(x, y, size, color, 12, world),
         }
     }
 
@@ -3405,6 +4740,123 @@ impl NativeWorldRenderer {
             8,
             world,
         );
+    }
+
+    fn add_decal(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let radius = entity.size.max(1.0);
+        match entity.effect_type.as_str() {
+            "fire_pool" => {
+                self.add_world_ellipse(x, y, radius, radius * 0.65, [0.92, 0.22, 0.03, entity.color[3] * 0.42], 18, world);
+                let flicker = 0.78 + (world.time_seconds * 12.0 + x).sin() * 0.16;
+                self.add_world_ellipse(x, y, radius * flicker, radius * 0.42 * flicker, [0.96, 0.55, 0.04, entity.color[3] * 0.82], 18, world);
+                self.add_world_circle(x, y, (radius * 0.18).max(2.0), [1.0, 0.94, 0.54, entity.color[3]], 10, world);
+            }
+            "ice_trail" => {
+                self.add_world_ellipse(x, y, radius, radius * 0.65, [0.45, 0.86, 0.98, entity.color[3] * 0.42], 18, world);
+                self.add_world_ellipse(x, y, radius, radius * 0.65, [0.22, 0.72, 0.98, entity.color[3] * 0.20], 18, world);
+            }
+            _ => {
+                self.add_world_ellipse(x, y, radius, radius * 0.60, entity.color, 16, world);
+                for step in 0..3 {
+                    let angle = step as f32 * std::f32::consts::TAU / 3.0;
+                    self.add_world_circle(
+                        x + angle.cos() * radius * 1.25,
+                        y + angle.sin() * radius * 0.75,
+                        (radius * 0.09).max(1.5),
+                        entity.color,
+                        8,
+                        world,
+                    );
+                }
+            }
+        }
+    }
+
+    fn add_summon(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(12.0);
+        let outline = [0.02, 0.03, 0.06, 0.96];
+        match entity.effect_type.as_str() {
+            "golem" => {
+                self.add_world_rect(x, y - size * 0.16, size * 1.08, size * 1.20, outline, world);
+                self.add_world_rect(x, y - size * 0.16, size * 0.94, size * 1.04, entity.color, world);
+                self.add_world_rect(x, y - size * 0.76, size * 0.70, size * 0.34, [0.47, 0.44, 0.40, 1.0], world);
+                for offset in [-0.16_f32, 0.16] {
+                    self.add_world_circle(x + size * offset, y - size * 0.76, size * 0.07, [0.96, 0.60, 0.06, 1.0], 8, world);
+                }
+            }
+            "totem" => {
+                self.add_world_rect(x, y - size * 0.34, size * 0.30, size * 1.55, [0.30, 0.11, 0.58, 1.0], world);
+                self.add_world_triangle(
+                    [x - size * 0.20, y - size * 1.05],
+                    [x, y - size * 1.48],
+                    [x + size * 0.20, y - size * 1.05],
+                    entity.color,
+                    world,
+                );
+                self.add_world_circle(x, y - size * 1.28, size * 0.13, [0.86, 0.70, 1.0, 0.92], 10, world);
+            }
+            _ => {
+                self.add_world_ellipse(x, y + size * 0.22, size * 0.56, size * 0.18, [0.0, 0.0, 0.0, 0.32], 12, world);
+                self.add_world_rect(x, y, size * 0.86, size * 0.48, [0.50, 0.11, 0.11, 1.0], world);
+                self.add_world_circle(x + size * 0.28, y - size * 0.28, size * 0.27, outline, 12, world);
+                self.add_world_circle(x + size * 0.34, y - size * 0.33, size * 0.07, entity.color, 8, world);
+            }
+        }
+        self.add_sprite_health_bar(entity, x, y, world);
+    }
+
+    fn add_popup(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(4.0);
+        if entity.effect_type == "heal" {
+            self.add_world_circle(x, y, size * 0.52, entity.color, 10, world);
+            self.add_world_rect(x, y, size * 0.20, size * 1.30, [1.0, 1.0, 1.0, entity.color[3]], world);
+            self.add_world_rect(x, y, size * 1.30, size * 0.20, [1.0, 1.0, 1.0, entity.color[3]], world);
+        } else {
+            for point in 0..5 {
+                let start = std::f32::consts::TAU * point as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+                let end = std::f32::consts::TAU * (point + 1) as f32 / 5.0 - std::f32::consts::FRAC_PI_2;
+                self.add_world_triangle(
+                    [x, y],
+                    [x + start.cos() * size, y + start.sin() * size],
+                    [x + end.cos() * size * 0.54, y + end.sin() * size * 0.54],
+                    entity.color,
+                    world,
+                );
+            }
+        }
+    }
+
+    fn add_forest_wolf(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let size = entity.size.max(20.0);
+        self.add_world_ellipse(x, y + size * 0.33, size * 0.58, size * 0.16, [0.0, 0.0, 0.0, 0.40], 14, world);
+        self.add_world_rect(x, y, size * 0.98, size * 0.58, [0.20, 0.25, 0.32, 1.0], world);
+        self.add_world_circle(x + size * 0.34, y - size * 0.17, size * 0.30, [0.12, 0.18, 0.25, 1.0], 14, world);
+        self.add_world_circle(x + size * 0.44, y - size * 0.22, size * 0.055, [0.94, 0.18, 0.25, 1.0], 8, world);
+        self.add_sprite_health_bar(entity, x, y, world);
     }
 
     #[allow(dead_code)]
@@ -3712,7 +5164,12 @@ mod tests {
     fn source_palette_matches_canvas_hex() {
         assert_eq!(
             hex("#162C1E"),
-            [22.0 / 255.0, 44.0 / 255.0, 30.0 / 255.0, 1.0]
+            [
+                srgb_to_linear(22.0 / 255.0),
+                srgb_to_linear(44.0 / 255.0),
+                srgb_to_linear(30.0 / 255.0),
+                1.0,
+            ]
         );
         assert_eq!(hex("not-a-colour"), [1.0, 0.0, 1.0, 1.0]);
     }
@@ -3748,10 +5205,12 @@ mod tests {
         assert_eq!(entity.projectile_type, "magic_orb");
         assert_eq!(entity.weapon_type, "cheytac");
         assert!(entity.has_shield);
-        assert!(entity
-            .animation
-            .as_ref()
-            .is_some_and(|animation| animation.is_sprinting));
+        assert!(
+            entity
+                .animation
+                .as_ref()
+                .is_some_and(|animation| animation.is_sprinting)
+        );
     }
 
     #[test]

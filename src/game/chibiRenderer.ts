@@ -16,7 +16,8 @@ export function drawChibiCharacter(
   ctx: CanvasRenderingContext2D,
   player: Player,
   timeInSeconds: number,
-  isShadow: boolean = true
+  isShadow: boolean = true,
+  options: { bodyOnly?: boolean; overheadOnly?: boolean } = {},
 ) {
   const time = timeInSeconds;
   const {
@@ -38,6 +39,14 @@ export function drawChibiCharacter(
     skateTrickTimer = 0,
     skateTrickDuration = 0.5,
   } = player;
+
+  if (options.overheadOnly) {
+    ctx.save();
+    ctx.translate(x, y);
+    drawOverheadHUD(ctx, player, timeInSeconds);
+    ctx.restore();
+    return;
+  }
 
   const skateTrickProgress =
     skateTrick && skateTrickTimer > 0 ? 1 - skateTrickTimer / Math.max(0.05, skateTrickDuration) : 1;
@@ -308,11 +317,13 @@ export function drawChibiCharacter(
 
   ctx.restore();
 
-  // 9. Overhead UI (Health bar, Stamina bar, Name tag, Emotes, Chat bubble, Bhop combo)
-  ctx.save();
-  ctx.translate(x, y + offsetY - bobY);
-  drawOverheadHUD(ctx, player, time);
-  ctx.restore();
+  if (!options.bodyOnly) {
+    // 9. Overhead UI (Health bar, Stamina bar, Name tag, Emotes, Chat bubble, Bhop combo)
+    ctx.save();
+    ctx.translate(x, y + offsetY - bobY);
+    drawOverheadHUD(ctx, player, time);
+    ctx.restore();
+  }
 }
 
 /** Procedural cinematic pose visual effects overlay */
@@ -6826,7 +6837,8 @@ function drawOverheadHUD(ctx: CanvasRenderingContext2D, player: Player, time: nu
 export function drawHumanoidEnemy(
   ctx: CanvasRenderingContext2D,
   monster: Monster,
-  time: number
+  time: number,
+  options: { bodyOnly?: boolean } = {},
 ) {
   const {
     isBoss,
@@ -7261,7 +7273,9 @@ export function drawHumanoidEnemy(
   }
 
   // 6. Overhead Health Bar (nameplates and following speech bubbles removed)
-  if (!isDead) {
+  // Atlas generation keeps the vector body but leaves mutable HP in the
+  // Canvas overlay, preventing a cached sprite from showing stale health.
+  if (!options.bodyOnly && !isDead) {
     const barW = isBossBandit ? 90 : 44;
     const barH = isBossBandit ? 8 : 5;
     const barY = isBossBandit ? -65 : -46;
@@ -7271,7 +7285,7 @@ export function drawHumanoidEnemy(
     ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = isBossBandit ? '#EF4444' : isDummy ? '#F59E0B' : '#38BDF8';
     ctx.fillRect(-barW / 2, barY, barW * hpRatio, barH);
-  } else {
+  } else if (!options.bodyOnly) {
     // Defeated X_X Badge
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.beginPath();

@@ -8,7 +8,7 @@ type SceneCompileRequest = {
   id: number;
   input: WorldRenderInput;
   staticOnly?: boolean;
-  camera?: { x: number; y: number; zoom: number };
+  camera: { x: number; y: number; zoom: number };
 };
 
 const measurementContext = new OffscreenCanvas(1, 1).getContext('2d');
@@ -69,13 +69,13 @@ self.addEventListener('message', (event: MessageEvent<SceneCompileRequest>) => {
     return;
   }
   try {
+    const camera = event.data.camera;
+    if (!camera) {
+      throw new Error('Native scene compilation requires a camera');
+    }
     const dynamicScene = event.data.staticOnly
       ? undefined
-      : compileDynamicWorldScene(measurementContext, event.data.input);
-    const camera = event.data.camera ?? dynamicScene?.camera;
-    if (!camera) {
-      throw new Error('Native static scene requires a camera');
-    }
+      : compileDynamicWorldScene(measurementContext, event.data.input, camera);
     const contentKey = staticContentKey(event.data.input);
     const cameraOutsideStaticCache = !cameraFitsStaticCache(event.data.input, camera);
     const staticRefreshRequired = contentKey !== lastStaticContentKey

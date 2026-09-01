@@ -1,0 +1,242 @@
+{
+  "name": "accessories_hats_headwear_atlas",
+  "texture": "accessories_hats_headwear_atlas.png",
+  "width": 1104,
+  "height": 920,
+  "frames": {
+    "hat_cyber_cap": {
+      "x": 12,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_combat_helmet": {
+      "x": 196,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_cat_beanie": {
+      "x": 380,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_witch_hat": {
+      "x": 564,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_maid_headdress": {
+      "x": 748,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_beret": {
+      "x": 932,
+      "y": 12,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_bunny_hood": {
+      "x": 12,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_cyber_visor": {
+      "x": 196,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_straw_hat": {
+      "x": 380,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_crown_hat": {
+      "x": 564,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_police_cap": {
+      "x": 748,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_kitsune_mask": {
+      "x": 932,
+      "y": 196,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_chef_toque": {
+      "x": 12,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_pirate_hat": {
+      "x": 196,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_propeller_beanie": {
+      "x": 380,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_top_hat": {
+      "x": 564,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_cowboy_hat": {
+      "x": 748,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_shark_hood": {
+      "x": 932,
+      "y": 380,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_nvg_goggles": {
+      "x": 12,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_flower_crown": {
+      "x": 196,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_bandana": {
+      "x": 380,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_headphones": {
+      "x": 564,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_tiara": {
+      "x": 748,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_aviator_goggles": {
+      "x": 932,
+      "y": 564,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_nurse_cap": {
+      "x": 12,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    },
+    "hat_military_cap": {
+      "x": 196,
+      "y": 748,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hat"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "name": "bosses_atlas",
+  "texture": "bosses_atlas.png",
+  "width": 768,
+  "height": 512,
+  "frames": {
+    "boss_boss_welder": {
+      "x": 16,
+      "y": 16,
+      "w": 224,
+      "h": 224,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "boss_boss_outlaw_viktor": {
+      "x": 272,
+      "y": 16,
+      "w": 224,
+      "h": 224,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "boss_boss_bandit_warlord": {
+      "x": 528,
+      "y": 16,
+      "w": 224,
+      "h": 224,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "boss_boss_police_juggernaut": {
+      "x": 16,
+      "y": 272,
+      "w": 224,
+      "h": 224,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    },
+    "boss_boss_punk_juggernaut": {
+      "x": 272,
+      "y": 272,
+      "w": 224,
+      "h": 224,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "boss"
+    }
+  }
+}
