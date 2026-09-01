@@ -1,0 +1,638 @@
+{
+  "name": "chibi_customization_atlas",
+  "texture": "chibi_customization_atlas.png",
+  "width": 1296,
+  "height": 1152,
+  "frames": {
+    "front_hair_straight_bangs": {
+      "x": 8,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_curtain_bangs": {
+      "x": 152,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_side_swept": {
+      "x": 296,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_spiky_bangs": {
+      "x": 440,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_center_split": {
+      "x": 584,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "front_hair_none": {
+      "x": 728,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "front_hair"
+    },
+    "back_hair_twintails": {
+      "x": 872,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_bob": {
+      "x": 1016,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_ponytail": {
+      "x": 1160,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_long_flowing": {
+      "x": 8,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_wolf_cut": {
+      "x": 152,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_wavy": {
+      "x": 296,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_braids": {
+      "x": 440,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_spiky": {
+      "x": 584,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "back_hair_none_short": {
+      "x": 728,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "back_hair"
+    },
+    "eye_happy": {
+      "x": 872,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_determined": {
+      "x": 1016,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_anya_smug": {
+      "x": 1160,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_nya_cat": {
+      "x": 8,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_wink_star": {
+      "x": 152,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_heart_eyes": {
+      "x": 296,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_sparkle_stars": {
+      "x": 440,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_dead_x": {
+      "x": 584,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "eye_hypno_spiral": {
+      "x": 728,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "eyes"
+    },
+    "outfit_millennium_default": {
+      "x": 872,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "outfit_trinity_sailor": {
+      "x": 1016,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "outfit_gehenna_coat": {
+      "x": 1160,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "outfit_cyber_suit": {
+      "x": 8,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "outfit_tactical_vest": {
+      "x": 152,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "outfit_kimono_modern": {
+      "x": 296,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "outfit_tracksuit_idol": {
+      "x": 440,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "outfits"
+    },
+    "ear_cat": {
+      "x": 584,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_bunny": {
+      "x": 728,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_fox": {
+      "x": 872,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_wolf": {
+      "x": 1016,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_bear": {
+      "x": 1160,
+      "y": 440,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_elf": {
+      "x": 8,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_cyber_antennas": {
+      "x": 152,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_horns": {
+      "x": 296,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_devil_horns": {
+      "x": 440,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "ear_none": {
+      "x": 584,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "ears"
+    },
+    "halo_star": {
+      "x": 728,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_circle": {
+      "x": 872,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_winged": {
+      "x": 1016,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_crown": {
+      "x": 1160,
+      "y": 584,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_cross": {
+      "x": 8,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_cyber_hex": {
+      "x": 152,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_heart": {
+      "x": 296,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_neon_rings": {
+      "x": 440,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_shuriken": {
+      "x": 584,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "halo_none": {
+      "x": 728,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "halos"
+    },
+    "wing_angel_feathers": {
+      "x": 872,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_devil_bat": {
+      "x": 1016,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_cyber_thrusters": {
+      "x": 1160,
+      "y": 728,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_fairy_sparkle": {
+      "x": 8,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_dragon_drake": {
+      "x": 152,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_pixel_wings": {
+      "x": 296,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_mecha_wings": {
+      "x": 440,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_phoenix_fire": {
+      "x": 584,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "wing_none": {
+      "x": 728,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "wings"
+    },
+    "hat_beret": {
+      "x": 872,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_cyber_cap": {
+      "x": 1016,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_combat_helmet": {
+      "x": 1160,
+      "y": 872,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_cat_beanie": {
+      "x": 8,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_witch_hat": {
+      "x": 152,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_maid_headdress": {
+      "x": 296,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_bunny_hood": {
+      "x": 440,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_cyber_visor": {
+      "x": 584,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_headphones": {
+      "x": 728,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    },
+    "hat_none": {
+      "x": 872,
+      "y": 1016,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "hats"
+    }
+  }
+}

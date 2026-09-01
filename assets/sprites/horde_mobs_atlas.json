@@ -1,0 +1,98 @@
+{
+  "name": "horde_mobs_atlas",
+  "texture": "horde_mobs_atlas.png",
+  "width": 576,
+  "height": 432,
+  "frames": {
+    "horde_mite": {
+      "x": 8,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_shade": {
+      "x": 152,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_raider": {
+      "x": 296,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_shotgun": {
+      "x": 440,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_bomber": {
+      "x": 8,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_dasher": {
+      "x": 152,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_sniper": {
+      "x": 296,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_splitter": {
+      "x": 440,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_boss_titan_boss": {
+      "x": 8,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    },
+    "horde_boss_storm_boss": {
+      "x": 152,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "horde_mob"
+    }
+  }
+}

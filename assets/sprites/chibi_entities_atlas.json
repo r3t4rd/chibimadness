@@ -1,0 +1,107 @@
+{
+  "name": "chibi_entities_atlas",
+  "texture": "chibi_entities_atlas.png",
+  "width": 720,
+  "height": 540,
+  "frames": {
+    "operator_millennium_student": {
+      "x": 10,
+      "y": 10,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "operator"
+    },
+    "operator_trinity_scholar": {
+      "x": 190,
+      "y": 10,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "operator"
+    },
+    "operator_gehenna_rebel": {
+      "x": 370,
+      "y": 10,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "operator"
+    },
+    "operator_cyber_shinobi": {
+      "x": 550,
+      "y": 10,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "operator"
+    },
+    "enemy_cop_swat": {
+      "x": 10,
+      "y": 190,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "enemy"
+    },
+    "enemy_cop_officer": {
+      "x": 190,
+      "y": 190,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "enemy"
+    },
+    "enemy_cop_juggernaut": {
+      "x": 370,
+      "y": 190,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "enemy"
+    },
+    "enemy_bandit_grunt": {
+      "x": 550,
+      "y": 190,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "enemy"
+    },
+    "enemy_bandit_boss": {
+      "x": 10,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "enemy"
+    },
+    "vehicle_police_cruiser": {
+      "x": 190,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "vehicle"
+    },
+    "vehicle_cyber_muscle_car": {
+      "x": 370,
+      "y": 370,
+      "w": 160,
+      "h": 160,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "vehicle"
+    }
+  }
+}

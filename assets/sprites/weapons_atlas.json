@@ -1,0 +1,107 @@
+{
+  "name": "weapons_atlas",
+  "texture": "weapons_atlas.png",
+  "width": 576,
+  "height": 432,
+  "frames": {
+    "weapon_ak47": {
+      "x": 8,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_m4a1": {
+      "x": 152,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_cheytac": {
+      "x": 296,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_shotgun": {
+      "x": 440,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_mac10": {
+      "x": 8,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_pistol": {
+      "x": 152,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_revolver": {
+      "x": 296,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_katana": {
+      "x": 440,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_sledgehammer": {
+      "x": 8,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_scythe": {
+      "x": 152,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    },
+    "weapon_greatsword": {
+      "x": 296,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "weapon"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "name": "world_environment_atlas",
+  "texture": "world_environment_atlas.png",
+  "width": 432,
+  "height": 432,
+  "frames": {
+    "prop_server_rack": {
+      "x": 8,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_quantum_core": {
+      "x": 152,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_explosive_barrel": {
+      "x": 296,
+      "y": 8,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_crate": {
+      "x": 8,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_streetlamp": {
+      "x": 152,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_vending_machine": {
+      "x": 296,
+      "y": 152,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    },
+    "prop_barrier": {
+      "x": 8,
+      "y": 296,
+      "w": 128,
+      "h": 128,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "prop"
+    }
+  }
+}
