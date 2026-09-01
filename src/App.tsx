@@ -735,7 +735,10 @@ export function App() {
         presentDynamicOverlay(buildWorldRenderInput());
       } else if (!nativeWorldRenderer && activeCanvasProbeMode === 'webgl-atlas-only') {
         if (probeModeChanged) ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-        renderWebglHordeMobBodies(buildWorldRenderInput(), camera);
+        const webglBodiesActive = renderWebglHordeMobBodies(buildWorldRenderInput(), camera);
+        if (webglBodiesActive && webglHordeMobRenderer?.lastDrawnMobCount === 0) {
+          webglHordeMobRenderer.renderCalibrationGrid();
+        }
       } else if (!nativeWorldRenderer && staticCtx && activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.
