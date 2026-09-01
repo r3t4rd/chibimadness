@@ -497,7 +497,6 @@ export function renderWorld(
       drawUrbanAtmosphereAndNeons(ctx, camera, canvasWidth, canvasHeight, time);
       drawResourceNodes(ctx, resourceNodes.filter((n) => inView(n.x, n.y)), time);
       drawNPCs(ctx, npcs.filter((n) => inView(n.x, n.y)), time);
-      drawWorldCars(ctx, cars.filter((c) => inView(c.x + 50, c.y + 24)), localPlayer, time);
       drawGiantAncientTreesAndCanopies(ctx, localPlayer, time);
     }
   }
@@ -516,6 +515,9 @@ export function renderWorld(
   markRenderSceneLayer(ctx, 'dynamic');
 
   if (!indoors) {
+    // Cars are simulation actors: their positions change every tick. They
+    // must not invalidate the retained terrain texture on every movement.
+    drawWorldCars(ctx, cars.filter((c) => inView(c.x + 50, c.y + 24)), localPlayer, time);
     drawGroundDecals(
       ctx,
       blinded ? [] : (inHorde ? groundDecals.filter((d) => inView(d.x, d.y)) : groundDecals.filter((d) => inView(d.x, d.y))),
