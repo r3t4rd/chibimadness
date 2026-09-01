@@ -6826,7 +6826,8 @@ function drawOverheadHUD(ctx: CanvasRenderingContext2D, player: Player, time: nu
 export function drawHumanoidEnemy(
   ctx: CanvasRenderingContext2D,
   monster: Monster,
-  time: number
+  time: number,
+  options: { bodyOnly?: boolean } = {},
 ) {
   const {
     isBoss,
@@ -7261,7 +7262,9 @@ export function drawHumanoidEnemy(
   }
 
   // 6. Overhead Health Bar (nameplates and following speech bubbles removed)
-  if (!isDead) {
+  // Atlas generation keeps the vector body but leaves mutable HP in the
+  // Canvas overlay, preventing a cached sprite from showing stale health.
+  if (!options.bodyOnly && !isDead) {
     const barW = isBossBandit ? 90 : 44;
     const barH = isBossBandit ? 8 : 5;
     const barY = isBossBandit ? -65 : -46;
@@ -7271,7 +7274,7 @@ export function drawHumanoidEnemy(
     ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = isBossBandit ? '#EF4444' : isDummy ? '#F59E0B' : '#38BDF8';
     ctx.fillRect(-barW / 2, barY, barW * hpRatio, barH);
-  } else {
+  } else if (!options.bodyOnly) {
     // Defeated X_X Badge
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.beginPath();
