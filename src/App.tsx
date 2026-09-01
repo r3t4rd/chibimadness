@@ -238,21 +238,17 @@ export function App() {
           event.data.staticScene as Parameters<typeof sendNativeStaticRenderScene>[0]
         );
       }
-      const pending = pendingSceneInputRef.current;
-      pendingSceneInputRef.current = null;
-      // If compilation already fell behind, this dynamic list is obsolete.
-      // Sending it through WebView2 first creates another main-thread queue
-      // and makes keyboard input look frozen. Keep static invalidations, then
-      // compile only the newest snapshot.
-      if (pending) {
-        submit(pending);
-        return;
-      }
       if (event.data.dynamicScene) {
         sendNativeDynamicRenderScene(
           event.data.dynamicScene as Parameters<typeof sendNativeDynamicRenderScene>[0]
         );
       }
+      const pending = pendingSceneInputRef.current;
+      pendingSceneInputRef.current = null;
+      // Keep one latest input while compilation runs, but always present the
+      // completed scene first. Dropping each finished result when a newer
+      // snapshot exists leaves WGPU rapidly repainting an old world.
+      if (pending) submit(pending);
     };
     return () => {
       worker.terminate();
