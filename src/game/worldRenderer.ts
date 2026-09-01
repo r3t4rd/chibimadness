@@ -600,9 +600,8 @@ export function renderWorld(
       const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
 
       const useWebglPlayerBody = skipWebglPlayerBodies && getWebglPlayerAtlasKey(p) !== null;
-      if (useWebglPlayerBody) {
-        drawChibiCharacter(ctx, p, time, true, { overheadOnly: true });
-      } else if (isOmni) {
+      if (useWebglPlayerBody) continue;
+      if (isOmni) {
         ctx.save();
         ctx.globalAlpha = 0.25;
         drawChibiCharacter(ctx, p, time);
@@ -4500,7 +4499,21 @@ export function getWebglMonsterAtlasKey(monster: Monster): string | null {
  * intentionally excluded: moving a player must never allocate a new raster.
  */
 export function getWebglPlayerAtlasKey(player: Player): string | null {
-  if (player.state === 'dead' || player.isRiding || player.activeVehicleId) return null;
+  if (
+    player.state === 'dead' ||
+    player.isRiding ||
+    player.activeVehicleId ||
+    player.emote ||
+    (player.chatTimer ?? 0) > 0 ||
+    player.isReloading ||
+    (player.dodgeTimer ?? 0) > 0 ||
+    (player.jumpZ ?? 0) > 0 ||
+    (player.omnislashStrikesLeft ?? 0) > 0 ||
+    (player.dashSlashTimer ?? 0) > 0 ||
+    (player.bhopStreak ?? 0) >= 2 ||
+    (player.coolStreak ?? 0) >= 2 ||
+    (player.skateTrickTimer ?? 0) > 0
+  ) return null;
   return `player:${JSON.stringify(player.chibi)}:${player.equipment.weapon?.id ?? 'none'}:${player.equipment.outfit?.id ?? 'none'}:${player.equipment.headwear?.id ?? 'none'}:${player.state}:${player.isAiming ? 1 : 0}:${player.isReloading ? 1 : 0}:${player.attackTimer > 0 ? 1 : 0}`;
 }
 
@@ -4834,6 +4847,9 @@ function drawMonsters(
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
     if (m.hp <= 0 && (m.deathProgress === undefined || m.deathProgress >= 1.0)) return;
+    // Stable bodies and their HP bars are emitted by the WebGL actor pass.
+    // Transient states deliberately fall through to Canvas for visual parity.
+    if (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null) return;
 
     ctx.save();
     ctx.translate(m.x, m.y);

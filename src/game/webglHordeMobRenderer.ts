@@ -21,7 +21,7 @@ type AtlasSlot = {
 
 const CELL_SIZE = 128;
 const ATLAS_COLUMNS = 8;
-const ATLAS_ROWS = 8;
+const ATLAS_ROWS = 12;
 const HORDE_SPRITE_WORLD_SIZE = 72;
 const HUMANOID_SPRITE_WORLD_SIZE = 128;
 const PLAYER_SPRITE_WORLD_SIZE = 144;
@@ -40,9 +40,10 @@ precision mediump float;
 in vec2 v_uv;
 uniform sampler2D u_atlas;
 uniform float u_probe_solid;
+uniform vec4 u_solid_color;
 out vec4 out_color;
 void main() {
-  out_color = mix(texture(u_atlas, v_uv), vec4(0.15, 1.0, 0.3, 1.0), u_probe_solid);
+  out_color = mix(texture(u_atlas, v_uv), u_solid_color, u_probe_solid);
 }`;
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
@@ -90,6 +91,7 @@ export class WebglHordeMobRenderer {
   private readonly atlasSlots = new Map<string, AtlasSlot>();
   private readonly positionLocation: number;
   private readonly uvLocation: number;
+  private readonly solidColorLocation: WebGLUniformLocation | null;
   private lost = false;
   private drawnMobCount = 0;
   private nextAtlasSlot = 0;
@@ -125,6 +127,7 @@ export class WebglHordeMobRenderer {
     this.atlasCanvas.height = ATLAS_ROWS * CELL_SIZE;
     this.positionLocation = gl.getAttribLocation(this.program, 'a_position');
     this.uvLocation = gl.getAttribLocation(this.program, 'a_uv');
+    this.solidColorLocation = gl.getUniformLocation(this.program, 'u_solid_color');
     if (this.positionLocation < 0 || this.uvLocation < 0) throw new Error('WebGL atlas attributes unavailable');
     this.buildAtlas();
     canvas.addEventListener('webglcontextlost', this.onContextLost, false);
@@ -227,6 +230,59 @@ export class WebglHordeMobRenderer {
     }
   }
 
+  private getPlayerLabelKey(player: Player) {
+    return `label:${player.id}:${player.name}:${player.stats?.level ?? 1}`;
+  }
+
+  /** Text is rasterized only when its contents change, then moves as a quad. */
+  private ensurePlayerLabelSprites(players: Player[]) {
+    const sourceContext = this.atlasCanvas.getContext('2d');
+    if (!sourceContext) return;
+    const gl = this.gl;
+    for (const player of players) {
+      if (!getWebglPlayerAtlasKey(player)) continue;
+      const key = this.getPlayerLabelKey(player);
+      if (this.atlasSlots.has(key) || this.nextAtlasSlot >= ATLAS_COLUMNS * ATLAS_ROWS) continue;
+      const index = this.nextAtlasSlot++;
+      const column = index % ATLAS_COLUMNS;
+      const row = Math.floor(index / ATLAS_COLUMNS);
+      const source = document.createElement('canvas');
+      source.width = CELL_SIZE;
+      source.height = CELL_SIZE;
+      const context = source.getContext('2d');
+      if (!context) continue;
+      const level = player.stats?.level ?? 1;
+      const levelText = `Lv.${level}`;
+      const nameText = player.name || 'Hero';
+      context.font = 'bold 11px system-ui, -apple-system, sans-serif';
+      const totalWidth = Math.min(CELL_SIZE - 6, context.measureText(levelText).width + context.measureText(nameText).width + 18);
+      const x = (CELL_SIZE - totalWidth) / 2;
+      const y = (CELL_SIZE - 18) / 2;
+      context.fillStyle = 'rgba(15, 23, 42, 0.82)';
+      context.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.roundRect(x, y, totalWidth, 18, 9);
+      context.fill();
+      context.stroke();
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillStyle = '#FDE047';
+      context.fillText(levelText, x + Math.min(20, totalWidth * 0.25), y + 9);
+      context.fillStyle = '#FFFFFF';
+      context.fillText(nameText, x + totalWidth * 0.62, y + 9, Math.max(8, totalWidth * 0.68));
+      sourceContext.drawImage(source, column * CELL_SIZE, row * CELL_SIZE);
+      this.atlasSlots.set(key, {
+        u0: (column * CELL_SIZE) / this.atlasCanvas.width,
+        v0: (row * CELL_SIZE) / this.atlasCanvas.height,
+        u1: ((column + 1) * CELL_SIZE) / this.atlasCanvas.width,
+        v1: ((row + 1) * CELL_SIZE) / this.atlasCanvas.height,
+      });
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, column * CELL_SIZE, row * CELL_SIZE, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    }
+  }
+
   clear() {
     if (this.lost) return;
     const gl = this.gl;
@@ -235,7 +291,7 @@ export class WebglHordeMobRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
-  private drawVertices(vertices: number[], probeSolid = false, texture = this.texture) {
+  private drawVertices(vertices: number[], solidColor?: readonly [number, number, number, number]) {
     if (vertices.length === 0) return 0;
     const gl = this.gl;
     gl.useProgram(this.program);
@@ -246,11 +302,12 @@ export class WebglHordeMobRenderer {
     gl.enableVertexAttribArray(this.uvLocation);
     gl.vertexAttribPointer(this.uvLocation, 2, gl.FLOAT, false, 16, 8);
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
     const sampler = gl.getUniformLocation(this.program, 'u_atlas');
     gl.uniform1i(sampler, 0);
     const probeSolidUniform = gl.getUniformLocation(this.program, 'u_probe_solid');
-    gl.uniform1f(probeSolidUniform, probeSolid ? 1 : 0);
+    gl.uniform1f(probeSolidUniform, solidColor ? 1 : 0);
+    if (solidColor) gl.uniform4f(this.solidColorLocation, ...solidColor);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 4);
@@ -273,7 +330,55 @@ export class WebglHordeMobRenderer {
     const players = Object.values(remotePlayers);
     if (!remotePlayers[localPlayer.id]) players.push(localPlayer);
     this.ensurePlayerSprites(players);
+    this.ensurePlayerLabelSprites(players);
     const vertices: number[] = [];
+    const healthBackground: number[] = [];
+    const healthCyan: number[] = [];
+    const healthRed: number[] = [];
+    const healthGreen: number[] = [];
+    const healthYellow: number[] = [];
+    const labels: number[] = [];
+    const appendQuad = (
+      target: number[],
+      centerX: number,
+      centerY: number,
+      quadWidth: number,
+      quadHeight: number,
+      slot?: AtlasSlot,
+    ) => {
+      const left = (centerX - quadWidth / 2) * 2 / width - 1;
+      const right = (centerX + quadWidth / 2) * 2 / width - 1;
+      const top = 1 - (centerY - quadHeight / 2) * 2 / height;
+      const bottom = 1 - (centerY + quadHeight / 2) * 2 / height;
+      const u0 = slot?.u0 ?? 0;
+      const v0 = slot?.v0 ?? 0;
+      const u1 = slot?.u1 ?? 0;
+      const v1 = slot?.v1 ?? 0;
+      target.push(
+        left, top, u0, v0, right, top, u1, v0, right, bottom, u1, v1,
+        left, top, u0, v0, right, bottom, u1, v1, left, bottom, u0, v1,
+      );
+    };
+    const appendHealthBar = (
+      foreground: number[],
+      centerX: number,
+      centerY: number,
+      barWidth: number,
+      barHeight: number,
+      ratio: number,
+    ) => {
+      const safeRatio = Math.max(0, Math.min(1, ratio));
+      appendQuad(healthBackground, centerX, centerY, barWidth + 2, barHeight + 2);
+      if (safeRatio > 0) {
+        appendQuad(
+          foreground,
+          centerX - (barWidth * (1 - safeRatio)) / 2,
+          centerY,
+          barWidth * safeRatio,
+          barHeight,
+        );
+      }
+    };
     for (const monster of monsters) {
       if (monster.state === 'dead' || !isInViewBounds(monster.x, monster.y, viewBounds)) continue;
       if (blinded && monster.id !== blindness.casterId) continue;
@@ -298,6 +403,20 @@ export class WebglHordeMobRenderer {
         left, top, u0, slot.v0, right, top, u1, slot.v0, right, bottom, u1, slot.v1,
         left, top, u0, slot.v0, right, bottom, u1, slot.v1, left, bottom, u0, slot.v1,
       );
+      if (monster.hp > 0) {
+        const boss = Boolean(monster.isBoss);
+        const barWidth = (boss ? 54 : 36) * camera.zoom;
+        const barHeight = 5 * camera.zoom;
+        const barY = centerY + (boss ? -48 : -34) * camera.zoom + barHeight / 2;
+        appendHealthBar(
+          boss ? healthRed : healthCyan,
+          centerX,
+          barY,
+          barWidth,
+          barHeight,
+          monster.hp / Math.max(1, monster.maxHp),
+        );
+      }
     }
     for (const player of players) {
       if (player.state === 'dead' || !isInViewBounds(player.x, player.y, viewBounds)) continue;
@@ -318,8 +437,40 @@ export class WebglHordeMobRenderer {
         left, top, u0, slot.v0, right, top, u1, slot.v0, right, bottom, u1, slot.v1,
         left, top, u0, slot.v0, right, bottom, u1, slot.v1, left, bottom, u0, slot.v1,
       );
+      const hp = player.stats?.hp ?? 100;
+      const maxHp = Math.max(1, player.stats?.maxHp ?? 100);
+      const hpRatio = hp / maxHp;
+      const healthTarget = hpRatio > 0.5 ? healthGreen : hpRatio > 0.25 ? healthYellow : healthRed;
+      appendHealthBar(
+        healthTarget,
+        centerX,
+        centerY - 76 * camera.zoom + (5 * camera.zoom) / 2,
+        48 * camera.zoom,
+        5 * camera.zoom,
+        hpRatio,
+      );
+      const stamina = player.stamina ?? 100;
+      const maxStamina = Math.max(1, player.maxStamina ?? 100);
+      if (stamina < maxStamina || player.isSprinting) {
+        appendHealthBar(
+          healthCyan,
+          centerX,
+          centerY - 69 * camera.zoom + (2.5 * camera.zoom) / 2,
+          48 * camera.zoom,
+          2.5 * camera.zoom,
+          stamina / maxStamina,
+        );
+      }
+      const labelSlot = this.atlasSlots.get(this.getPlayerLabelKey(player));
+      if (labelSlot) appendQuad(labels, centerX, centerY - 89 * camera.zoom, 128 * camera.zoom, 32 * camera.zoom, labelSlot);
     }
     this.drawnMobCount = this.drawVertices(vertices);
+    this.drawVertices(healthBackground, [0.06, 0.09, 0.16, 0.82]);
+    this.drawVertices(healthCyan, [0.13, 0.83, 0.95, 1]);
+    this.drawVertices(healthRed, [0.94, 0.27, 0.27, 1]);
+    this.drawVertices(healthGreen, [0.06, 0.72, 0.51, 1]);
+    this.drawVertices(healthYellow, [0.96, 0.62, 0.16, 1]);
+    this.drawVertices(labels);
     return this.drawnMobCount;
   }
 
@@ -358,7 +509,7 @@ export class WebglHordeMobRenderer {
         left, top, slot.u0, slot.v0, right, bottom, slot.u1, slot.v1, left, bottom, slot.u0, slot.v1,
       );
     }
-    return this.drawVertices(vertices, true);
+    return this.drawVertices(vertices, [0.15, 1, 0.3, 1]);
   }
 
   destroy() {
