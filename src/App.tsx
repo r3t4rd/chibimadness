@@ -531,7 +531,14 @@ export function App() {
           return false;
         }
         if (webglHordeMobBodiesRef.current) {
-          webglHordeMobRenderer.render(input.monsters, input.localPlayer, camera, input.players);
+          webglHordeMobRenderer.render(
+            input.monsters,
+            input.localPlayer,
+            camera,
+            input.players,
+            input.projectiles,
+            input.particles,
+          );
           return true;
         }
         webglHordeMobRenderer.clear();
@@ -694,6 +701,8 @@ export function App() {
             camera,
             skipWebglHordeMobBodies: webglBodiesActive,
             skipWebglPlayerBodies: webglBodiesActive,
+            skipWebglProjectiles: webglBodiesActive,
+            skipWebglParticles: webglBodiesActive,
           });
         }
       };

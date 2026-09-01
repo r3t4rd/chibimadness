@@ -36,6 +36,8 @@ self.addEventListener('message', (event: MessageEvent<WorkerMessage>) => {
       camera: message.camera,
       skipWebglHordeMobBodies: message.webglHordeMobBodies === true,
       skipWebglPlayerBodies: message.webglHordeMobBodies === true,
+      skipWebglProjectiles: message.webglHordeMobBodies === true,
+      skipWebglParticles: message.webglHordeMobBodies === true,
     });
     const image = canvas.transferToImageBitmap();
     postToMain({

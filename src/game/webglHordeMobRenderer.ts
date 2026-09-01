@@ -1,4 +1,4 @@
-import type { Monster, Player } from '../types/game';
+import type { Monster, Player, Projectile, VisualParticle } from '../types/game';
 import { getViewBounds, isInViewBounds } from './viewCull';
 import {
   drawHordeMobAtlasSprite,
@@ -7,6 +7,8 @@ import {
   getHordeMobAtlasSprites,
   getWebglMonsterAtlasKey,
   getWebglPlayerAtlasKey,
+  isWebglParticle,
+  isWebglProjectile,
 } from './worldRenderer';
 import { getHordeBlindness, isInHordeArena } from './hordeMode';
 
@@ -41,9 +43,10 @@ in vec2 v_uv;
 uniform sampler2D u_atlas;
 uniform float u_probe_solid;
 uniform vec4 u_solid_color;
+uniform vec4 u_tint;
 out vec4 out_color;
 void main() {
-  out_color = mix(texture(u_atlas, v_uv), u_solid_color, u_probe_solid);
+  out_color = mix(texture(u_atlas, v_uv) * u_tint, u_solid_color, u_probe_solid);
 }`;
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
@@ -77,6 +80,18 @@ function createProgram(gl: WebGL2RenderingContext) {
   return program;
 }
 
+function colorToTint(color: string | undefined, alpha = 1): [number, number, number, number] {
+  const hex = color?.match(/^#([0-9a-f]{6}|[0-9a-f]{3})$/i)?.[1];
+  if (!hex) return [1, 1, 1, alpha];
+  const expanded = hex.length === 3 ? hex.split('').map((part) => part + part).join('') : hex;
+  return [
+    parseInt(expanded.slice(0, 2), 16) / 255,
+    parseInt(expanded.slice(2, 4), 16) / 255,
+    parseInt(expanded.slice(4, 6), 16) / 255,
+    alpha,
+  ];
+}
+
 /**
  * WebView hybrid renderer for repeated procedural actor geometry. It executes
  * each appearance once into a runtime atlas; the frame loop only submits GPU
@@ -92,6 +107,7 @@ export class WebglHordeMobRenderer {
   private readonly positionLocation: number;
   private readonly uvLocation: number;
   private readonly solidColorLocation: WebGLUniformLocation | null;
+  private readonly tintLocation: WebGLUniformLocation | null;
   private lost = false;
   private drawnMobCount = 0;
   private nextAtlasSlot = 0;
@@ -128,6 +144,7 @@ export class WebglHordeMobRenderer {
     this.positionLocation = gl.getAttribLocation(this.program, 'a_position');
     this.uvLocation = gl.getAttribLocation(this.program, 'a_uv');
     this.solidColorLocation = gl.getUniformLocation(this.program, 'u_solid_color');
+    this.tintLocation = gl.getUniformLocation(this.program, 'u_tint');
     if (this.positionLocation < 0 || this.uvLocation < 0) throw new Error('WebGL atlas attributes unavailable');
     this.buildAtlas();
     canvas.addEventListener('webglcontextlost', this.onContextLost, false);
@@ -159,6 +176,46 @@ export class WebglHordeMobRenderer {
       });
     });
     this.nextAtlasSlot = sprites.length;
+
+    const registerFx = (key: string, draw: (source: CanvasRenderingContext2D) => void) => {
+      const index = this.nextAtlasSlot++;
+      const column = index % ATLAS_COLUMNS;
+      const row = Math.floor(index / ATLAS_COLUMNS);
+      const source = document.createElement('canvas');
+      source.width = CELL_SIZE;
+      source.height = CELL_SIZE;
+      const sourceContext = source.getContext('2d');
+      if (!sourceContext) return;
+      draw(sourceContext);
+      context.drawImage(source, column * CELL_SIZE, row * CELL_SIZE);
+      this.atlasSlots.set(key, {
+        u0: (column * CELL_SIZE) / this.atlasCanvas.width,
+        v0: (row * CELL_SIZE) / this.atlasCanvas.height,
+        u1: ((column + 1) * CELL_SIZE) / this.atlasCanvas.width,
+        v1: ((row + 1) * CELL_SIZE) / this.atlasCanvas.height,
+      });
+    };
+    registerFx('fx:soft', (source) => {
+      const gradient = source.createRadialGradient(64, 64, 1, 64, 64, 56);
+      gradient.addColorStop(0, 'rgba(255,255,255,1)');
+      gradient.addColorStop(0.36, 'rgba(255,255,255,0.92)');
+      gradient.addColorStop(1, 'rgba(255,255,255,0)');
+      source.fillStyle = gradient;
+      source.fillRect(0, 0, CELL_SIZE, CELL_SIZE);
+    });
+    registerFx('fx:spark', (source) => {
+      const gradient = source.createLinearGradient(8, 64, 120, 64);
+      gradient.addColorStop(0, 'rgba(255,255,255,0)');
+      gradient.addColorStop(0.55, 'rgba(255,255,255,0.75)');
+      gradient.addColorStop(1, 'rgba(255,255,255,1)');
+      source.strokeStyle = gradient;
+      source.lineWidth = 14;
+      source.lineCap = 'round';
+      source.beginPath();
+      source.moveTo(10, 64);
+      source.lineTo(118, 64);
+      source.stroke();
+    });
 
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
@@ -291,7 +348,11 @@ export class WebglHordeMobRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
-  private drawVertices(vertices: number[], solidColor?: readonly [number, number, number, number]) {
+  private drawVertices(
+    vertices: number[],
+    solidColor?: readonly [number, number, number, number],
+    tint: readonly [number, number, number, number] = [1, 1, 1, 1],
+  ) {
     if (vertices.length === 0) return 0;
     const gl = this.gl;
     gl.useProgram(this.program);
@@ -308,13 +369,21 @@ export class WebglHordeMobRenderer {
     const probeSolidUniform = gl.getUniformLocation(this.program, 'u_probe_solid');
     gl.uniform1f(probeSolidUniform, solidColor ? 1 : 0);
     if (solidColor) gl.uniform4f(this.solidColorLocation, ...solidColor);
+    gl.uniform4f(this.tintLocation, ...tint);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 4);
     return vertices.length / 24;
   }
 
-  render(monsters: Monster[], localPlayer: Player, camera: Camera, remotePlayers: Record<string, Player>) {
+  render(
+    monsters: Monster[],
+    localPlayer: Player,
+    camera: Camera,
+    remotePlayers: Record<string, Player>,
+    projectiles: Projectile[],
+    particles: VisualParticle[],
+  ) {
     this.drawnMobCount = 0;
     if (this.lost) return 0;
     const width = this.canvas.width;
@@ -338,6 +407,10 @@ export class WebglHordeMobRenderer {
     const healthGreen: number[] = [];
     const healthYellow: number[] = [];
     const labels: number[] = [];
+    const fxBatches = new Map<string, {
+      vertices: number[];
+      tint: [number, number, number, number];
+    }>();
     const appendQuad = (
       target: number[],
       centerX: number,
@@ -378,6 +451,61 @@ export class WebglHordeMobRenderer {
           barHeight,
         );
       }
+    };
+    const appendWorldQuad = (
+      target: number[],
+      worldX: number,
+      worldY: number,
+      worldWidth: number,
+      worldHeight: number,
+      angle: number,
+      slot: AtlasSlot,
+    ) => {
+      const centerX = width / 2 + (worldX - camera.x) * camera.zoom;
+      const centerY = height / 2 + (worldY - camera.y) * camera.zoom;
+      const halfWidth = worldWidth * camera.zoom / 2;
+      const halfHeight = worldHeight * camera.zoom / 2;
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const point = (x: number, y: number) => {
+        const px = centerX + x * cos - y * sin;
+        const py = centerY + x * sin + y * cos;
+        return [px * 2 / width - 1, 1 - py * 2 / height] as const;
+      };
+      const topLeft = point(-halfWidth, -halfHeight);
+      const topRight = point(halfWidth, -halfHeight);
+      const bottomRight = point(halfWidth, halfHeight);
+      const bottomLeft = point(-halfWidth, halfHeight);
+      target.push(
+        topLeft[0], topLeft[1], slot.u0, slot.v0,
+        topRight[0], topRight[1], slot.u1, slot.v0,
+        bottomRight[0], bottomRight[1], slot.u1, slot.v1,
+        topLeft[0], topLeft[1], slot.u0, slot.v0,
+        bottomRight[0], bottomRight[1], slot.u1, slot.v1,
+        bottomLeft[0], bottomLeft[1], slot.u0, slot.v1,
+      );
+    };
+    const appendFx = (
+      slotKey: string,
+      color: string | undefined,
+      alpha: number,
+      worldX: number,
+      worldY: number,
+      worldWidth: number,
+      worldHeight: number,
+      angle: number,
+    ) => {
+      const slot = this.atlasSlots.get(slotKey);
+      if (!slot) return;
+      const quantizedAlpha = Math.max(0, Math.min(1, Math.round(alpha * 10) / 10));
+      const tint = colorToTint(color, quantizedAlpha);
+      const key = `${slotKey}:${tint.join(':')}`;
+      let batch = fxBatches.get(key);
+      if (!batch) {
+        batch = { vertices: [], tint };
+        fxBatches.set(key, batch);
+      }
+      appendWorldQuad(batch.vertices, worldX, worldY, worldWidth, worldHeight, angle, slot);
     };
     for (const monster of monsters) {
       if (monster.state === 'dead' || !isInViewBounds(monster.x, monster.y, viewBounds)) continue;
@@ -464,6 +592,32 @@ export class WebglHordeMobRenderer {
       const labelSlot = this.atlasSlots.get(this.getPlayerLabelKey(player));
       if (labelSlot) appendQuad(labels, centerX, centerY - 89 * camera.zoom, 128 * camera.zoom, 32 * camera.zoom, labelSlot);
     }
+    for (const projectile of projectiles) {
+      if (!isWebglProjectile(projectile) || !isInViewBounds(projectile.x, projectile.y, viewBounds)) continue;
+      const angle = Math.atan2(projectile.vy, projectile.vx);
+      const trailLength = projectile.tracerLength ?? 18;
+      const trailWidth = Math.max(1.5, projectile.tracerWidth ?? 2);
+      const launchOffset = (projectile.visualOffsetY ?? 0) * Math.max(0, 1 - projectile.distanceTraveled / 260);
+      appendFx(
+        'fx:spark',
+        projectile.color || '#FDE047',
+        1,
+        projectile.x + Math.cos(angle) * (6 - trailLength) / 2,
+        projectile.y + launchOffset + Math.sin(angle) * (6 - trailLength) / 2,
+        trailLength + 6,
+        trailWidth * 2.6,
+        angle,
+      );
+    }
+    for (const particle of particles) {
+      if (!isWebglParticle(particle) || !isInViewBounds(particle.x, particle.y, viewBounds)) continue;
+      if (particle.shape === 'spark') {
+        const angle = Math.atan2(particle.vy, particle.vx);
+        appendFx('fx:spark', particle.color, particle.alpha, particle.x, particle.y, particle.size * 3.4, Math.max(1, particle.size * 0.75), angle);
+      } else {
+        appendFx('fx:soft', particle.color, particle.alpha, particle.x, particle.y, particle.size * 2.2, particle.size * 2.2, 0);
+      }
+    }
     this.drawnMobCount = this.drawVertices(vertices);
     this.drawVertices(healthBackground, [0.06, 0.09, 0.16, 0.82]);
     this.drawVertices(healthCyan, [0.13, 0.83, 0.95, 1]);
@@ -471,6 +625,7 @@ export class WebglHordeMobRenderer {
     this.drawVertices(healthGreen, [0.06, 0.72, 0.51, 1]);
     this.drawVertices(healthYellow, [0.96, 0.62, 0.16, 1]);
     this.drawVertices(labels);
+    for (const batch of fxBatches.values()) this.drawVertices(batch.vertices, undefined, batch.tint);
     return this.drawnMobCount;
   }
 

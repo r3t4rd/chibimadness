@@ -59,6 +59,10 @@ type WorldDrawOptions = {
   skipWebglHordeMobBodies?: boolean;
   /** WebView-only hybrid path: a WebGL atlas owns eligible player bodies. */
   skipWebglPlayerBodies?: boolean;
+  /** WebView-only hybrid path: WebGL owns basic bullet/tracer geometry. */
+  skipWebglProjectiles?: boolean;
+  /** WebView-only hybrid path: WebGL owns basic particle geometry. */
+  skipWebglParticles?: boolean;
 };
 
 export function getCameraState() {
@@ -266,6 +270,8 @@ export function drawWorld(
     options.camera?.zoom ?? camera.zoom,
     options.skipWebglHordeMobBodies ?? false,
     options.skipWebglPlayerBodies ?? false,
+    options.skipWebglProjectiles ?? false,
+    options.skipWebglParticles ?? false,
   );
 }
 
@@ -417,6 +423,8 @@ export function renderWorld(
   fixedZoom?: number,
   skipWebglHordeMobBodies = false,
   skipWebglPlayerBodies = false,
+  skipWebglProjectiles = false,
+  skipWebglParticles = false,
 ) {
   const renderStatic = layer !== 'dynamic';
   const renderDynamic = layer !== 'static';
@@ -815,8 +823,9 @@ export function renderWorld(
 
   // 9. Draw Projectiles (Bullets, Lasers, Shotgun pellets, Slash waves)
   const visProj = projectiles.filter((p) => inView(p.x, p.y));
-  drawProjectiles(ctx, visProj);
-  drawParticles(ctx, particles.filter((p) => inView(p.x, p.y)));
+  drawProjectiles(ctx, skipWebglProjectiles ? visProj.filter((p) => !isWebglProjectile(p)) : visProj);
+  const visibleParticles = particles.filter((p) => inView(p.x, p.y));
+  drawParticles(ctx, skipWebglParticles ? visibleParticles.filter((p) => !isWebglParticle(p)) : visibleParticles);
   drawDamagePopups(ctx, damagePopups.filter((p) => inView(p.x, p.y)));
 
   ctx.restore();
@@ -4998,6 +5007,16 @@ function drawSummons(ctx: CanvasRenderingContext2D, summons: SummonedAlly[], tim
     ctx.fillStyle = ally.kind === 'golem' ? '#A8A29E' : '#F97316';
     ctx.fillRect(ally.x - 16, ally.y - 28 * ally.scale - 8, 32 * hpRatio, 4);
   });
+}
+
+/** Basic repeated trails are visually represented by the GPU soft-sprite pass. */
+export function isWebglProjectile(projectile: Projectile) {
+  return projectile.type === 'bullet' || projectile.type === 'enemy_bullet';
+}
+
+/** Keep smoke, casings and rings on Canvas until their dedicated GPU variants land. */
+export function isWebglParticle(particle: VisualParticle) {
+  return particle.shape === 'circle' || particle.shape === 'spark';
 }
 
 function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[]) {
