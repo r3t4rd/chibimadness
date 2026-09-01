@@ -4468,6 +4468,57 @@ export function getWebglHordeMobAtlasKey(monster: Monster): string | null {
   return sprite ? `${sprite.kind}:${sprite.boss ? 1 : 0}` : null;
 }
 
+/**
+ * First WebGL production set: static horde bodies and ordinary idle humanoid
+ * enemies. Anything with a visible transient transform stays on Canvas so
+ * the atlas can never freeze a hit reaction, jump, dash or death animation.
+ */
+export function getWebglMonsterAtlasKey(monster: Monster): string | null {
+  const hordeKey = getWebglHordeMobAtlasKey(monster);
+  if (hordeKey) return `horde:${hordeKey}`;
+  if (
+    monster.hordeKind ||
+    monster.type === 'forest_wolf' ||
+    monster.hp <= 0 ||
+    (monster.hitFlash || 0) > 0 ||
+    (monster.jumpZ || 0) > 0 ||
+    (monster.dodgeTimer || 0) > 0 ||
+    monster.isCharging ||
+    monster.isPinned ||
+    monster.isJuggernaut ||
+    monster.humanChibi ||
+    (monster.attackCooldown || 0) > 1
+  ) return null;
+  return `humanoid:${monster.type}:${monster.weaponType ?? 'pistol'}:${monster.isBoss ? 1 : 0}:${monster.faction ?? 'none'}`;
+}
+
+/** Invoked only while a new runtime atlas slot is created, never per frame. */
+export function drawWebglMonsterAtlasSprite(ctx: CanvasRenderingContext2D, monster: Monster) {
+  if (monster.hordeKind) {
+    const key = getWebglHordeMobAtlasKey(monster);
+    const sprite = key
+      ? HORDE_ATLAS_SPRITES.find((candidate) => `${candidate.kind}:${candidate.boss ? 1 : 0}` === key)
+      : undefined;
+    if (sprite) drawHordeMobAtlasSprite(ctx, sprite);
+    return;
+  }
+  drawHumanoidEnemy(ctx, monster, 0, { bodyOnly: true });
+}
+
+function drawWebglHumanoidHealthBar(ctx: CanvasRenderingContext2D, monster: Monster) {
+  if (monster.hp <= 0) return;
+  const isBossBandit = monster.type === 'bandit_boss' || Boolean(monster.isBoss);
+  const isDummy = monster.type === 'human_target';
+  const barW = isBossBandit ? 90 : 44;
+  const barH = isBossBandit ? 8 : 5;
+  const barY = isBossBandit ? -65 : -46;
+  const hpRatio = Math.max(0, monster.hp / monster.maxHp);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
+  ctx.fillStyle = isBossBandit ? '#EF4444' : isDummy ? '#F59E0B' : '#38BDF8';
+  ctx.fillRect(-barW / 2, barY, barW * hpRatio, barH);
+}
+
 function drawCachedHordeMobBody(
   ctx: CanvasRenderingContext2D,
   kind: string,
@@ -4786,7 +4837,11 @@ function drawMonsters(
       }
     } else {
       // Draw Humanoid Bandits, Outlaws, and "Iron Mask" Sledge Boss
-      drawHumanoidEnemy(ctx, m, time);
+      if (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null) {
+        drawWebglHumanoidHealthBar(ctx, m);
+      } else {
+        drawHumanoidEnemy(ctx, m, time);
+      }
     }
 
     ctx.restore();

@@ -2,8 +2,9 @@ import type { Monster } from '../types/game';
 import { getViewBounds, isInViewBounds } from './viewCull';
 import {
   drawHordeMobAtlasSprite,
+  drawWebglMonsterAtlasSprite,
   getHordeMobAtlasSprites,
-  getWebglHordeMobAtlasKey,
+  getWebglMonsterAtlasKey,
 } from './worldRenderer';
 import { getHordeBlindness, isInHordeArena } from './hordeMode';
 
@@ -17,8 +18,10 @@ type AtlasSlot = {
 };
 
 const CELL_SIZE = 128;
-const ATLAS_COLUMNS = 4;
-const SPRITE_WORLD_SIZE = 72;
+const ATLAS_COLUMNS = 8;
+const ATLAS_ROWS = 8;
+const HORDE_SPRITE_WORLD_SIZE = 72;
+const HUMANOID_SPRITE_WORLD_SIZE = 128;
 
 const VERTEX_SHADER = `#version 300 es
 in vec2 a_position;
@@ -79,11 +82,13 @@ export class WebglHordeMobRenderer {
   private readonly program: WebGLProgram;
   private readonly buffer: WebGLBuffer;
   private readonly texture: WebGLTexture;
+  private readonly atlasCanvas: HTMLCanvasElement;
   private readonly atlasSlots = new Map<string, AtlasSlot>();
   private readonly positionLocation: number;
   private readonly uvLocation: number;
   private lost = false;
   private drawnMobCount = 0;
+  private nextAtlasSlot = 0;
 
   get isAvailable() {
     return !this.lost;
@@ -111,6 +116,9 @@ export class WebglHordeMobRenderer {
     if (!buffer || !texture) throw new Error('WebGL atlas allocation failed');
     this.buffer = buffer;
     this.texture = texture;
+    this.atlasCanvas = document.createElement('canvas');
+    this.atlasCanvas.width = ATLAS_COLUMNS * CELL_SIZE;
+    this.atlasCanvas.height = ATLAS_ROWS * CELL_SIZE;
     this.positionLocation = gl.getAttribLocation(this.program, 'a_position');
     this.uvLocation = gl.getAttribLocation(this.program, 'a_uv');
     if (this.positionLocation < 0 || this.uvLocation < 0) throw new Error('WebGL atlas attributes unavailable');
@@ -125,11 +133,7 @@ export class WebglHordeMobRenderer {
 
   private buildAtlas() {
     const sprites = getHordeMobAtlasSprites();
-    const rows = Math.ceil(sprites.length / ATLAS_COLUMNS);
-    const atlas = document.createElement('canvas');
-    atlas.width = ATLAS_COLUMNS * CELL_SIZE;
-    atlas.height = rows * CELL_SIZE;
-    const context = atlas.getContext('2d');
+    const context = this.atlasCanvas.getContext('2d');
     if (!context) throw new Error('Canvas2D atlas source unavailable');
     sprites.forEach((sprite, index) => {
       const column = index % ATLAS_COLUMNS;
@@ -140,13 +144,14 @@ export class WebglHordeMobRenderer {
       context.scale(2, 2);
       drawHordeMobAtlasSprite(context, sprite);
       context.restore();
-      this.atlasSlots.set(`${sprite.kind}:${sprite.boss ? 1 : 0}`, {
-        u0: (column * CELL_SIZE) / atlas.width,
-        v0: (row * CELL_SIZE) / atlas.height,
-        u1: ((column + 1) * CELL_SIZE) / atlas.width,
-        v1: ((row + 1) * CELL_SIZE) / atlas.height,
+      this.atlasSlots.set(`horde:${sprite.kind}:${sprite.boss ? 1 : 0}`, {
+        u0: (column * CELL_SIZE) / this.atlasCanvas.width,
+        v0: (row * CELL_SIZE) / this.atlasCanvas.height,
+        u1: ((column + 1) * CELL_SIZE) / this.atlasCanvas.width,
+        v1: ((row + 1) * CELL_SIZE) / this.atlasCanvas.height,
       });
     });
+    this.nextAtlasSlot = sprites.length;
 
     const gl = this.gl;
     gl.bindTexture(gl.TEXTURE_2D, this.texture);
@@ -155,7 +160,37 @@ export class WebglHordeMobRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, atlas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.atlasCanvas);
+  }
+
+  /** Registers each ordinary humanoid appearance only once at runtime. */
+  private ensureMonsterSprites(monsters: Monster[]) {
+    const sourceContext = this.atlasCanvas.getContext('2d');
+    if (!sourceContext) return;
+    const gl = this.gl;
+    for (const monster of monsters) {
+      const key = getWebglMonsterAtlasKey(monster);
+      if (!key || this.atlasSlots.has(key) || this.nextAtlasSlot >= ATLAS_COLUMNS * ATLAS_ROWS) continue;
+      const index = this.nextAtlasSlot++;
+      const column = index % ATLAS_COLUMNS;
+      const row = Math.floor(index / ATLAS_COLUMNS);
+      const source = document.createElement('canvas');
+      source.width = CELL_SIZE;
+      source.height = CELL_SIZE;
+      const context = source.getContext('2d');
+      if (!context) continue;
+      context.translate(CELL_SIZE / 2, CELL_SIZE / 2);
+      drawWebglMonsterAtlasSprite(context, monster);
+      sourceContext.drawImage(source, column * CELL_SIZE, row * CELL_SIZE);
+      this.atlasSlots.set(key, {
+        u0: (column * CELL_SIZE) / this.atlasCanvas.width,
+        v0: (row * CELL_SIZE) / this.atlasCanvas.height,
+        u1: ((column + 1) * CELL_SIZE) / this.atlasCanvas.width,
+        v1: ((row + 1) * CELL_SIZE) / this.atlasCanvas.height,
+      });
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, column * CELL_SIZE, row * CELL_SIZE, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    }
   }
 
   clear() {
@@ -198,17 +233,19 @@ export class WebglHordeMobRenderer {
     const viewBounds = getViewBounds(camera.x, camera.y, width, height, camera.zoom);
     const blindness = getHordeBlindness();
     const blinded = isInHordeArena(localPlayer.x, localPlayer.y) && blindness.active && blindness.remaining > 0;
+    this.ensureMonsterSprites(monsters);
     const vertices: number[] = [];
     for (const monster of monsters) {
       if (monster.state === 'dead' || !isInViewBounds(monster.x, monster.y, viewBounds)) continue;
       if (blinded && monster.id !== blindness.casterId) continue;
-      const key = getWebglHordeMobAtlasKey(monster);
+      const key = getWebglMonsterAtlasKey(monster);
       if (!key) continue;
       const slot = this.atlasSlots.get(key);
       if (!slot) continue;
       const kind = monster.hordeKind;
-      const bodyScale = monster.isBoss ? 1.55 : kind === 'mite' ? 0.55 : 1;
-      const halfSize = (SPRITE_WORLD_SIZE * bodyScale * camera.zoom) / 2;
+      const bodyScale = kind ? (monster.isBoss ? 1.55 : kind === 'mite' ? 0.55 : 1) : 1;
+      const spriteWorldSize = kind ? HORDE_SPRITE_WORLD_SIZE : HUMANOID_SPRITE_WORLD_SIZE;
+      const halfSize = (spriteWorldSize * bodyScale * camera.zoom) / 2;
       const centerX = width / 2 + (monster.x - camera.x) * camera.zoom;
       const centerY = height / 2 + (monster.y - camera.y) * camera.zoom;
       const left = (centerX - halfSize) * 2 / width - 1;
