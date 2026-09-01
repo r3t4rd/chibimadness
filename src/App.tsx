@@ -808,7 +808,10 @@ export function App() {
           curEngine.screenShake,
           curEngine.introCinematic,
         );
-        renderWebglHordeMobBodies(worldInput, camera);
+        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
+        if (webglBodiesActive && webglHordeMobRenderer?.lastDrawnMobCount === 0) {
+          webglHordeMobRenderer.renderCalibrationGrid();
+        }
       } else if (activeCanvasProbeMode === 'present-only') {
         // Exercise the Canvas2D presentation path without constructing the
         // game's display list. The slate page background stays visible.

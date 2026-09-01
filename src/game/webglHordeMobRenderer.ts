@@ -83,9 +83,14 @@ export class WebglHordeMobRenderer {
   private readonly positionLocation: number;
   private readonly uvLocation: number;
   private lost = false;
+  private drawnMobCount = 0;
 
   get isAvailable() {
     return !this.lost;
+  }
+
+  get lastDrawnMobCount() {
+    return this.drawnMobCount;
   }
 
   constructor(private readonly canvas: HTMLCanvasElement) {
@@ -161,7 +166,28 @@ export class WebglHordeMobRenderer {
     gl.clear(gl.COLOR_BUFFER_BIT);
   }
 
+  private drawVertices(vertices: number[]) {
+    if (vertices.length === 0) return 0;
+    const gl = this.gl;
+    gl.useProgram(this.program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(this.positionLocation);
+    gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(this.uvLocation);
+    gl.vertexAttribPointer(this.uvLocation, 2, gl.FLOAT, false, 16, 8);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    const sampler = gl.getUniformLocation(this.program, 'u_atlas');
+    gl.uniform1i(sampler, 0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 4);
+    return vertices.length / 24;
+  }
+
   render(monsters: Monster[], localPlayer: Monster | { x: number; y: number }, camera: Camera) {
+    this.drawnMobCount = 0;
     if (this.lost) return 0;
     const width = this.canvas.width;
     const height = this.canvas.height;
@@ -197,23 +223,46 @@ export class WebglHordeMobRenderer {
         left, top, u0, slot.v0, right, bottom, u1, slot.v1, left, bottom, u0, slot.v1,
       );
     }
-    if (vertices.length === 0) return 0;
+    this.drawnMobCount = this.drawVertices(vertices);
+    return this.drawnMobCount;
+  }
 
-    gl.useProgram(this.program);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(this.positionLocation);
-    gl.vertexAttribPointer(this.positionLocation, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(this.uvLocation);
-    gl.vertexAttribPointer(this.uvLocation, 2, gl.FLOAT, false, 16, 8);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.texture);
-    const sampler = gl.getUniformLocation(this.program, 'u_atlas');
-    gl.uniform1i(sampler, 0);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 4);
-    return vertices.length / 24;
+  /**
+   * F8 diagnostic fallback when the current scene has no atlas-compatible
+   * horde mobs. This keeps the probe a real changing WebGL frame instead of
+   * accidentally measuring an empty canvas/rAF-only path.
+   */
+  renderCalibrationGrid() {
+    if (this.lost) return 0;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    if (width < 1 || height < 1) return 0;
+    this.clear();
+    const slots = [...this.atlasSlots.values()];
+    const columns = 8;
+    const rows = 5;
+    const cell = Math.min(88, Math.max(42, Math.floor(Math.min(width / (columns + 2), height / (rows + 2)))));
+    const originX = (width - columns * cell) / 2;
+    const originY = (height - rows * cell) / 2;
+    const vertices: number[] = [];
+    for (let index = 0; index < columns * rows; index += 1) {
+      const slot = slots[index % slots.length];
+      const column = index % columns;
+      const row = Math.floor(index / columns);
+      const leftPx = originX + column * cell + 8;
+      const rightPx = leftPx + cell - 16;
+      const topPx = originY + row * cell + 8;
+      const bottomPx = topPx + cell - 16;
+      const left = leftPx * 2 / width - 1;
+      const right = rightPx * 2 / width - 1;
+      const top = 1 - topPx * 2 / height;
+      const bottom = 1 - bottomPx * 2 / height;
+      vertices.push(
+        left, top, slot.u0, slot.v0, right, top, slot.u1, slot.v0, right, bottom, slot.u1, slot.v1,
+        left, top, slot.u0, slot.v0, right, bottom, slot.u1, slot.v1, left, bottom, slot.u0, slot.v1,
+      );
+    }
+    return this.drawVertices(vertices);
   }
 
   destroy() {
