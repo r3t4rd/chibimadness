@@ -1173,6 +1173,10 @@ export function useGameEngine(initialPlayer: Player) {
 
   const worldPoisRef = useRef<WorldPOI[]>(worldPois);
   worldPoisRef.current = worldPois;
+  // POIs are checked every simulation frame. Effects must be rate-limited
+  // independently from movement, otherwise a player held on a launch pad can
+  // allocate a fresh burst every frame while their vertical state settles.
+  const poiEffectCooldownRef = useRef<Record<string, number>>({});
 
   const projectilesRef = useRef<Projectile[]>(projectiles);
   projectilesRef.current = projectiles;
@@ -1201,15 +1205,27 @@ export function useGameEngine(initialPlayer: Player) {
           .map((frames) => interpolatedProjectileState(frames, renderAt));
         const retainedVisuals = combatVfxRef.current
           .filter((entry) => entry.expiresAt > time);
-        const visualProjectiles = retainedVisuals
-          .filter((entry) => entry.startsAt <= time)
-          .map((entry) => {
-            entry.projectile.x += entry.projectile.vx * dt * 60;
-            entry.projectile.y += entry.projectile.vy * dt * 60;
-            entry.projectile.distanceTraveled += Math.hypot(entry.projectile.vx, entry.projectile.vy) * dt * 60;
-            return entry.projectile;
-          });
-        combatVfxRef.current = retainedVisuals;
+        const nextVisuals: CombatVisualProjectile[] = [];
+        const visualProjectiles: Projectile[] = [];
+        retainedVisuals.forEach((entry) => {
+          if (entry.startsAt > time) {
+            nextVisuals.push(entry);
+            return;
+          }
+          entry.projectile.x += entry.projectile.vx * dt * 60;
+          entry.projectile.y += entry.projectile.vy * dt * 60;
+          entry.projectile.distanceTraveled += Math.hypot(entry.projectile.vx, entry.projectile.vy) * dt * 60;
+          const hitReplicatedMonster = !entry.projectile.piercing && nextMonsters.some((monster) => (
+            monster.hp > 0
+            && Math.hypot(monster.x - entry.projectile.x, monster.y - entry.projectile.y)
+              <= Math.max(18, entry.projectile.size + (monster.isBoss ? 34 : 20))
+          ));
+          if (!hitReplicatedMonster) {
+            nextVisuals.push(entry);
+            visualProjectiles.push(entry.projectile);
+          }
+        });
+        combatVfxRef.current = nextVisuals;
         const renderedProjectiles = [...nextProjectiles, ...visualProjectiles];
 
         monstersRef.current = nextMonsters;
@@ -4183,14 +4199,21 @@ export function useGameEngine(initialPlayer: Player) {
           if ((poi.elevationZ ?? 0) > 40 && !occupancyMatchesObject(occupancy, poi)) {
             return;
           }
-          if (poi.type === 'bouncy_mushroom' && jumpZ <= 20) {
+          const effectNow = performance.now();
+          const canPlayPoiEffect = (cooldownMs: number) => {
+            const lastPlayed = poiEffectCooldownRef.current[poi.id] ?? -Infinity;
+            if (effectNow - lastPlayed < cooldownMs) return false;
+            poiEffectCooldownRef.current[poi.id] = effectNow;
+            return true;
+          };
+          if (poi.type === 'bouncy_mushroom' && jumpZ <= 20 && canPlayPoiEffect(900)) {
             jumpZ = 15;
             jumpVz = 540;
             isJumping = true;
             fallStartZ = curElevation + 180;
             sound.playJump();
             triggerShake(6, 0.2);
-            spawnParticles(poi.x, poi.y, '#34D399', 18, 'spark');
+            spawnParticles(poi.x, poi.y, '#34D399', 10, 'spark');
             addDamagePopup(poi.x, poi.y - 30, 'ПРУЖИНА! 🍄', '#34D399', true, false, 'manga', 1.4, 0, -18);
           } else if (poi.type === 'steam_geyser' && jumpZ <= 30) {
             jumpZ = 25;
@@ -6169,7 +6192,8 @@ export function useGameEngine(initialPlayer: Player) {
           life: pt.life + dt,
           alpha: Math.max(0, 1 - pt.life / pt.maxLife),
         }))
-        .filter((pt) => pt.life < pt.maxLife);
+        .filter((pt) => pt.life < pt.maxLife)
+        .slice(-360);
       setParticles(particlesRef.current);
 
       damagePopupsRef.current = damagePopupsRef.current

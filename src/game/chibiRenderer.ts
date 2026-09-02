@@ -6956,7 +6956,9 @@ export function drawHumanoidEnemy(
       activeBuffs: [],
     };
 
-    drawChibiCharacter(ctx, enemyPlayer, time, isDead);
+    // Atlas generation must never capture mutable player HUD from the nested
+    // chibi painter. The body-only boundary is transitive.
+    drawChibiCharacter(ctx, enemyPlayer, time, isDead, { bodyOnly: options.bodyOnly });
 
     // Render Ballistic Riot Shield in Off-Hand
     if (monster.hasShield && !isDead) {
