@@ -1175,14 +1175,20 @@ export function useGameEngine(initialPlayer: Player) {
 
   const projectilesRef = useRef<Projectile[]>(projectiles);
   projectilesRef.current = projectiles;
+  // Cosmetic client-side muzzle tracers. They never enter the combat protocol
+  // and are intentionally kept outside the authoritative snapshot history.
+  const primaryFireVfxRef = useRef<Array<{ projectile: Projectile; expiresAt: number }>>([]);
 
   // Authoritative combat snapshots arrive at 20 Hz, but the canvas renders
   // every animation frame. Keep a small visual delay so most frames can be
   // drawn between two server states instead of snapping to the latest one.
   useEffect(() => {
     let animationFrameId = 0;
+    let previousTime = performance.now();
     const renderReplicatedWorld = (time: number) => {
       if (net.hasSharedWorld() && replicationFrameReceivedRef.current) {
+        const dt = Math.min(0.05, Math.max(0, (time - previousTime) / 1000));
+        previousTime = time;
         const renderAt = time - REPLICATION_INTERPOLATION_DELAY_MS;
         const monsterHistories = Object.values(monsterReplicationHistoryRef.current) as Array<ReplicationFrame<Monster>[]>;
         const projectileHistories = Object.values(projectileReplicationHistoryRef.current) as Array<ReplicationFrame<Projectile>[]>;
@@ -1192,11 +1198,21 @@ export function useGameEngine(initialPlayer: Player) {
         const nextProjectiles = projectileHistories
           .filter((frames) => frames.length > 0)
           .map((frames) => interpolatedProjectileState(frames, renderAt));
+        const visualProjectiles = primaryFireVfxRef.current
+          .filter((entry) => entry.expiresAt > time)
+          .map((entry) => {
+            entry.projectile.x += entry.projectile.vx * dt * 60;
+            entry.projectile.y += entry.projectile.vy * dt * 60;
+            entry.projectile.distanceTraveled += Math.hypot(entry.projectile.vx, entry.projectile.vy) * dt * 60;
+            return entry.projectile;
+          });
+        primaryFireVfxRef.current = primaryFireVfxRef.current.filter((entry) => entry.expiresAt > time);
+        const renderedProjectiles = [...nextProjectiles, ...visualProjectiles];
 
         monstersRef.current = nextMonsters;
-        projectilesRef.current = nextProjectiles;
+        projectilesRef.current = renderedProjectiles;
         setMonsters(nextMonsters);
-        setProjectiles(nextProjectiles);
+        setProjectiles(renderedProjectiles);
       }
       animationFrameId = requestAnimationFrame(renderReplicatedWorld);
     };
@@ -2268,6 +2284,10 @@ export function useGameEngine(initialPlayer: Player) {
         size: 4.5,
         piercing: false,
       };
+      primaryFireVfxRef.current.push({
+        projectile: visualShot,
+        expiresAt: performance.now() + 130,
+      });
       projectilesRef.current = [...projectilesRef.current, visualShot];
       setProjectiles(projectilesRef.current);
       sound.playShoot();
