@@ -45,6 +45,19 @@ import {
 
 type NativeColor = [number, number, number, number];
 
+/** DOM-only UI placed over the native WGPU world. It intentionally contains
+ * no Canvas commands: entity bodies remain native sprites, while TS owns the
+ * readable gameplay UI (names, interaction prompts and health). */
+type NativeUiActor = {
+  id: string;
+  label: string;
+  badge?: string;
+  screenX: number;
+  screenY: number;
+  hpRatio: number;
+  hostile: boolean;
+};
+
 /** CSS world colours are converted once at the bridge boundary. Native never
  * receives Canvas paint commands or browser-only colour objects. */
 function nativeColor(value: string | undefined, alpha = 1): NativeColor {
@@ -138,6 +151,7 @@ export function App() {
   const dynamicCanvasLayerEnabledRef = useRef(dynamicCanvasLayerEnabled);
   const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
   const forceStaticCanvasRef = useRef(forceStaticCanvas);
+  const [nativeUiActors, setNativeUiActors] = useState<NativeUiActor[]>([]);
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -273,6 +287,7 @@ export function App() {
   useEffect(() => {
     let animationId: number;
     let lastRenderedAt: number | null = null;
+    let lastNativeUiUpdateAt = 0;
     const canvas = canvasRef.current;
     const staticCanvas = staticCanvasRef.current;
     const webglCanvas = webglCanvasRef.current;
@@ -715,6 +730,63 @@ export function App() {
         curEngine.introCinematic,
       );
       if (nativeWorldRendererRequested) {
+          // Nameplates and health bars are WebView/DOM UI, not Rust geometry.
+          // Update at 12 Hz: enough for a legible overlay while avoiding a
+          // React frame per native presentation.
+          if (time - lastNativeUiUpdateAt >= 1000 / 12) {
+            lastNativeUiUpdateAt = time;
+            const screenActor = (
+              id: string,
+              label: string,
+              x: number,
+              y: number,
+              size: number,
+              hpRatio: number,
+              hostile: boolean,
+              badge?: string,
+            ): NativeUiActor | null => {
+              const screenX = (x - camera.x) * camera.zoom + viewportWidth / 2;
+              const screenY = (y - camera.y) * camera.zoom + viewportHeight / 2 - size * camera.zoom * 2.08;
+              if (screenX < -180 || screenX > viewportWidth + 180 || screenY < -90 || screenY > viewportHeight + 90) return null;
+              return { id, label, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
+            };
+            const actors = [
+              ...curEngine.monsters
+                .filter((monster) => monster.hp > 0)
+                .map((monster) => screenActor(
+                  monster.id,
+                  `Lv.${monster.level ?? 1} ${monster.name}`,
+                  monster.x,
+                  monster.y,
+                  monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+                  monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
+                  true,
+                )),
+              ...(Object.values(curEngine.remotePlayers) as Player[])
+                .filter((player) => player.id !== curEngine.player.id)
+                .concat(curEngine.player)
+                .map((player) => screenActor(
+                  player.id,
+                  `Lv.${player.stats.level} ${player.name}`,
+                  player.x,
+                  player.y,
+                  48,
+                  player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 0,
+                  false,
+                )),
+              ...Object.values(NPCS_DATABASE).map((npc) => screenActor(
+                npc.id,
+                `Lv.1 ${npc.name}`,
+                npc.x,
+                npc.y,
+                48,
+                1,
+                false,
+                '[E] TALK',
+              )),
+            ].filter((actor): actor is NativeUiActor => actor !== null);
+            setNativeUiActors(actors);
+          }
           const nativeMonsterSprites: NativeWorldRenderFrame['entities'] = curEngine.monsters
             .filter((monster) => monster.hp > 0)
             .map((monster) => {
@@ -761,7 +833,6 @@ export function App() {
                 facingLeft: player.facing === 'left',
                 layer: Math.round(player.y),
                 weaponType: player.equipment.weapon?.gunType,
-                label: `Lv.${player.stats.level} ${player.name}`,
                 chibi: player.chibi,
                 animation: {
                   state: player.state,
@@ -798,8 +869,6 @@ export function App() {
             hpRatio: 1,
             facingLeft: false,
             layer: Math.round(npc.y),
-            label: `Lv.1 ${npc.name}`,
-            labelBadge: '[E] TALK',
             chibi: npc.avatarChibi,
             animation: { state: 'idle', spawnBounce: 1 },
           }));
@@ -1156,6 +1225,35 @@ export function App() {
             onMouseUp={handleWorldPointerUp}
             className="absolute inset-0 block w-full h-full cursor-crosshair bg-transparent"
           />
+
+          {nativeWorldRenderer && (
+            <div className="fixed inset-0 z-30 pointer-events-none font-mono select-none" aria-hidden="true">
+              {nativeUiActors.map((actor) => (
+                <div
+                  key={actor.id}
+                  className="absolute flex w-40 -translate-x-1/2 -translate-y-full flex-col items-center gap-0.5"
+                  style={{ left: actor.screenX, top: actor.screenY }}
+                >
+                  <div className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]">
+                    {actor.label}
+                  </div>
+                  {!actor.badge && (
+                    <div className="h-1.5 w-20 overflow-hidden rounded-full border border-slate-950/95 bg-slate-950/90 shadow-sm">
+                      <div
+                        className={actor.hostile ? 'h-full bg-rose-500' : 'h-full bg-cyan-400'}
+                        style={{ width: `${Math.round(actor.hpRatio * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                  {actor.badge && (
+                    <div className="rounded border border-amber-400 bg-amber-500 px-1.5 py-px text-[9px] font-bold leading-none text-slate-950">
+                      {actor.badge}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* 3. Floating In-Game Toast Notifications */}
           <AnimatePresence>

@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-use ab_glyph::{Font, FontArc, ScaleFont, point as font_point};
+use ab_glyph::FontArc;
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use yuyib::render::{RenderFrame, wgpu};
@@ -302,12 +302,6 @@ pub struct NativeRenderEntity {
     pub tracer_width: f32,
     #[serde(default)]
     pub distance_traveled: f32,
-    /// Short world-space labels (names and interaction badges) are rasterized
-    /// by the native WGPU path, never by a transparent Canvas overlay.
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub label_badge: String,
     #[serde(default)]
     pub chibi: Option<NativeChibiRecipe>,
     #[serde(default)]
@@ -534,8 +528,6 @@ impl NativeWorldState {
                 && entity.effect_type.len() <= 32
                 && entity.horde_kind.len() <= 32
                 && entity.sprite_key.len() <= 96
-                && entity.label.len() <= 96
-                && entity.label_badge.len() <= 32
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
                     .animation
@@ -2104,16 +2096,6 @@ impl NativeWorldRenderer {
             let y = entity.y + entity.velocity_y * prediction_seconds;
             self.add_entity(entity, x, y, world);
         }
-        // Nameplates are a final native overlay: moving sprites can never
-        // cover them and no Canvas compositor has to wake up for text.
-        for entity in &world.entities {
-            if entity.label.is_empty() && entity.label_badge.is_empty() {
-                continue;
-            }
-            let x = entity.x + entity.velocity_x * prediction_seconds;
-            let y = entity.y + entity.velocity_y * prediction_seconds;
-            self.add_entity_label(entity, x, y, world);
-        }
         self.overlay_vertices_dirty = true;
     }
 
@@ -2829,7 +2811,6 @@ impl NativeWorldRenderer {
             );
         }
         if self.add_generated_sprite(entity, x, y, world) {
-            self.add_sprite_health_bar(entity, x, y, world);
             return;
         }
         match entity.kind.as_str() {
@@ -2846,97 +2827,6 @@ impl NativeWorldRenderer {
             // back to the old hand-drawn chibi/humanoid geometry.
             "player" | "npc" | "monster" => {},
             _ => self.add_humanoid(entity, x, y, world),
-        }
-    }
-
-    fn add_entity_label(
-        &mut self,
-        entity: &NativeRenderEntity,
-        x: f32,
-        y: f32,
-        world: &NativeRenderFrame,
-    ) {
-        let name_y = y - entity.size * 1.52;
-        if !entity.label.is_empty() {
-            self.add_nameplate(
-                &entity.label,
-                x,
-                name_y,
-                8.5,
-                [0.02, 0.04, 0.10, 0.92],
-                [0.94, 0.96, 1.0, 1.0],
-                world,
-            );
-        }
-        if !entity.label_badge.is_empty() {
-            self.add_nameplate(
-                &entity.label_badge,
-                x,
-                name_y + 15.0,
-                7.0,
-                [0.96, 0.55, 0.04, 0.96],
-                [0.05, 0.08, 0.12, 1.0],
-                world,
-            );
-        }
-    }
-
-    /// A deliberately bounded, small text path for entity nameplates. Unlike
-    /// Canvas text it is tessellated directly into the native final overlay,
-    /// which remains correct while the camera is predicted at display rate.
-    fn add_nameplate(
-        &mut self,
-        value: &str,
-        x: f32,
-        y: f32,
-        size: f32,
-        background: [f32; 4],
-        foreground: [f32; 4],
-        world: &NativeRenderFrame,
-    ) {
-        let Some(font) = self.text_font.clone() else {
-            return;
-        };
-        let value = value.chars().take(48).collect::<String>();
-        if value.is_empty() {
-            return;
-        }
-        let scaled = font.as_scaled(size);
-        let glyphs = value
-            .chars()
-            .map(|character| font.glyph_id(character))
-            .collect::<Vec<_>>();
-        let width = glyphs
-            .iter()
-            .map(|glyph| scaled.h_advance(*glyph))
-            .sum::<f32>();
-        let plate_width = (width + 8.0).max(18.0);
-        let plate_height = size + 6.0;
-        self.add_overlay_world_rect(x, y, plate_width, plate_height, background, world);
-
-        let mut pen_x = x - width * 0.5;
-        let baseline_y = y + (scaled.ascent() + scaled.descent()) * 0.5;
-        for glyph_id in glyphs {
-            let glyph = glyph_id.with_scale_and_position(size, font_point(pen_x, baseline_y));
-            if let Some(outline) = font.outline_glyph(glyph) {
-                let bounds = outline.px_bounds();
-                outline.draw(|pixel_x, pixel_y, coverage| {
-                    if coverage <= 0.08 {
-                        return;
-                    }
-                    let mut color = foreground;
-                    color[3] *= coverage;
-                    self.add_overlay_world_rect(
-                        bounds.min.x + pixel_x as f32 + 0.5,
-                        bounds.min.y + pixel_y as f32 + 0.5,
-                        1.0,
-                        1.0,
-                        color,
-                        world,
-                    );
-                });
-            }
-            pen_x += scaled.h_advance(glyph_id);
         }
     }
 
@@ -3047,39 +2937,6 @@ impl NativeWorldRenderer {
             },
         ]);
         true
-    }
-
-    fn add_sprite_health_bar(
-        &mut self,
-        entity: &NativeRenderEntity,
-        x: f32,
-        y: f32,
-        world: &NativeRenderFrame,
-    ) {
-        if entity.kind != "monster" {
-            return;
-        }
-        let bar_width = entity.size * 1.28;
-        self.add_world_rect(
-            x,
-            y - entity.size * 0.86,
-            bar_width,
-            entity.size * 0.11,
-            [0.008, 0.014, 0.035, 0.94],
-            world,
-        );
-        self.add_world_rect(
-            x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
-            y - entity.size * 0.86,
-            bar_width * entity.hp_ratio,
-            entity.size * 0.065,
-            if entity.faction == "police" {
-                hex("#22D3EE")
-            } else {
-                hex("#FB2C4A")
-            },
-            world,
-        );
     }
 
     fn add_humanoid(
@@ -4974,7 +4831,6 @@ impl NativeWorldRenderer {
                 self.add_world_circle(x + size * 0.34, y - size * 0.33, size * 0.07, entity.color, 8, world);
             }
         }
-        self.add_sprite_health_bar(entity, x, y, world);
     }
 
     fn add_popup(
@@ -5016,7 +4872,6 @@ impl NativeWorldRenderer {
         self.add_world_rect(x, y, size * 0.98, size * 0.58, [0.20, 0.25, 0.32, 1.0], world);
         self.add_world_circle(x + size * 0.34, y - size * 0.17, size * 0.30, [0.12, 0.18, 0.25, 1.0], 14, world);
         self.add_world_circle(x + size * 0.44, y - size * 0.22, size * 0.055, [0.94, 0.18, 0.25, 1.0], 8, world);
-        self.add_sprite_health_bar(entity, x, y, world);
     }
 
     #[allow(dead_code)]

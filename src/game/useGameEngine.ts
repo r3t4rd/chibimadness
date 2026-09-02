@@ -2244,6 +2244,37 @@ export function useGameEngine(initialPlayer: Player) {
       }, 90);
     }
 
+    // The shared world consumes a primary-fire *intent* at the input boundary.
+    // Do this before the legacy local weapon branches below: otherwise a held
+    // LMB has to walk through the old TypeScript per-gun implementation before
+    // Rust ever hears about the shot.  Weapon shape, cooldown and projectile
+    // count remain server-owned in `abilities::basic_attack`.
+    if (net.hasSharedWorld()) {
+      // TS owns immediate presentation, while the server-owned projectile
+      // arrives in the next replication frame. This one short tracer removes
+      // network-latency from click feedback without becoming a damage source.
+      const visualShot: Projectile = {
+        id: `vfx_primary_${now}_${Math.random()}`,
+        ownerId: curPlayer.id,
+        type: 'bullet',
+        x: curPlayer.x + aimDirX * 24,
+        y: curPlayer.y + aimDirY * 24 + visualLaunchOffsetY,
+        vx: aimDirX * 26,
+        vy: aimDirY * 26,
+        damage: 0,
+        range: 180,
+        distanceTraveled: 0,
+        color: '#FDE047',
+        size: 4.5,
+        piercing: false,
+      };
+      projectilesRef.current = [...projectilesRef.current, visualShot];
+      setProjectiles(projectilesRef.current);
+      sound.playShoot();
+      net.basicAttack(targetX, targetY);
+      return;
+    }
+
     // Attachment Stat Modifiers
     const att = curPlayer.weaponAttachments;
     const dmgMult = att?.muzzle?.statBonus?.damageMult ?? 1.0;
@@ -2309,12 +2340,6 @@ export function useGameEngine(initialPlayer: Player) {
       const launchedProjectile = visualLaunchOffsetY === 0
         ? proj
         : { ...proj, visualOffsetY: visualLaunchOffsetY };
-      if (net.hasSharedWorld()) {
-        // Shared/native combat accepts aim input, never a ready-made JS
-        // projectile. Rust resolves the equipped weapon and its payload.
-        net.basicAttack(targetX, targetY);
-        return;
-      }
       projectilesRef.current = [...projectilesRef.current, launchedProjectile];
       setProjectiles([...projectilesRef.current]);
     };
