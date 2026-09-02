@@ -651,6 +651,7 @@ async fn skill_cast(server: &Arc<Server>, session_id: u64, message: Value) {
                 record.value["state"] = json!("cast");
             }
         }
+        apply_ability_cone_hits(&mut state, &player_id, &output.cone_hits);
         let Some(world) = state.combat_world.as_mut() else {
             return;
         };
@@ -704,6 +705,7 @@ async fn basic_attack(server: &Arc<Server>, session_id: u64, message: Value) {
             abilities::basic_attack(weapon, &mut context)
         };
         state.skill_cooldowns.insert(cooldown_key, now + output.cooldown);
+        apply_ability_cone_hits(&mut state, &player_id, &output.cone_hits);
         let Some(world) = state.combat_world.as_mut() else { return; };
         let available = MAX_WORLD_PROJECTILES.saturating_sub(world.projectiles.len());
         world.projectiles.extend(output.projectiles.into_iter().take(available));
@@ -1415,6 +1417,49 @@ fn segment_circle_hit_fraction(
     let closest_x = start_x + delta_x * fraction;
     let closest_y = start_y + delta_y * fraction;
     ((center_x - closest_x).hypot(center_y - closest_y) <= radius).then_some(fraction)
+}
+
+/// Resolves immediate weapon sweeps at cast time. A broad melee arc must hit
+/// targets it visibly covers even when an individual follow-up crescent takes
+/// a neighbouring path.
+fn apply_ability_cone_hits(state: &mut WorldState, owner_id: &str, cone_hits: &[abilities::ConeHit]) {
+    if cone_hits.is_empty() {
+        return;
+    }
+    let Some(world) = state.combat_world.as_mut() else {
+        return;
+    };
+    for monster in world.monsters.values_mut() {
+        if number(monster, "hp", 0.0) <= 0.0 {
+            continue;
+        }
+        let monster_x = number(monster, "x", 0.0);
+        let monster_y = number(monster, "y", 0.0);
+        for cone in cone_hits {
+            let offset_x = monster_x - cone.origin_x;
+            let offset_y = monster_y - cone.origin_y;
+            let distance = offset_x.hypot(offset_y);
+            let large_target_padding = if monster.get("isBoss").and_then(Value::as_bool).unwrap_or(false)
+                || monster.get("isJuggernaut").and_then(Value::as_bool).unwrap_or(false) { 30.0 } else { 0.0 };
+            if distance > cone.range + large_target_padding {
+                continue;
+            }
+            let target_angle = offset_y.atan2(offset_x);
+            let angle_difference = (target_angle - cone.angle + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+            if angle_difference.abs() > cone.arc_radians * 0.5 {
+                continue;
+            }
+            let next_hp = (number(monster, "hp", 0.0) - cone.damage).max(0.0);
+            set_number(monster, "hp", next_hp);
+            set_number(monster, "hitFlash", 0.2);
+            monster["damagedByPlayer"] = json!(true);
+            monster["retaliatePlayer"] = json!(true);
+            set_string(monster, "state", if next_hp <= 0.0 { "dead" } else { "chase" });
+            set_string(monster, "targetPlayerId", owner_id);
+            break;
+        }
+    }
 }
 
 fn tick_combat_world(state: &mut WorldState) {
@@ -2142,6 +2187,24 @@ mod tests {
             60.0,
         );
         assert!(world.projectiles.is_empty());
+    }
+
+    #[test]
+    fn immediate_scythe_cone_hits_targets_covered_by_outer_crescents() {
+        let monsters = sanitize_world_monsters(&[json!({
+            "id": "outer_crescent_target", "x": 112.0, "y": 54.0,
+            "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
+        })]).expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.combat_world = Some(CombatWorld { monsters, projectiles: Vec::new() });
+
+        apply_ability_cone_hits(&mut state, "reaper", &[abilities::ConeHit {
+            origin_x: 0.0, origin_y: 0.0, angle: 0.0,
+            range: 140.0, arc_radians: 2.5, damage: 30.0,
+        }]);
+
+        let world = state.combat_world.expect("world remains available");
+        assert_eq!(number(world.monsters.get("outer_crescent_target").expect("monster"), "hp", 0.0), 70.0);
     }
 
     #[test]

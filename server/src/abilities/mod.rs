@@ -20,7 +20,21 @@ pub struct CastOutput {
     pub id: &'static str,
     pub cooldown: Duration,
     pub projectiles: Vec<Value>,
+    /// Immediate melee damage resolved by the server at cast time. Travelling
+    /// projectiles remain for their later follow-up hits and presentation.
+    pub cone_hits: Vec<ConeHit>,
     pub destination: Option<(f64, f64)>,
+}
+
+/// A server-authoritative sweep in front of a caster.
+#[derive(Clone, Copy, Debug)]
+pub struct ConeHit {
+    pub origin_x: f64,
+    pub origin_y: f64,
+    pub angle: f64,
+    pub range: f64,
+    pub arc_radians: f64,
+    pub damage: f64,
 }
 
 trait Ability: Sync {
@@ -85,7 +99,7 @@ impl Ability for ProjectileAbility {
                 "piercing": self.piercing, "visualOffsetY": visual_offset_y,
             }));
         }
-        CastOutput { id: self.id(), cooldown: self.cooldown(), projectiles, destination: None }
+        CastOutput { id: self.id(), cooldown: self.cooldown(), projectiles, cone_hits: Vec::new(), destination: None }
     }
 }
 
@@ -114,7 +128,7 @@ impl Ability for DashAbility {
             "damage": (attack_power(context.player) * self.damage_multiplier).round(), "range": 85.0,
             "distanceTraveled": 0.0, "color": self.color, "size": 22.0, "piercing": true,
         });
-        CastOutput { id: self.id(), cooldown: self.cooldown(), projectiles: vec![projectile], destination: Some(destination) }
+        CastOutput { id: self.id(), cooldown: self.cooldown(), projectiles: vec![projectile], cone_hits: Vec::new(), destination: Some(destination) }
     }
 }
 
@@ -186,7 +200,20 @@ pub fn basic_attack(weapon: &str, context: &mut CastContext<'_>) -> CastOutput {
             range: 1_500.0, color: "#38BDF8", size: 5.0, piercing: false, target_origin: false,
         },
     };
-    ability.execute(context)
+    let mut output = ability.execute(context);
+    if weapon == "scythe" {
+        let (origin_x, origin_y) = player_position(context.player);
+        let angle = (context.target_y - origin_y).atan2(context.target_x - origin_x);
+        output.cone_hits.push(ConeHit {
+            origin_x,
+            origin_y,
+            angle,
+            range: 140.0,
+            arc_radians: 2.5,
+            damage: (attack_power(context.player) * 1.85).round(),
+        });
+    }
+    output
 }
 
 fn next_projectile_id(context: &mut CastContext<'_>) -> String {
@@ -266,5 +293,9 @@ mod tests {
                 && projectile["color"] == "#84CC16"
                 && projectile["piercing"] == true
         }));
+        assert_eq!(output.cone_hits.len(), 1);
+        assert_eq!(output.cone_hits[0].range, 140.0);
+        assert_eq!(output.cone_hits[0].arc_radians, 2.5);
+        assert_eq!(output.cone_hits[0].damage, 30.0);
     }
 }
