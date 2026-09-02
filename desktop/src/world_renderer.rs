@@ -2070,6 +2070,22 @@ impl NativeWorldRenderer {
     fn rebuild_native_static_world(&mut self, world: &NativeRenderFrame) {
         self.vertices.clear();
         self.add_source_world(world);
+        // `add_source_world` predates retained rendering and emits camera-baked
+        // NDC positions. Keeping those in the cache freezes terrain under the
+        // player while dynamic actors still follow the live camera. Convert
+        // its world primitives back once and mark them for WORLD_SHADER's
+        // GPU camera branch (negative alpha is the compact vertex marker).
+        // The first quad is the viewport clear and intentionally remains in
+        // screen space.
+        for vertex in self.vertices.iter_mut().skip(6) {
+            let screen_x = (vertex.position[0] + 1.0) * 0.5 * world.viewport_width;
+            let screen_y = (1.0 - vertex.position[1]) * 0.5 * world.viewport_height;
+            vertex.position = [
+                (screen_x - world.viewport_width * 0.5) / world.zoom + world.camera_x,
+                (screen_y - world.viewport_height * 0.5) / world.zoom + world.camera_y,
+            ];
+            vertex.color[3] = -vertex.color[3].max(f32::MIN_POSITIVE);
+        }
         self.static_vertices = std::mem::take(&mut self.vertices);
         self.static_vertices_dirty = true;
     }

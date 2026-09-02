@@ -10,6 +10,7 @@ import {
   screenToWorld,
   type WorldRenderInput,
 } from './game/worldRenderer';
+import { getNativeNpcSpriteFrame } from './game/nativeVisualRecipes';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
 import {
   createWebglHordeMobRenderer,
@@ -806,6 +807,7 @@ export function App() {
             labelBadge: '[E] TALK',
             chibi: npc.avatarChibi,
             animation: { state: 'idle', spawnBounce: 1 },
+            spriteKey: getNativeNpcSpriteFrame(npc.id),
           }));
           const nativeParticles: NativeWorldRenderFrame['entities'] = curEngine.particles.map((particle, index) => ({
             id: `particle:${index}:${particle.x}:${particle.y}`,

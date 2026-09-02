@@ -89,7 +89,10 @@ pub fn atlas_for_frame(frame_key: &str) -> Option<&'static str> {
         Some("horde")
     } else if frame_key.starts_with("boss_") {
         Some("bosses")
-    } else if frame_key.starts_with("character_") || frame_key.starts_with("vehicle_") {
+    } else if frame_key.starts_with("character_")
+        || frame_key.starts_with("npc_")
+        || frame_key.starts_with("vehicle_")
+    {
         Some("characters")
     } else if frame_key.starts_with("police_")
         || frame_key.starts_with("punk_")
@@ -123,6 +126,13 @@ mod tests {
                 .frames
                 .contains_key("character_hatsune_miku_pistol")
         );
+        assert!(
+            characters
+                .frames
+                .contains_key("character_bloomer_yuuka_pistol")
+        );
+        assert!(characters.frames.contains_key("npc_npc_hank_guide"));
+        assert_eq!(atlas_for_frame("npc_npc_hank_guide"), Some("characters"));
         assert_eq!(atlas_for_frame("police_cop_officer"), Some("enemies"));
         assert_eq!(atlas_for_frame("unknown"), None);
     }

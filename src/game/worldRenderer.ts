@@ -1,6 +1,7 @@
 import { Monster, DropItem, ResourceNode, NPC, Projectile, DamagePopup, VisualParticle, Player, GroundDecal, InteractiveObject, IntroCinematicState, WorldPOI, Platform, CarEntity, SummonedAlly } from '../types/game';
 import { drawChibiCharacter, drawHumanoidEnemy, drawPoliceCruiser, drawCyberMuscleCar } from './chibiRenderer';
 import { WORLD_WIDTH, WORLD_HEIGHT, ZONES, NPCS_DATABASE, OBSTACLES, INITIAL_INTERACTIVE_OBJECTS, PLATFORMS, WORLD_POIS } from './constants';
+import { getNativeCharacterSpriteFrame } from './nativeVisualRecipes';
 import { HORDE_ARENA, HORDE_FEATURES, getHordeBlindness, getHordeHazards, getHordeRiftFx, isInHordeArena, type HordeHazard } from './hordeMode';
 import { drawEvolutionFx } from './evolutions';
 import { clipToViewBounds, getViewBounds, isInViewBounds } from './viewCull';
@@ -4576,7 +4577,7 @@ export function getNativePlayerSpriteFrame(player: Player): string | null {
     && chibi.hairColor.toUpperCase() === '#06B6D4'
     && chibi.hatType === 'headphones'
     && chibi.outfitType === 'idol_stage';
-  if (!isMiku) return null;
+  if (!isMiku) return getNativeCharacterSpriteFrame(player);
   const weapon = player.equipment.weapon?.gunType ?? 'pistol';
   return `character_hatsune_miku_${weapon}`;
 }

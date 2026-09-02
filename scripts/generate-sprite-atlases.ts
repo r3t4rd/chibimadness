@@ -20,6 +20,11 @@ import {
   drawHordeMobAtlasSprite,
   getHordeMobAtlasSprites,
 } from '../src/game/worldRenderer';
+import { NPCS_DATABASE } from '../src/game/constants';
+import {
+  NATIVE_CHARACTER_SPRITE_RECIPES,
+  NATIVE_CHARACTER_WEAPONS,
+} from '../src/game/nativeVisualRecipes';
 import { ChibiConfig, Player, Monster, GunType } from '../src/types/game';
 
 const OUTPUT_DIR = path.resolve(process.cwd(), 'assets/sprites');
@@ -549,11 +554,7 @@ function generateCharactersAtlas() {
     outfitType: 'idol_stage',
     ribbonColor: '#06B6D4',
   };
-  const mikuWeapons: GunType[] = [
-    'pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac', 'katana',
-    'sledgehammer', 'throwing_knives', 'scythe', 'greatsword', 'staff',
-    'wand', 'grimoire', 'totem',
-  ];
+  const mikuWeapons: GunType[] = [...NATIVE_CHARACTER_WEAPONS];
   const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
     // Full frames come from the exact creator recipe and weapon source call.
     // There is no native vector approximation or runtime Canvas composition.
@@ -563,6 +564,14 @@ function generateCharactersAtlas() {
       chibi: mikuChibi,
       weapon,
     })),
+    ...NATIVE_CHARACTER_SPRITE_RECIPES.flatMap((recipe) => (
+      NATIVE_CHARACTER_WEAPONS.map((weapon) => ({
+        id: `${recipe.id}_${weapon}`,
+        name: recipe.name,
+        chibi: recipe.chibi,
+        weapon,
+      }))
+    )),
     {
       id: 'millennium_student',
       name: 'Millennium Student',
@@ -755,10 +764,41 @@ function generateCharactersAtlas() {
       ctx.save();
       ctx.translate(size / 2, size / 2 + 25);
       ctx.scale(1.15, 1.15);
-      drawChibiCharacter(ctx, mockPlayer, 0, false, { bodyOnly: false });
+      // Labels/health are volatile WGPU overlays. Baking them into a body
+      // frame duplicates nameplates and makes them stale when state changes.
+      drawChibiCharacter(ctx, mockPlayer, 0, false, { bodyOnly: true });
       ctx.restore();
     },
   }));
+
+  // This exactly mirrors drawNPCs(): static source avatar, no weapon, with
+  // the interaction/name labels emitted by native as dynamic overlays.
+  for (const npc of Object.values(NPCS_DATABASE)) {
+    items.push({
+      id: `npc_${npc.id}`,
+      category: 'character_npc',
+      draw: (ctx: CanvasRenderingContext2D, size: number) => {
+        const mockPlayer: Player = {
+          id: npc.id, name: npc.name, x: 0, y: 0, vx: 0, vy: 0,
+          facing: 'right', state: 'idle', characterClass: 'gunslinger',
+          stats: makeDefaultPlayerStats(), stamina: 100, maxStamina: 100,
+          isSprinting: false, jumpZ: 0, jumpVz: 0, isJumping: false,
+          bhopStreak: 0, bhopTimer: 0, bhopSpeedMult: 1, gold: 0,
+          inventory: [],
+          equipment: { weapon: null, headwear: null, outfit: null, vehicle: null, accessory: null },
+          skills: [], activeVehicleId: null, isRiding: false,
+          spawnBounce: 1, attackTimer: 0, dodgeTimer: 0, combo: 0,
+          lastAttackTime: 0, activeQuests: {}, completedQuestIds: [],
+          currentZone: 'forest_camp', activeBuffs: [], chibi: npc.avatarChibi,
+        };
+        ctx.save();
+        ctx.translate(size / 2, size / 2 + 25);
+        ctx.scale(1.15, 1.15);
+        drawChibiCharacter(ctx, mockPlayer, 0, true, { bodyOnly: true });
+        ctx.restore();
+      },
+    });
+  }
 
   // Vehicles
   items.push({
