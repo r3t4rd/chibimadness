@@ -155,7 +155,12 @@ pub fn cast(class: &str, slot: usize, context: &mut CastContext<'_>) -> Option<C
 /// client-built projectile payload.
 pub fn basic_attack(weapon: &str, context: &mut CastContext<'_>) -> CastOutput {
     let ability = match weapon {
-        "katana" | "sledgehammer" | "scythe" | "greatsword" => ProjectileAbility {
+        "scythe" => ProjectileAbility {
+            id: "basic_scythe", cooldown_seconds: 0.48, kind: ProjectileKind::SlashWave,
+            count: 3, spread_radians: 0.9, speed: 10.0, damage_multiplier: 0.4,
+            range: 180.0, color: "#84CC16", size: 26.0, piercing: true, target_origin: false,
+        },
+        "katana" | "sledgehammer" | "greatsword" => ProjectileAbility {
             id: "basic_melee", cooldown_seconds: 0.22, kind: ProjectileKind::SlashWave,
             count: 1, spread_radians: 0.0, speed: 14.0, damage_multiplier: 1.25,
             range: 190.0, color: "#F8FAFC", size: 16.0, piercing: true, target_origin: false,
@@ -238,5 +243,28 @@ mod tests {
         assert_eq!(output.id, "basic_shotgun");
         assert_eq!(output.projectiles.len(), 6);
         assert!(output.projectiles.iter().all(|projectile| projectile["ownerId"] == "miku"));
+    }
+
+    #[test]
+    fn reaper_scythe_primary_uses_three_crescent_waves() {
+        let player = json!({ "x": 100.0, "y": 200.0, "level": 3.0 });
+        let mut sequence = 0;
+        let output = basic_attack(
+            "scythe",
+            &mut CastContext {
+                owner_id: "reaper",
+                player: &player,
+                target_x: 300.0,
+                target_y: 200.0,
+                sequence: &mut sequence,
+            },
+        );
+        assert_eq!(output.id, "basic_scythe");
+        assert_eq!(output.projectiles.len(), 3);
+        assert!(output.projectiles.iter().all(|projectile| {
+            projectile["type"] == "slash_wave"
+                && projectile["color"] == "#84CC16"
+                && projectile["piercing"] == true
+        }));
     }
 }

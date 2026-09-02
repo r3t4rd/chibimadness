@@ -41,7 +41,7 @@ const SHARED_SKILL_BURSTS: Record<string, VisualBurst> = {
 const PRIMARY_WEAPON_BURSTS: Record<string, VisualBurst> = {
   katana: { projectileType: 'slash_wave', count: 1, spreadRadians: 0, delayMs: 0, speed: 14, range: 190, colors: ['#F8FAFC'], size: 16, piercing: true },
   sledgehammer: { projectileType: 'slash_wave', count: 1, spreadRadians: 0, delayMs: 0, speed: 14, range: 190, colors: ['#F8FAFC'], size: 16, piercing: true },
-  scythe: { projectileType: 'slash_wave', count: 1, spreadRadians: 0, delayMs: 0, speed: 14, range: 190, colors: ['#F8FAFC'], size: 16, piercing: true },
+  scythe: { projectileType: 'slash_wave', count: 3, spreadRadians: 0.9, delayMs: 0, speed: 10, range: 180, colors: ['#84CC16'], size: 26, piercing: true },
   greatsword: { projectileType: 'slash_wave', count: 1, spreadRadians: 0, delayMs: 0, speed: 14, range: 190, colors: ['#F8FAFC'], size: 16, piercing: true },
   staff: { projectileType: 'magic_orb', count: 1, spreadRadians: 0, delayMs: 0, speed: 18, range: 1_050, colors: ['#A78BFA'], size: 8 },
   wand: { projectileType: 'magic_orb', count: 1, spreadRadians: 0, delayMs: 0, speed: 18, range: 1_050, colors: ['#A78BFA'], size: 8 },
