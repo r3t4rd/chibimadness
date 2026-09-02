@@ -215,6 +215,19 @@ pub fn basic_attack(weapon: &str, context: &mut CastContext<'_>) -> CastOutput {
             arc_radians: 2.5,
             damage: (attack_power(context.player) * 1.85).round(),
         });
+        // Each animated crescent has its own server-side sweep. This does not
+        // depend on the WebView visual projectile surviving long enough to
+        // overlap a replicated target.
+        for offset in [-0.45_f64, 0.0, 0.45] {
+            output.cone_hits.push(ConeHit {
+                origin_x,
+                origin_y,
+                angle: angle + offset,
+                range: 180.0,
+                arc_radians: 0.8,
+                damage: (attack_power(context.player) * 0.4).round(),
+            });
+        }
     }
     output
 }
@@ -296,10 +309,14 @@ mod tests {
                 && projectile["color"] == "#84CC16"
                 && projectile["piercing"] == true
         }));
-        assert_eq!(output.cone_hits.len(), 1);
+        assert_eq!(output.cone_hits.len(), 4);
         assert_eq!(output.cone_hits[0].range, 140.0);
         assert_eq!(output.cone_hits[0].arc_radians, 2.5);
         assert_eq!(output.cone_hits[0].damage, 30.0);
+        assert_eq!(output.cone_hits[1].range, 180.0);
+        assert_eq!(output.cone_hits[1].damage, 6.0);
+        assert_eq!(output.cone_hits[1].angle, -0.45);
+        assert_eq!(output.cone_hits[3].angle, 0.45);
         assert!(output.projectiles.iter().all(|projectile| projectile["collisionRadius"] == 80.0));
     }
 }

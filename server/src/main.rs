@@ -2214,6 +2214,28 @@ mod tests {
     }
 
     #[test]
+    fn reaper_outer_sweep_hits_before_its_crescent_reaches_the_target() {
+        let player_value = json!({ "x": 100.0, "y": 100.0, "level": 1.0 });
+        let mut sequence = 0;
+        let cast = abilities::basic_attack("scythe", &mut abilities::CastContext {
+            owner_id: "reaper", player: &player_value, target_x: 300.0, target_y: 100.0, sequence: &mut sequence,
+        });
+        let monsters = sanitize_world_monsters(&[json!({
+            // 170 units away on the +0.45 rad outer crescent: outside the
+            // primary 140-unit sector, but inside its own 180-unit sweep.
+            "id": "outer_sweep_target", "x": 253.0, "y": 174.0,
+            "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
+        })]).expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.combat_world = Some(CombatWorld { monsters, projectiles: Vec::new() });
+
+        apply_ability_cone_hits(&mut state, "reaper", &cast.cone_hits);
+
+        let world = state.combat_world.expect("world remains available");
+        assert_eq!(number(world.monsters.get("outer_sweep_target").expect("monster"), "hp", 0.0), 95.0);
+    }
+
+    #[test]
     fn reaper_outer_crescent_damages_a_target_outside_the_center_line() {
         let (_, player_value) = sanitize_player(&player("reaper", 100.0, 100.0)).expect("valid player");
         let mut sequence = 0;
