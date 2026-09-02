@@ -4,6 +4,7 @@ import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import {
   advanceCanvasCamera,
+  drawCombatVfxOverlay,
   drawWorldInput,
   screenToWorld,
   type WorldRenderInput,
@@ -50,7 +51,7 @@ type NativeColor = [number, number, number, number];
  * readable gameplay UI (names, interaction prompts and health). */
 type NativeUiActor = {
   id: string;
-  label: string;
+  label?: string;
   badge?: string;
   screenX: number;
   screenY: number;
@@ -746,15 +747,25 @@ export function App() {
             .filter((player) => player.id !== curEngine.player.id)
             .concat(curEngine.player)
             .forEach((player) => positionNativeUiActor(player.id, player.x, player.y, 48));
+          curEngine.monsters
+            .filter((monster) => monster.hp > 0)
+            .forEach((monster) => positionNativeUiActor(
+              monster.id,
+              monster.x,
+              monster.y,
+              monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+            ));
           Object.values(NPCS_DATABASE).forEach((npc) => positionNativeUiActor(npc.id, npc.x, npc.y, 48));
           // Nameplates and health bars are WebView/DOM UI, not Rust geometry.
-          // Update at 12 Hz: enough for a legible overlay while avoiding a
+          // Update state at 20 Hz while position stays rAF-bound below: health
+          // must react to each authoritative damage snapshot without turning
+          // labels into an independently paced world renderer.
           // React frame per native presentation.
-          if (time - lastNativeUiUpdateAt >= 1000 / 12) {
+          if (time - lastNativeUiUpdateAt >= 1000 / 20) {
             lastNativeUiUpdateAt = time;
             const screenActor = (
               id: string,
-              label: string,
+              label: string | undefined,
               x: number,
               y: number,
               size: number,
@@ -767,11 +778,21 @@ export function App() {
               if (screenX < -180 || screenX > viewportWidth + 180 || screenY < -90 || screenY > viewportHeight + 90) return null;
               return { id, label, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
             };
-            // Enemy atlas cells already contain their source nameplate and
-            // health presentation. A second DOM plate sits above it and can
-            // only advance at WebView cadence, so it looks detached from a
-            // 240 Hz native sprite. Keep DOM world UI for operators/NPCs.
+            // Enemy text belongs to neither the sprite nor WGPU primitives:
+            // it is intentionally omitted here. HP is live TS UI from the
+            // replicated snapshot and is positioned every rAF above.
             const actors = [
+              ...curEngine.monsters
+                .filter((monster) => monster.hp > 0)
+                .map((monster) => screenActor(
+                  monster.id,
+                  undefined,
+                  monster.x,
+                  monster.y,
+                  monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+                  monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
+                  true,
+                )),
               ...(Object.values(curEngine.remotePlayers) as Player[])
                 .filter((player) => player.id !== curEngine.player.id)
                 .concat(curEngine.player)
@@ -854,17 +875,6 @@ export function App() {
                 },
               };
             });
-          const nativeProjectiles: NativeWorldRenderFrame['entities'] = curEngine.projectiles.map((projectile) => ({
-            id: projectile.id,
-            kind: 'projectile', faction: projectile.faction ?? '', x: projectile.x,
-            y: projectile.y + (projectile.visualOffsetY ?? 0) * Math.max(0, 1 - projectile.distanceTraveled / 260),
-            size: Math.max(1, projectile.size), color: nativeColor(projectile.color),
-            velocityX: projectile.vx, velocityY: projectile.vy, hasVelocity: true, hpRatio: 1,
-            facingLeft: projectile.vx < 0, layer: Math.round(projectile.y),
-            projectileType: projectile.type, projectileRange: projectile.range,
-            tracerLength: projectile.tracerLength, tracerWidth: projectile.tracerWidth,
-            distanceTraveled: projectile.distanceTraveled,
-          }));
           const nativeNpcs: NativeWorldRenderFrame['entities'] = Object.values(NPCS_DATABASE).map((npc) => ({
             id: npc.id,
             kind: 'npc',
@@ -881,12 +891,6 @@ export function App() {
             layer: Math.round(npc.y),
             chibi: npc.avatarChibi,
             animation: { state: 'idle', spawnBounce: 1 },
-          }));
-          const nativeParticles: NativeWorldRenderFrame['entities'] = curEngine.particles.map((particle, index) => ({
-            id: `particle:${index}:${particle.x}:${particle.y}`,
-            kind: 'particle', faction: '', x: particle.x, y: particle.y, size: Math.max(1, particle.size),
-            color: nativeColor(particle.color, particle.alpha), velocityX: particle.vx, velocityY: particle.vy,
-            hasVelocity: true, hpRatio: 1, facingLeft: particle.vx < 0, layer: Math.round(particle.y), effectType: particle.shape,
           }));
           const nativeDrops: NativeWorldRenderFrame['entities'] = curEngine.dropItems.map((drop) => ({
             id: drop.id, kind: 'pickup', faction: '', x: drop.x,
@@ -912,13 +916,6 @@ export function App() {
             hasVelocity: true, hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 0,
             facingLeft: car.facing === 'left', layer: Math.round(car.y), effectType: car.type,
           }));
-          const nativePopups: NativeWorldRenderFrame['entities'] = curEngine.damagePopups.map((popup) => ({
-            id: popup.id, kind: 'popup', faction: '', x: popup.x, y: popup.y, size: 12 * (popup.scale ?? 1),
-            color: nativeColor(popup.color, popup.maxLife > 0 ? popup.life / popup.maxLife : 1),
-            velocityX: popup.vx ?? 0, velocityY: popup.vy ?? 0, hasVelocity: Boolean(popup.vx || popup.vy),
-            hpRatio: 1, facingLeft: false, layer: Math.round(popup.y),
-            effectType: popup.type ?? (popup.isCrit ? 'crit' : popup.isHeal ? 'heal' : 'damage'),
-          }));
           sendNativeWorldRenderFrame({
             cameraX: camera.x,
             cameraY: camera.y,
@@ -929,8 +926,7 @@ export function App() {
             theme: curEngine.player.currentZone,
             entities: [
               ...nativeDecals, ...nativeDrops, ...nativeCars, ...nativeSummons, ...nativeNpcs,
-              ...nativeMonsterSprites, ...nativePlayerSprites, ...nativeProjectiles,
-              ...nativeParticles, ...nativePopups,
+              ...nativeMonsterSprites, ...nativePlayerSprites,
             ],
           });
       }
@@ -964,25 +960,28 @@ export function App() {
         webglHordeMobRenderer?.clear();
       }
       const presentDynamicOverlay = (worldInput: WorldRenderInput) => {
-        // Native owns its generated atlas bodies. Do not leave a WebGL canvas
-        // sandwiched between WGPU and the UI: it would duplicate work and
-        // produce two independently paced actor layers.
+        // Native owns its generated atlas bodies. The only TS pixels allowed
+        // above WGPU are transient combat VFX: projectiles, dash trails,
+        // particles and damage popups. No map or actor body is repainted.
         const nativeSpriteBodies = nativeWorldRenderer;
         if (nativeSpriteBodies) {
-          // `world.frame` above owns every mutable world entity. Do not
-          // rasterize or present a transparent Canvas bitmap over WGPU: that
-          // would reintroduce the 60 Hz WebView compositor cap even when the
-          // Canvas command list is otherwise empty.
-          if (!nativeCanvasOverlaySleeping) {
+          const hasCombatVfx = worldInput.projectiles.length > 0
+            || worldInput.particles.length > 0
+            || worldInput.damagePopups.length > 0;
+          pendingDynamicRender = null;
+          clearDynamicFrame();
+          if (hasCombatVfx) {
+            nativeCanvasOverlaySleeping = false;
+            canvas.style.visibility = 'visible';
+            drawCombatVfxOverlay(ctx, worldInput, camera);
+          } else if (!nativeCanvasOverlaySleeping) {
             nativeCanvasOverlaySleeping = true;
-            pendingDynamicRender = null;
-            clearDynamicFrame();
             ctx.clearRect(0, 0, viewportWidth, viewportHeight);
             canvas.style.visibility = 'hidden';
-            if (staticCanvas) staticCanvas.style.visibility = 'hidden';
-            if (webglCanvas) webglCanvas.style.visibility = 'hidden';
           }
-          return false;
+          if (staticCanvas) staticCanvas.style.visibility = 'hidden';
+          if (webglCanvas) webglCanvas.style.visibility = 'hidden';
+          return hasCombatVfx;
         }
         canvas.style.visibility = 'visible';
         if (webglCanvas) webglCanvas.style.visibility = 'visible';
@@ -1260,9 +1259,11 @@ export function App() {
                   className="absolute flex w-40 flex-col items-center gap-0.5 will-change-transform"
                   style={{ transform: `translate3d(${actor.screenX}px, ${actor.screenY}px, 0) translate(-50%, -100%)` }}
                 >
-                  <div className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]">
-                    {actor.label}
-                  </div>
+                  {actor.label && (
+                    <div className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]">
+                      {actor.label}
+                    </div>
+                  )}
                   {!actor.badge && (
                     <div className="h-1.5 w-20 overflow-hidden rounded-full border border-slate-950/95 bg-slate-950/90 shadow-sm">
                       <div

@@ -48,6 +48,7 @@ import {
 import { sound } from './audioEngine';
 import { net } from './multiplayerClient';
 import { screenToWorld } from './worldRenderer';
+import { createSharedSkillVfx, type CombatVisualProjectile } from './sharedCombatVfx';
 import {
   BUILDINGS,
   Occupancy,
@@ -1177,7 +1178,7 @@ export function useGameEngine(initialPlayer: Player) {
   projectilesRef.current = projectiles;
   // Cosmetic client-side muzzle tracers. They never enter the combat protocol
   // and are intentionally kept outside the authoritative snapshot history.
-  const primaryFireVfxRef = useRef<Array<{ projectile: Projectile; expiresAt: number }>>([]);
+  const combatVfxRef = useRef<CombatVisualProjectile[]>([]);
 
   // Authoritative combat snapshots arrive at 20 Hz, but the canvas renders
   // every animation frame. Keep a small visual delay so most frames can be
@@ -1198,15 +1199,17 @@ export function useGameEngine(initialPlayer: Player) {
         const nextProjectiles = projectileHistories
           .filter((frames) => frames.length > 0)
           .map((frames) => interpolatedProjectileState(frames, renderAt));
-        const visualProjectiles = primaryFireVfxRef.current
-          .filter((entry) => entry.expiresAt > time)
+        const retainedVisuals = combatVfxRef.current
+          .filter((entry) => entry.expiresAt > time);
+        const visualProjectiles = retainedVisuals
+          .filter((entry) => entry.startsAt <= time)
           .map((entry) => {
             entry.projectile.x += entry.projectile.vx * dt * 60;
             entry.projectile.y += entry.projectile.vy * dt * 60;
             entry.projectile.distanceTraveled += Math.hypot(entry.projectile.vx, entry.projectile.vy) * dt * 60;
             return entry.projectile;
           });
-        primaryFireVfxRef.current = primaryFireVfxRef.current.filter((entry) => entry.expiresAt > time);
+        combatVfxRef.current = retainedVisuals;
         const renderedProjectiles = [...nextProjectiles, ...visualProjectiles];
 
         monstersRef.current = nextMonsters;
@@ -2284,8 +2287,9 @@ export function useGameEngine(initialPlayer: Player) {
         size: 4.5,
         piercing: false,
       };
-      primaryFireVfxRef.current.push({
+      combatVfxRef.current.push({
         projectile: visualShot,
+        startsAt: performance.now(),
         expiresAt: performance.now() + 130,
       });
       projectilesRef.current = [...projectilesRef.current, visualShot];
@@ -2809,6 +2813,15 @@ export function useGameEngine(initialPlayer: Player) {
     // class ability, enforces cooldown and produces the authoritative effects;
     // do not replay the large local TS skill branch in this mode.
     if (net.hasSharedWorld()) {
+      const visualEffects = createSharedSkillVfx(skill.id, curPlayer, targetX, targetY, performance.now());
+      combatVfxRef.current.push(...visualEffects);
+      const immediateEffects = visualEffects
+        .filter((effect) => effect.startsAt <= performance.now())
+        .map((effect) => effect.projectile);
+      if (immediateEffects.length > 0) {
+        projectilesRef.current = [...projectilesRef.current, ...immediateEffects];
+        setProjectiles(projectilesRef.current);
+      }
       net.castSkill(skillIndex, targetX, targetY);
       return;
     }

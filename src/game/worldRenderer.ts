@@ -5211,6 +5211,35 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[
   });
 }
 
+/**
+ * Native WGPU draws the world map and every actor body. This intentionally
+ * tiny overlay retains TS ownership of only short-lived combat feedback, so
+ * weapon-specific trails and particles keep their original visual language.
+ */
+export function drawCombatVfxOverlay(
+  ctx: CanvasRenderingContext2D,
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number },
+) {
+  const zoom = Math.max(0.01, camera.zoom);
+  const viewBounds = getViewBounds(camera.x, camera.y, input.canvasWidth, input.canvasHeight, zoom);
+  const inView = (x: number, y: number) => isInViewBounds(x, y, viewBounds);
+
+  ctx.clearRect(0, 0, input.canvasWidth, input.canvasHeight);
+  ctx.save();
+  ctx.translate(input.canvasWidth / 2, input.canvasHeight / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-input.canvasWidth / 2, -input.canvasHeight / 2);
+  ctx.translate(
+    Math.round(input.canvasWidth / 2 - camera.x),
+    Math.round(input.canvasHeight / 2 - camera.y),
+  );
+  drawProjectiles(ctx, input.projectiles.filter((projectile) => inView(projectile.x, projectile.y)));
+  drawParticles(ctx, input.particles.filter((particle) => inView(particle.x, particle.y)));
+  drawDamagePopups(ctx, input.damagePopups.filter((popup) => inView(popup.x, popup.y)));
+  ctx.restore();
+}
+
 function drawParticles(ctx: CanvasRenderingContext2D, particles: VisualParticle[]) {
   particles.forEach((pt) => {
     ctx.save();
