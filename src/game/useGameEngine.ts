@@ -188,18 +188,21 @@ function recordReplicationSnapshot<T extends { id: string }>(
   history: ReplicationHistory<T>,
   entities: T[],
   receivedAt: number,
-) {
+): string[] {
+  const newEntityIds: string[] = [];
   const receivedIds = new Set(entities.map((entity) => entity.id));
   Object.keys(history).forEach((id) => {
     if (!receivedIds.has(id)) delete history[id];
   });
 
   entities.forEach((entity) => {
+    if (!history[entity.id]) newEntityIds.push(entity.id);
     const frames = history[entity.id] ?? [];
     frames.push({ receivedAt, state: entity });
     if (frames.length > 3) frames.shift();
     history[entity.id] = frames;
   });
+  return newEntityIds;
 }
 
 function interpolatedMonsterState(
@@ -885,9 +888,12 @@ export function useGameEngine(initialPlayer: Player) {
 
       const receivedAt = performance.now();
       const hasMonsterHistory = Object.keys(monsterReplicationHistoryRef.current).length > 0;
-      const hasProjectileHistory = Object.keys(projectileReplicationHistoryRef.current).length > 0;
       recordReplicationSnapshot(monsterReplicationHistoryRef.current, authoritativeMonsters, receivedAt);
-      recordReplicationSnapshot(projectileReplicationHistoryRef.current, authoritativeProjectiles, receivedAt);
+      const newProjectileIds = recordReplicationSnapshot(
+        projectileReplicationHistoryRef.current,
+        authoritativeProjectiles,
+        receivedAt,
+      );
       replicationFrameReceivedRef.current = true;
       // Render the first authoritative frame immediately. Every following
       // snapshot is consumed by the render-side interpolation loop below.
@@ -895,7 +901,13 @@ export function useGameEngine(initialPlayer: Player) {
         monstersRef.current = authoritativeMonsters;
         setMonsters(authoritativeMonsters);
       }
-      if (!hasProjectileHistory) {
+      // A short melee wave must be visible in the exact authoritative packet
+      // that introduced it. Previously this happened only with an empty
+      // projectile history, so a lingering enemy bullet made a three-wave
+      // Reaper cast wait for the interpolation pass and frequently look like a
+      // single wave. The entities still originate solely from Rust; this is
+      // only the first visual presentation of that server snapshot.
+      if (newProjectileIds.length > 0) {
         projectilesRef.current = authoritativeProjectiles;
         setProjectiles(authoritativeProjectiles);
       }
