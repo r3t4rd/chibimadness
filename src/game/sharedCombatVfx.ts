@@ -27,6 +27,13 @@ const SHARED_SKILL_BURSTS: Record<string, VisualBurst> = {
   // its presentation is an orb fan, matching the original Miku effect.
   skill_bullet_fan: { projectileType: 'magic_orb', count: 9, spreadRadians: 70 * Math.PI / 180, delayMs: 0, speed: 22, range: 1_300, colors: ['#C084FC', '#38BDF8', '#FDE047'], size: 9, piercing: true },
   skill_aerial_aimbot: { projectileType: 'bullet', count: 6, spreadRadians: 1.25, delayMs: 50, speed: 24, range: 1_600, colors: ['#FDE047'], size: 6, piercing: true },
+  skill_spinning_blade: { projectileType: 'slash_wave', count: 8, spreadRadians: Math.PI * 2, delayMs: 0, speed: 14, range: 500, colors: ['#FDE047'], size: 18, piercing: true },
+  // The axe/scythe dash is three outward half-circle cuts, not one fallback
+  // wave. Values mirror `SWORDMASTER[1]` in Rust; only their paint is TS.
+  skill_slash_scatter: { projectileType: 'slash_wave', count: 3, spreadRadians: 0.7, delayMs: 0, speed: 20, range: 320, colors: ['#A855F7'], size: 16, piercing: true },
+  skill_blade_storm: { projectileType: 'slash_wave', count: 12, spreadRadians: Math.PI * 2, delayMs: 0, speed: 18, range: 520, colors: ['#F8FAFC'], size: 18, piercing: true },
+  skill_meteor_rain: { projectileType: 'magic_orb', count: 24, spreadRadians: 1.1, delayMs: 35, speed: 16, range: 700, colors: ['#FB7185'], size: 14 },
+  skill_hellhounds: { projectileType: 'magic_orb', count: 8, spreadRadians: Math.PI * 2, delayMs: 0, speed: 30, range: 600, colors: ['#22D3EE'], size: 10, piercing: true },
 };
 
 // Visual only. Values follow the Rust `basic_attack` module, but do not
