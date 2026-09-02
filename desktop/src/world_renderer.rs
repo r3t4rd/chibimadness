@@ -190,7 +190,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeChibiRecipe {
     #[serde(default)]
@@ -286,6 +286,10 @@ pub struct NativeRenderEntity {
     pub has_shield: bool,
     #[serde(default)]
     pub effect_type: String,
+    #[serde(default)]
+    pub horde_kind: String,
+    #[serde(default)]
+    pub is_boss: bool,
     /// Stable generated-atlas frame name (for example `horde_mite`). The
     /// bridge sends state, never image bytes or Canvas commands.
     #[serde(default)]
@@ -522,6 +526,7 @@ impl NativeWorldState {
                 && entity.projectile_type.len() <= 32
                 && entity.weapon_type.len() <= 32
                 && entity.effect_type.len() <= 32
+                && entity.horde_kind.len() <= 32
                 && entity.sprite_key.len() <= 96
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
@@ -1328,14 +1333,6 @@ impl NativeWorldRenderer {
                     pass.draw(0..dynamic_vertex_count, 0..1);
                 }
             }
-            if overlay_vertex_count > 0 {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, camera_bind_group, &[]);
-                if let Some(overlay_vertex_buffer) = overlay_vertex_buffer {
-                    pass.set_vertex_buffer(0, overlay_vertex_buffer.slice(..));
-                    pass.draw(0..overlay_vertex_count, 0..1);
-                }
-            }
             if let Some(sprite_pipeline) = sprite_pipeline {
                 pass.set_pipeline(sprite_pipeline);
                 for atlas in sprite_atlases {
@@ -1351,6 +1348,14 @@ impl NativeWorldRenderer {
                     pass.set_bind_group(0, bind_group, &[]);
                     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     pass.draw(0..vertex_count, 0..1);
+                }
+            }
+            if overlay_vertex_count > 0 {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, camera_bind_group, &[]);
+                if let Some(overlay_vertex_buffer) = overlay_vertex_buffer {
+                    pass.set_vertex_buffer(0, overlay_vertex_buffer.slice(..));
+                    pass.draw(0..overlay_vertex_count, 0..1);
                 }
             }
         });
@@ -2062,6 +2067,22 @@ impl NativeWorldRenderer {
     fn rebuild_native_static_world(&mut self, world: &NativeRenderFrame) {
         self.vertices.clear();
         self.add_source_world(world);
+        // `add_source_world` predates retained rendering and emits camera-baked
+        // NDC positions. Keeping those in the cache freezes terrain under the
+        // player while dynamic actors still follow the live camera. Convert
+        // its world primitives back once and mark them for WORLD_SHADER's
+        // GPU camera branch (negative alpha is the compact vertex marker).
+        // The first quad is the viewport clear and intentionally remains in
+        // screen space.
+        for vertex in self.vertices.iter_mut().skip(6) {
+            let screen_x = (vertex.position[0] + 1.0) * 0.5 * world.viewport_width;
+            let screen_y = (1.0 - vertex.position[1]) * 0.5 * world.viewport_height;
+            vertex.position = [
+                (screen_x - world.viewport_width * 0.5) / world.zoom + world.camera_x,
+                (screen_y - world.viewport_height * 0.5) / world.zoom + world.camera_y,
+            ];
+            vertex.color[3] = -vertex.color[3].max(f32::MIN_POSITIVE);
+        }
         self.static_vertices = std::mem::take(&mut self.vertices);
         self.static_vertices_dirty = true;
     }
@@ -2075,6 +2096,7 @@ impl NativeWorldRenderer {
             let y = entity.y + entity.velocity_y * prediction_seconds;
             self.add_entity(entity, x, y, world);
         }
+        self.overlay_vertices_dirty = true;
     }
 
     fn scene_vertices(
@@ -2307,11 +2329,14 @@ impl NativeWorldRenderer {
         ] {
             self.add_source_boulder(x, y, r, world);
         }
-        for i in 0..74 {
+        // The source forest is deliberately crowded. Sparse repeated trees
+        // made the retained native terrain read as an empty prototype once
+        // Canvas stopped painting its decoration layer.
+        for i in 0..224 {
             let x = ((i * 197) % 2_450 + 65) as f32;
             let y = ((i * 349) % 3_000 + 85) as f32;
             if (x - 680.0).abs() > 540.0 || (y - 650.0).abs() > 420.0 {
-                self.add_source_tree(x, y, 0.78 + (i % 4) as f32 * 0.13, world);
+                self.add_source_tree(x, y, 0.64 + (i % 7) as f32 * 0.12, (i % 4) as u8, world);
             }
         }
     }
@@ -2495,7 +2520,13 @@ impl NativeWorldRenderer {
         );
     }
 
-    fn add_source_tree(&mut self, x: f32, y: f32, scale: f32, world: &NativeRenderFrame) {
+    fn add_source_tree(&mut self, x: f32, y: f32, scale: f32, variant: u8, world: &NativeRenderFrame) {
+        let (dark, mid, light) = match variant {
+            1 => (hex("#0C5A3E"), hex("#14834F"), hex("#22C55E")),
+            2 => (hex("#15513A"), hex("#2D7A42"), hex("#84CC16")),
+            3 => (hex("#6B3418"), hex("#D95B10"), hex("#FACC15")),
+            _ => (hex("#0B6B45"), hex("#15995A"), hex("#1DBA68")),
+        };
         self.add_world_ellipse(
             x,
             y + 20.0 * scale,
@@ -2513,12 +2544,12 @@ impl NativeWorldRenderer {
             hex("#4A270B"),
             world,
         );
-        self.add_world_circle(x, y - 28.0 * scale, 28.0 * scale, hex("#0B6B45"), 12, world);
+        self.add_world_circle(x, y - 28.0 * scale, 28.0 * scale, dark, 12, world);
         self.add_world_circle(
             x - 16.0 * scale,
             y - 12.0 * scale,
             19.0 * scale,
-            hex("#15995A"),
+            mid,
             10,
             world,
         );
@@ -2526,7 +2557,7 @@ impl NativeWorldRenderer {
             x + 17.0 * scale,
             y - 12.0 * scale,
             19.0 * scale,
-            hex("#1DBA68"),
+            light,
             10,
             world,
         );
@@ -2780,7 +2811,6 @@ impl NativeWorldRenderer {
             );
         }
         if self.add_generated_sprite(entity, x, y, world) {
-            self.add_sprite_health_bar(entity, x, y, world);
             return;
         }
         match entity.kind.as_str() {
@@ -2792,7 +2822,10 @@ impl NativeWorldRenderer {
             "decal" => self.add_decal(entity, x, y, world),
             "summon" => self.add_summon(entity, x, y, world),
             "popup" => self.add_popup(entity, x, y, world),
-            "monster" if entity.effect_type == "forest_wolf" => self.add_forest_wolf(entity, x, y, world),
+            // Actors are atlas-only in native mode. A missing explicit match
+            // resolves through `assets/native/characters.json`; never fall
+            // back to the old hand-drawn chibi/humanoid geometry.
+            "player" | "npc" | "monster" => {},
             _ => self.add_humanoid(entity, x, y, world),
         }
     }
@@ -2804,10 +2837,24 @@ impl NativeWorldRenderer {
         y: f32,
         world: &NativeRenderFrame,
     ) -> bool {
-        if entity.sprite_key.is_empty() {
+        let frame_key = if entity.sprite_key.is_empty() {
+            native_sprites::resolve_actor_frame(
+                &entity.kind,
+                &entity.id,
+                &entity.faction,
+                &entity.effect_type,
+                &entity.weapon_type,
+                &entity.horde_kind,
+                entity.is_boss,
+                entity.chibi.as_ref(),
+            )
+        } else {
+            Some(entity.sprite_key.as_str())
+        };
+        let Some(frame_key) = frame_key else {
             return false;
-        }
-        let Some(atlas_id) = native_sprites::atlas_for_frame(&entity.sprite_key) else {
+        };
+        let Some(atlas_id) = native_sprites::atlas_for_frame(frame_key) else {
             return false;
         };
         let world_to_ndc = |world_x: f32, world_y: f32| {
@@ -2828,7 +2875,7 @@ impl NativeWorldRenderer {
         else {
             return false;
         };
-        let Some(frame) = atlas.frames.get(&entity.sprite_key).copied() else {
+        let Some(frame) = atlas.frames.get(frame_key).copied() else {
             return false;
         };
         if frame.w == 0 || frame.h == 0 {
@@ -2838,7 +2885,10 @@ impl NativeWorldRenderer {
         // bounds. Map those bounds to the native entity footprint rather than
         // cropping artwork per frame; this keeps wing/weapon silhouettes and
         // avoids a per-entity texture allocation.
-        let scale = if atlas_id == "horde" { 2.05 } else { 2.55 };
+        // Atlas cells preserve source-canvas padding; the old footprint made
+        // every operator look toy-sized beside the map. Scale all actor
+        // bodies consistently without allocating a texture per entity.
+        let scale = if atlas_id == "horde" { 3.28 } else { 4.08 };
         let height = entity.size * scale;
         let width = height * frame.w as f32 / frame.h as f32;
         let center_x = x;
@@ -2887,39 +2937,6 @@ impl NativeWorldRenderer {
             },
         ]);
         true
-    }
-
-    fn add_sprite_health_bar(
-        &mut self,
-        entity: &NativeRenderEntity,
-        x: f32,
-        y: f32,
-        world: &NativeRenderFrame,
-    ) {
-        if entity.kind != "monster" {
-            return;
-        }
-        let bar_width = entity.size * 1.28;
-        self.add_world_rect(
-            x,
-            y - entity.size * 0.86,
-            bar_width,
-            entity.size * 0.11,
-            [0.008, 0.014, 0.035, 0.94],
-            world,
-        );
-        self.add_world_rect(
-            x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
-            y - entity.size * 0.86,
-            bar_width * entity.hp_ratio,
-            entity.size * 0.065,
-            if entity.faction == "police" {
-                hex("#22D3EE")
-            } else {
-                hex("#FB2C4A")
-            },
-            world,
-        );
     }
 
     fn add_humanoid(
@@ -4814,7 +4831,6 @@ impl NativeWorldRenderer {
                 self.add_world_circle(x + size * 0.34, y - size * 0.33, size * 0.07, entity.color, 8, world);
             }
         }
-        self.add_sprite_health_bar(entity, x, y, world);
     }
 
     fn add_popup(
@@ -4856,7 +4872,6 @@ impl NativeWorldRenderer {
         self.add_world_rect(x, y, size * 0.98, size * 0.58, [0.20, 0.25, 0.32, 1.0], world);
         self.add_world_circle(x + size * 0.34, y - size * 0.17, size * 0.30, [0.12, 0.18, 0.25, 1.0], 14, world);
         self.add_world_circle(x + size * 0.44, y - size * 0.22, size * 0.055, [0.94, 0.18, 0.25, 1.0], 8, world);
-        self.add_sprite_health_bar(entity, x, y, world);
     }
 
     #[allow(dead_code)]
@@ -4908,6 +4923,49 @@ impl NativeWorldRenderer {
         let bottom_right = self.world_to_ndc(x + half_width, y + half_height, world);
         let bottom_left = self.world_to_ndc(x - half_width, y + half_height, world);
         self.vertices.extend_from_slice(&[
+            Vertex {
+                position: top_left,
+                color,
+            },
+            Vertex {
+                position: bottom_left,
+                color,
+            },
+            Vertex {
+                position: bottom_right,
+                color,
+            },
+            Vertex {
+                position: top_left,
+                color,
+            },
+            Vertex {
+                position: bottom_right,
+                color,
+            },
+            Vertex {
+                position: top_right,
+                color,
+            },
+        ]);
+    }
+
+    fn add_overlay_world_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let half_width = width * 0.5;
+        let half_height = height * 0.5;
+        let top_left = self.world_to_ndc(x - half_width, y - half_height, world);
+        let top_right = self.world_to_ndc(x + half_width, y - half_height, world);
+        let bottom_right = self.world_to_ndc(x + half_width, y + half_height, world);
+        let bottom_left = self.world_to_ndc(x - half_width, y + half_height, world);
+        self.overlay_vertices.extend_from_slice(&[
             Vertex {
                 position: top_left,
                 color,
@@ -5210,6 +5268,36 @@ mod tests {
                 .animation
                 .as_ref()
                 .is_some_and(|animation| animation.is_sprinting)
+        );
+    }
+
+    #[test]
+    fn native_sprite_resolver_owns_operator_selection() {
+        let yuuka = NativeChibiRecipe {
+            front_hair_style: "straight_bangs".into(),
+            back_hair_style: "twintails".into(),
+            hair_color: "#38BDF8".into(),
+            hat_type: "cyber_cap".into(),
+            outfit_type: "gym_bloomer".into(),
+            ..NativeChibiRecipe::default()
+        };
+        assert_eq!(
+            native_sprites::resolve_actor_frame(
+                "player", "local", "", "", "pistol", "", false, Some(&yuuka),
+            ),
+            Some("character_bloomer_yuuka_pistol")
+        );
+        assert_eq!(
+            native_sprites::resolve_actor_frame(
+                "npc", "npc_hank_guide", "", "", "", "", false, None,
+            ),
+            Some("npc_npc_hank_guide")
+        );
+        assert_eq!(
+            native_sprites::resolve_actor_frame(
+                "monster", "", "punk_demon", "punk_grunt", "", "", false, None,
+            ),
+            Some("punk_punk_grunt")
         );
     }
 

@@ -1,8 +1,8 @@
 {
   "name": "characters_operators_atlas",
   "texture": "characters_operators_atlas.png",
-  "width": 1120,
-  "height": 1120,
+  "width": 1568,
+  "height": 1568,
   "frames": {
     "character_hatsune_miku_pistol": {
       "x": 16,
@@ -50,8 +50,8 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_cheytac": {
-      "x": 16,
-      "y": 240,
+      "x": 1136,
+      "y": 16,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
@@ -59,8 +59,8 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_katana": {
-      "x": 240,
-      "y": 240,
+      "x": 1360,
+      "y": 16,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
@@ -68,7 +68,7 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_sledgehammer": {
-      "x": 464,
+      "x": 16,
       "y": 240,
       "w": 192,
       "h": 192,
@@ -77,7 +77,7 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_throwing_knives": {
-      "x": 688,
+      "x": 240,
       "y": 240,
       "w": 192,
       "h": 192,
@@ -86,7 +86,7 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_scythe": {
-      "x": 912,
+      "x": 464,
       "y": 240,
       "w": 192,
       "h": 192,
@@ -95,8 +95,8 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_greatsword": {
-      "x": 16,
-      "y": 464,
+      "x": 688,
+      "y": 240,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
@@ -104,6 +104,42 @@
       "category": "character_operator"
     },
     "character_hatsune_miku_staff": {
+      "x": 912,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_wand": {
+      "x": 1136,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_grimoire": {
+      "x": 1360,
+      "y": 240,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_hatsune_miku_totem": {
+      "x": 16,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_pistol": {
       "x": 240,
       "y": 464,
       "w": 192,
@@ -112,7 +148,7 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_hatsune_miku_wand": {
+    "character_bloomer_yuuka_revolver": {
       "x": 464,
       "y": 464,
       "w": 192,
@@ -121,7 +157,7 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_hatsune_miku_grimoire": {
+    "character_bloomer_yuuka_mac10": {
       "x": 688,
       "y": 464,
       "w": 192,
@@ -130,7 +166,7 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_hatsune_miku_totem": {
+    "character_bloomer_yuuka_ak47": {
       "x": 912,
       "y": 464,
       "w": 192,
@@ -139,7 +175,25 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_millennium_student": {
+    "character_bloomer_yuuka_shotgun": {
+      "x": 1136,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_cheytac": {
+      "x": 1360,
+      "y": 464,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_katana": {
       "x": 16,
       "y": 688,
       "w": 192,
@@ -148,7 +202,7 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_trinity_scholar": {
+    "character_bloomer_yuuka_sledgehammer": {
       "x": 240,
       "y": 688,
       "w": 192,
@@ -157,7 +211,7 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_gehenna_rebel": {
+    "character_bloomer_yuuka_throwing_knives": {
       "x": 464,
       "y": 688,
       "w": 192,
@@ -166,7 +220,7 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_cyber_shinobi": {
+    "character_bloomer_yuuka_scythe": {
       "x": 688,
       "y": 688,
       "w": 192,
@@ -175,9 +229,90 @@
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "character_tactical_vanguard": {
+    "character_bloomer_yuuka_greatsword": {
       "x": 912,
       "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_staff": {
+      "x": 1136,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_wand": {
+      "x": 1360,
+      "y": 688,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_grimoire": {
+      "x": 16,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_bloomer_yuuka_totem": {
+      "x": 240,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_millennium_student": {
+      "x": 464,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_trinity_scholar": {
+      "x": 688,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_gehenna_rebel": {
+      "x": 912,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_cyber_shinobi": {
+      "x": 1136,
+      "y": 912,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_operator"
+    },
+    "character_tactical_vanguard": {
+      "x": 1360,
+      "y": 912,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
@@ -186,7 +321,7 @@
     },
     "character_idol_superstar": {
       "x": 16,
-      "y": 912,
+      "y": 1136,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
@@ -195,16 +330,61 @@
     },
     "character_modern_onmyoji": {
       "x": 240,
-      "y": 912,
+      "y": 1136,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
       "pivotY": 0.5,
       "category": "character_operator"
     },
-    "vehicle_police_cruiser": {
+    "npc_npc_hank_guide": {
       "x": 464,
-      "y": 912,
+      "y": 1136,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_npc"
+    },
+    "npc_npc_seraph_smith": {
+      "x": 688,
+      "y": 1136,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_npc"
+    },
+    "npc_npc_momoi_guide": {
+      "x": 912,
+      "y": 1136,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_npc"
+    },
+    "npc_npc_chibi_cafe": {
+      "x": 1136,
+      "y": 1136,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_npc"
+    },
+    "npc_npc_nyx_crucible": {
+      "x": 1360,
+      "y": 1136,
+      "w": 192,
+      "h": 192,
+      "pivotX": 0.5,
+      "pivotY": 0.5,
+      "category": "character_npc"
+    },
+    "vehicle_police_cruiser": {
+      "x": 16,
+      "y": 1360,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,
@@ -212,8 +392,8 @@
       "category": "vehicle"
     },
     "vehicle_cyber_muscle_car": {
-      "x": 688,
-      "y": 912,
+      "x": 240,
+      "y": 1360,
       "w": 192,
       "h": 192,
       "pivotX": 0.5,

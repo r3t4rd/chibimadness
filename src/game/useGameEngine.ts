@@ -48,6 +48,7 @@ import {
 import { sound } from './audioEngine';
 import { net } from './multiplayerClient';
 import { screenToWorld } from './worldRenderer';
+import { createSharedSkillVfx, type CombatVisualProjectile } from './sharedCombatVfx';
 import {
   BUILDINGS,
   Occupancy,
@@ -964,10 +965,10 @@ export function useGameEngine(initialPlayer: Player) {
           const shouldApplyServerTransform = serverMovedAcrossWorlds || serverRespawned || serverHordeWarped;
           const entryIFrames = serverMovedAcrossWorlds && selfInHorde ? 2.5 : 0;
           playerRef.current = shouldApplyServerTransform
-            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(current.dodgeTimer ?? 0, entryIFrames) }
+            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, interiorBuildingId: serverRespawned ? undefined : current.interiorBuildingId, interiorFloor: serverRespawned ? undefined : current.interiorFloor, dodgeTimer: Math.max(current.dodgeTimer ?? 0, entryIFrames) }
             : { ...current, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined };
           setPlayer((previous) => shouldApplyServerTransform
-            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(previous.dodgeTimer ?? 0, entryIFrames) }
+            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, interiorBuildingId: serverRespawned ? undefined : previous.interiorBuildingId, interiorFloor: serverRespawned ? undefined : previous.interiorFloor, dodgeTimer: Math.max(previous.dodgeTimer ?? 0, entryIFrames) }
             : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined });
         }
         const remote = Object.fromEntries(players
@@ -1175,14 +1176,20 @@ export function useGameEngine(initialPlayer: Player) {
 
   const projectilesRef = useRef<Projectile[]>(projectiles);
   projectilesRef.current = projectiles;
+  // Cosmetic client-side muzzle tracers. They never enter the combat protocol
+  // and are intentionally kept outside the authoritative snapshot history.
+  const combatVfxRef = useRef<CombatVisualProjectile[]>([]);
 
   // Authoritative combat snapshots arrive at 20 Hz, but the canvas renders
   // every animation frame. Keep a small visual delay so most frames can be
   // drawn between two server states instead of snapping to the latest one.
   useEffect(() => {
     let animationFrameId = 0;
+    let previousTime = performance.now();
     const renderReplicatedWorld = (time: number) => {
       if (net.hasSharedWorld() && replicationFrameReceivedRef.current) {
+        const dt = Math.min(0.05, Math.max(0, (time - previousTime) / 1000));
+        previousTime = time;
         const renderAt = time - REPLICATION_INTERPOLATION_DELAY_MS;
         const monsterHistories = Object.values(monsterReplicationHistoryRef.current) as Array<ReplicationFrame<Monster>[]>;
         const projectileHistories = Object.values(projectileReplicationHistoryRef.current) as Array<ReplicationFrame<Projectile>[]>;
@@ -1192,11 +1199,23 @@ export function useGameEngine(initialPlayer: Player) {
         const nextProjectiles = projectileHistories
           .filter((frames) => frames.length > 0)
           .map((frames) => interpolatedProjectileState(frames, renderAt));
+        const retainedVisuals = combatVfxRef.current
+          .filter((entry) => entry.expiresAt > time);
+        const visualProjectiles = retainedVisuals
+          .filter((entry) => entry.startsAt <= time)
+          .map((entry) => {
+            entry.projectile.x += entry.projectile.vx * dt * 60;
+            entry.projectile.y += entry.projectile.vy * dt * 60;
+            entry.projectile.distanceTraveled += Math.hypot(entry.projectile.vx, entry.projectile.vy) * dt * 60;
+            return entry.projectile;
+          });
+        combatVfxRef.current = retainedVisuals;
+        const renderedProjectiles = [...nextProjectiles, ...visualProjectiles];
 
         monstersRef.current = nextMonsters;
-        projectilesRef.current = nextProjectiles;
+        projectilesRef.current = renderedProjectiles;
         setMonsters(nextMonsters);
-        setProjectiles(nextProjectiles);
+        setProjectiles(renderedProjectiles);
       }
       animationFrameId = requestAnimationFrame(renderReplicatedWorld);
     };
@@ -2244,6 +2263,42 @@ export function useGameEngine(initialPlayer: Player) {
       }, 90);
     }
 
+    // The shared world consumes a primary-fire *intent* at the input boundary.
+    // Do this before the legacy local weapon branches below: otherwise a held
+    // LMB has to walk through the old TypeScript per-gun implementation before
+    // Rust ever hears about the shot.  Weapon shape, cooldown and projectile
+    // count remain server-owned in `abilities::basic_attack`.
+    if (net.hasSharedWorld()) {
+      // TS owns immediate presentation, while the server-owned projectile
+      // arrives in the next replication frame. This one short tracer removes
+      // network-latency from click feedback without becoming a damage source.
+      const visualShot: Projectile = {
+        id: `vfx_primary_${now}_${Math.random()}`,
+        ownerId: curPlayer.id,
+        type: 'bullet',
+        x: curPlayer.x + aimDirX * 24,
+        y: curPlayer.y + aimDirY * 24 + visualLaunchOffsetY,
+        vx: aimDirX * 26,
+        vy: aimDirY * 26,
+        damage: 0,
+        range: 180,
+        distanceTraveled: 0,
+        color: '#FDE047',
+        size: 4.5,
+        piercing: false,
+      };
+      combatVfxRef.current.push({
+        projectile: visualShot,
+        startsAt: performance.now(),
+        expiresAt: performance.now() + 130,
+      });
+      projectilesRef.current = [...projectilesRef.current, visualShot];
+      setProjectiles(projectilesRef.current);
+      sound.playShoot();
+      net.basicAttack(targetX, targetY);
+      return;
+    }
+
     // Attachment Stat Modifiers
     const att = curPlayer.weaponAttachments;
     const dmgMult = att?.muzzle?.statBonus?.damageMult ?? 1.0;
@@ -2309,10 +2364,6 @@ export function useGameEngine(initialPlayer: Player) {
       const launchedProjectile = visualLaunchOffsetY === 0
         ? proj
         : { ...proj, visualOffsetY: visualLaunchOffsetY };
-      if (net.hasSharedWorld()) {
-        net.fireProjectile(launchedProjectile);
-        return;
-      }
       projectilesRef.current = [...projectilesRef.current, launchedProjectile];
       setProjectiles([...projectilesRef.current]);
     };
@@ -2757,6 +2808,23 @@ export function useGameEngine(initialPlayer: Player) {
     setPlayer(skillCastPlayer);
 
     sound.playSkillCast(skill.type);
+
+    // Native/shared combat sends a tiny input intent only. Rust selects the
+    // class ability, enforces cooldown and produces the authoritative effects;
+    // do not replay the large local TS skill branch in this mode.
+    if (net.hasSharedWorld()) {
+      const visualEffects = createSharedSkillVfx(skill.id, curPlayer, targetX, targetY, performance.now());
+      combatVfxRef.current.push(...visualEffects);
+      const immediateEffects = visualEffects
+        .filter((effect) => effect.startsAt <= performance.now())
+        .map((effect) => effect.projectile);
+      if (immediateEffects.length > 0) {
+        projectilesRef.current = [...projectilesRef.current, ...immediateEffects];
+        setProjectiles(projectilesRef.current);
+      }
+      net.castSkill(skillIndex, targetX, targetY);
+      return;
+    }
 
     const pushSkillProj = (proj: Projectile) => {
       // In a shared world, projectile collision and damage are server-owned.

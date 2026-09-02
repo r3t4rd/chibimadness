@@ -5,6 +5,8 @@
 //! monster damage, drops, inventory, or progression; those need server-side
 //! simulation before they can safely become shared state.
 
+mod abilities;
+
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     env,
@@ -85,6 +87,8 @@ struct WorldState {
     chat_history: VecDeque<Value>,
     combat_world: Option<CombatWorld>,
     horde: Option<HordeRun>,
+    skill_cooldowns: HashMap<String, Instant>,
+    skill_sequence: u64,
 }
 
 struct CombatWorld {
@@ -266,6 +270,8 @@ async fn process_message(server: &Arc<Server>, session_id: u64, message: Value) 
         // The legacy client-authoritative combat/drop messages are intentionally ignored.
         Some("world_bootstrap") => world_bootstrap(server, session_id, message).await,
         Some("world_fire") => world_fire(server, session_id, message).await,
+        Some("skill_cast") => skill_cast(server, session_id, message).await,
+        Some("basic_attack") => basic_attack(server, session_id, message).await,
         Some("horde_enter") => enter_horde(server, session_id).await,
         Some("horde_extract") => extract_horde(server, session_id).await,
         Some("player_heal") => heal_player(server, session_id, message).await,
@@ -569,6 +575,140 @@ async fn world_fire(server: &Arc<Server>, session_id: u64, message: Value) {
             }
             world.projectiles.push(projectile);
         }
+        (recipients_except(&state, 0), world_snapshot(&state))
+    };
+    send_to(recipients, payload);
+}
+
+/// The wire protocol carries an input intent only. The selected ability and
+/// every spawned projectile are resolved by `abilities`, not by WebView code.
+async fn skill_cast(server: &Arc<Server>, session_id: u64, message: Value) {
+    let (recipients, payload) = {
+        let mut state = server.state.lock().await;
+        let Some(player_id) = state
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.player_id.clone())
+        else {
+            return;
+        };
+        let Some(slot) = message
+            .get("slot")
+            .and_then(Value::as_u64)
+            .filter(|slot| *slot < 3)
+            .map(|slot| slot as usize)
+        else {
+            return;
+        };
+        let Some(target_x) = message.get("targetX").and_then(Value::as_f64).filter(|value| value.is_finite()) else {
+            return;
+        };
+        let Some(target_y) = message.get("targetY").and_then(Value::as_f64).filter(|value| value.is_finite()) else {
+            return;
+        };
+        let Some(player) = state.players.get(&player_id).map(|record| record.value.clone()) else {
+            return;
+        };
+        if number(&player, "hp", 0.0) <= 0.0 || state.combat_world.is_none() {
+            return;
+        }
+        let (min_x, max_x, min_y, max_y) = if is_horde_coordinate(number(&player, "x", 0.0), number(&player, "y", 0.0)) {
+            (HORDE_MIN_X, HORDE_MAX_X, HORDE_MIN_Y, HORDE_MAX_Y)
+        } else {
+            (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
+        };
+        let target_x = target_x.clamp(min_x, max_x);
+        let target_y = target_y.clamp(min_y, max_y);
+        let class = player
+            .get("characterClass")
+            .and_then(Value::as_str)
+            .unwrap_or("gunslinger");
+        let cooldown_key = format!("{player_id}:{class}:{slot}");
+        let now = Instant::now();
+        if state
+            .skill_cooldowns
+            .get(&cooldown_key)
+            .is_some_and(|until| *until > now)
+        {
+            return;
+        }
+        let output = {
+            let mut context = abilities::CastContext {
+                owner_id: &player_id,
+                player: &player,
+                target_x,
+                target_y,
+                sequence: &mut state.skill_sequence,
+            };
+            let Some(output) = abilities::cast(class, slot, &mut context) else {
+                return;
+            };
+            output
+        };
+        state.skill_cooldowns.insert(cooldown_key, now + output.cooldown);
+        if let Some((x, y)) = output.destination {
+            if let Some(record) = state.players.get_mut(&player_id) {
+                record.value["x"] = json!(x.clamp(min_x, max_x));
+                record.value["y"] = json!(y.clamp(min_y, max_y));
+                record.value["state"] = json!("cast");
+            }
+        }
+        let Some(world) = state.combat_world.as_mut() else {
+            return;
+        };
+        let available = MAX_WORLD_PROJECTILES.saturating_sub(world.projectiles.len());
+        world.projectiles.extend(output.projectiles.into_iter().take(available));
+        (recipients_except(&state, 0), world_snapshot(&state))
+    };
+    send_to(recipients, payload);
+}
+
+async fn basic_attack(server: &Arc<Server>, session_id: u64, message: Value) {
+    let (recipients, payload) = {
+        let mut state = server.state.lock().await;
+        let Some(player_id) = state.sessions.get(&session_id).and_then(|session| session.player_id.clone()) else {
+            return;
+        };
+        let Some(target_x) = message.get("targetX").and_then(Value::as_f64).filter(|value| value.is_finite()) else {
+            return;
+        };
+        let Some(target_y) = message.get("targetY").and_then(Value::as_f64).filter(|value| value.is_finite()) else {
+            return;
+        };
+        let Some(player) = state.players.get(&player_id).map(|record| record.value.clone()) else {
+            return;
+        };
+        if number(&player, "hp", 0.0) <= 0.0 || state.combat_world.is_none() {
+            return;
+        }
+        let (min_x, max_x, min_y, max_y) = if is_horde_coordinate(number(&player, "x", 0.0), number(&player, "y", 0.0)) {
+            (HORDE_MIN_X, HORDE_MAX_X, HORDE_MIN_Y, HORDE_MAX_Y)
+        } else {
+            (WORLD_MIN_X, WORLD_MAX_X, WORLD_MIN_Y, WORLD_MAX_Y)
+        };
+        let weapon = player
+            .pointer("/equipment/weapon/gunType")
+            .and_then(Value::as_str)
+            .unwrap_or("pistol");
+        let now = Instant::now();
+        let cooldown_key = format!("basic:{player_id}");
+        if state.skill_cooldowns.get(&cooldown_key).is_some_and(|until| *until > now) {
+            return;
+        }
+        let output = {
+            let mut context = abilities::CastContext {
+                owner_id: &player_id,
+                player: &player,
+                target_x: target_x.clamp(min_x, max_x),
+                target_y: target_y.clamp(min_y, max_y),
+                sequence: &mut state.skill_sequence,
+            };
+            abilities::basic_attack(weapon, &mut context)
+        };
+        state.skill_cooldowns.insert(cooldown_key, now + output.cooldown);
+        let Some(world) = state.combat_world.as_mut() else { return; };
+        let available = MAX_WORLD_PROJECTILES.saturating_sub(world.projectiles.len());
+        world.projectiles.extend(output.projectiles.into_iter().take(available));
         (recipients_except(&state, 0), world_snapshot(&state))
     };
     send_to(recipients, payload);

@@ -20,9 +20,30 @@ import {
   drawHordeMobAtlasSprite,
   getHordeMobAtlasSprites,
 } from '../src/game/worldRenderer';
+import { NPCS_DATABASE } from '../src/game/constants';
 import { ChibiConfig, Player, Monster, GunType } from '../src/types/game';
 
 const OUTPUT_DIR = path.resolve(process.cwd(), 'assets/sprites');
+const CHARACTER_CATALOG_PATH = path.resolve(process.cwd(), 'assets/native/characters.json');
+
+type CharacterCatalogEntry = {
+  id: string;
+  name: string;
+  allWeapons?: boolean;
+  weapon?: GunType;
+  chibi: ChibiConfig;
+};
+
+type NativeCharacterCatalog = {
+  weapons: GunType[];
+  characters: CharacterCatalogEntry[];
+};
+
+// Shared source of truth with the native Rust frame resolver. Canvas is used
+// only here to bake PNGs; this catalog is never bundled into the WebView.
+const CHARACTER_CATALOG = JSON.parse(
+  fs.readFileSync(CHARACTER_CATALOG_PATH, 'utf8'),
+) as NativeCharacterCatalog;
 
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -549,12 +570,11 @@ function generateCharactersAtlas() {
     outfitType: 'idol_stage',
     ribbonColor: '#06B6D4',
   };
-  const mikuWeapons: GunType[] = [
-    'pistol', 'revolver', 'mac10', 'ak47', 'shotgun', 'cheytac', 'katana',
-    'sledgehammer', 'throwing_knives', 'scythe', 'greatsword', 'staff',
-    'wand', 'grimoire', 'totem',
-  ];
-  const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
+  const mikuWeapons: GunType[] = [...CHARACTER_CATALOG.weapons];
+  // Kept temporarily below only as visual documentation while the remaining
+  // creator presets are reviewed. Atlas output uses `operatorPresets` from
+  // the JSON catalog defined after this list.
+  const legacyOperatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
     // Full frames come from the exact creator recipe and weapon source call.
     // There is no native vector approximation or runtime Canvas composition.
     ...mikuWeapons.map((weapon) => ({
@@ -563,6 +583,14 @@ function generateCharactersAtlas() {
       chibi: mikuChibi,
       weapon,
     })),
+    ...CHARACTER_CATALOG.characters.filter((recipe) => recipe.id !== 'hatsune_miku' && recipe.allWeapons).flatMap((recipe) => (
+      CHARACTER_CATALOG.weapons.map((weapon) => ({
+        id: `${recipe.id}_${weapon}`,
+        name: recipe.name,
+        chibi: recipe.chibi,
+        weapon,
+      }))
+    )),
     {
       id: 'millennium_student',
       name: 'Millennium Student',
@@ -711,6 +739,19 @@ function generateCharactersAtlas() {
     },
   ];
 
+  const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] =
+    CHARACTER_CATALOG.characters.flatMap((character) => {
+      const weapons = character.allWeapons
+        ? CHARACTER_CATALOG.weapons
+        : character.weapon ? [character.weapon] : [];
+      return weapons.map((weapon) => ({
+        id: character.allWeapons ? `${character.id}_${weapon}` : character.id,
+        name: character.name,
+        chibi: character.chibi,
+        weapon,
+      }));
+    });
+
   const items = operatorPresets.map((op) => ({
     id: `character_${op.id}`,
     category: 'character_operator',
@@ -755,10 +796,41 @@ function generateCharactersAtlas() {
       ctx.save();
       ctx.translate(size / 2, size / 2 + 25);
       ctx.scale(1.15, 1.15);
-      drawChibiCharacter(ctx, mockPlayer, 0, false, { bodyOnly: false });
+      // Labels/health are volatile WGPU overlays. Baking them into a body
+      // frame duplicates nameplates and makes them stale when state changes.
+      drawChibiCharacter(ctx, mockPlayer, 0, false, { bodyOnly: true });
       ctx.restore();
     },
   }));
+
+  // This exactly mirrors drawNPCs(): static source avatar, no weapon, with
+  // the interaction/name labels emitted by native as dynamic overlays.
+  for (const npc of Object.values(NPCS_DATABASE)) {
+    items.push({
+      id: `npc_${npc.id}`,
+      category: 'character_npc',
+      draw: (ctx: CanvasRenderingContext2D, size: number) => {
+        const mockPlayer: Player = {
+          id: npc.id, name: npc.name, x: 0, y: 0, vx: 0, vy: 0,
+          facing: 'right', state: 'idle', characterClass: 'gunslinger',
+          stats: makeDefaultPlayerStats(), stamina: 100, maxStamina: 100,
+          isSprinting: false, jumpZ: 0, jumpVz: 0, isJumping: false,
+          bhopStreak: 0, bhopTimer: 0, bhopSpeedMult: 1, gold: 0,
+          inventory: [],
+          equipment: { weapon: null, headwear: null, outfit: null, vehicle: null, accessory: null },
+          skills: [], activeVehicleId: null, isRiding: false,
+          spawnBounce: 1, attackTimer: 0, dodgeTimer: 0, combo: 0,
+          lastAttackTime: 0, activeQuests: {}, completedQuestIds: [],
+          currentZone: 'forest_camp', activeBuffs: [], chibi: npc.avatarChibi,
+        };
+        ctx.save();
+        ctx.translate(size / 2, size / 2 + 25);
+        ctx.scale(1.15, 1.15);
+        drawChibiCharacter(ctx, mockPlayer, 0, true, { bodyOnly: true });
+        ctx.restore();
+      },
+    });
+  }
 
   // Vehicles
   items.push({

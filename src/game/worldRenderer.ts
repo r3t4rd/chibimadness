@@ -612,8 +612,7 @@ export function renderWorld(
       const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
 
       const useWebglPlayerBody = skipWebglPlayerBodies && getWebglPlayerAtlasKey(p) !== null;
-      const useNativeSpriteBody = skipNativeSpriteBodies && getNativePlayerSpriteFrame(p) !== null;
-      if (useWebglPlayerBody || useNativeSpriteBody) continue;
+      if (useWebglPlayerBody) continue;
       if (isOmni) {
         ctx.save();
         ctx.globalAlpha = 0.25;
@@ -4508,79 +4507,6 @@ export function getWebglMonsterAtlasKey(monster: Monster): string | null {
   return `humanoid:${monster.type}:${monster.weaponType ?? 'pistol'}:${monster.isBoss ? 1 : 0}:${monster.faction ?? 'none'}`;
 }
 
-const NATIVE_FACTION_SPRITES = new Set([
-  'police_cop_officer', 'police_cop_swat', 'police_cop_enforcer', 'police_cop_marksman',
-  'punk_punk_grunt', 'punk_punk_anarchist', 'punk_punk_molotov',
-  'bandit_bandit_grunt', 'bandit_bandit_scout', 'bandit_bandit_gunner',
-  'bandit_bandit_shotgunner', 'bandit_bandit_sniper', 'bandit_bandit_brawler',
-  'cadet_cadet_bat', 'cadet_cadet_gunner', 'cadet_cadet_mage', 'cadet_human_target',
-]);
-
-const NATIVE_BOSS_SPRITES: Record<string, string> = {
-  boss_welder: 'boss_boss_welder',
-  boss_outlaw_viktor: 'boss_boss_outlaw_viktor',
-  bandit_boss: 'boss_boss_bandit_warlord',
-  cop_juggernaut: 'boss_boss_police_juggernaut',
-  punk_juggernaut: 'boss_boss_punk_juggernaut',
-};
-
-/**
- * Native actor sprites deliberately stay selected through combat state.
- *
- * The atlas cells are generated from the source Canvas routines, so a
- * cooldown, a charged shot, or a `humanChibi` descriptor is not a different
- * body asset. Treating those flags as a Canvas fallback made every crowded
- * firefight re-rasterize the complete WebView layer and capped the picture at
- * the browser rAF cadence. Transient muzzle flashes, telegraphs and damage
- * effects remain an overlay; the actor body itself is always a sprite.
- */
-export function getNativeMonsterSpriteFrame(monster: Monster): string | null {
-  if (monster.hp <= 0) return null;
-  const horde = getWebglHordeMobAtlasKey(monster);
-  if (horde) {
-    const [kind, boss] = horde.split(':');
-    return `horde_${kind}${boss === '1' ? '_boss' : ''}`;
-  }
-  const bossFrame = NATIVE_BOSS_SPRITES[monster.type];
-  if (bossFrame) return bossFrame;
-  if (
-    monster.hordeKind
-    || monster.type === 'forest_wolf'
-  ) return null;
-  const faction = monster.faction === 'punk_demon' ? 'punk' : monster.faction;
-  const frame = `${faction}_${monster.type}`;
-  return NATIVE_FACTION_SPRITES.has(frame) ? frame : null;
-}
-
-/** Full-frame Miku is generated from the exact character-creator recipe. */
-export function getNativePlayerSpriteFrame(player: Player): string | null {
-  const chibi = player.chibi;
-  if (
-    player.state === 'dead'
-    || player.isRiding
-    || player.activeVehicleId
-    || player.emote
-    || (player.chatTimer ?? 0) > 0
-    || player.isReloading
-    || (player.dodgeTimer ?? 0) > 0
-    || (player.jumpZ ?? 0) > 0
-    || (player.omnislashStrikesLeft ?? 0) > 0
-    || (player.dashSlashTimer ?? 0) > 0
-    || (player.bhopStreak ?? 0) >= 2
-    || (player.coolStreak ?? 0) >= 2
-    || player.attackTimer > 0
-    || !chibi
-  ) return null;
-  const isMiku = chibi.frontHairStyle === 'miku_fringe'
-    && chibi.backHairStyle === 'miku_twintails'
-    && chibi.hairColor.toUpperCase() === '#06B6D4'
-    && chibi.hatType === 'headphones'
-    && chibi.outfitType === 'idol_stage';
-  if (!isMiku) return null;
-  const weapon = player.equipment.weapon?.gunType ?? 'pistol';
-  return `character_hatsune_miku_${weapon}`;
-}
-
 /**
  * Runtime visual key for procedural players. Position and combat state are
  * intentionally excluded: moving a player must never allocate a new raster.
@@ -4934,7 +4860,14 @@ function drawMonsterAiTelegraph(
   const duration = monster.telegraphDuration ?? 0;
   const aimX = monster.telegraphAimX;
   const aimY = monster.telegraphAimY;
-  if (remaining <= 0 || duration <= 0 || !Number.isFinite(aimX) || !Number.isFinite(aimY)) return;
+  if (
+    !Number.isFinite(remaining)
+    || !Number.isFinite(duration)
+    || remaining <= 0
+    || duration <= 0
+    || !Number.isFinite(aimX)
+    || !Number.isFinite(aimY)
+  ) return;
 
   const dx = (aimX as number) - monster.x;
   const dy = (aimY as number) - monster.y;
@@ -4987,17 +4920,15 @@ function drawMonsters(
   monsters: Monster[],
   time: number,
   skipWebglHordeMobBodies = false,
-  skipNativeSpriteBodies = false,
+  _skipNativeSpriteBodies = false,
 ) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
     if (m.hp <= 0 && (m.deathProgress === undefined || m.deathProgress >= 1.0)) return;
     // Stable bodies and their HP bars are emitted by the WebGL actor pass.
     // Transient states deliberately fall through to Canvas for visual parity.
-    const bodyRenderedOutsideCanvas = (
-      (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null)
-      || (skipNativeSpriteBodies && getNativeMonsterSpriteFrame(m) !== null)
-    );
+    const bodyRenderedOutsideCanvas = skipWebglHordeMobBodies
+      && getWebglMonsterAtlasKey(m) !== null;
 
     ctx.save();
     ctx.translate(m.x, m.y);
@@ -5349,6 +5280,41 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[
     }
     ctx.restore();
   });
+}
+
+/**
+ * Native WGPU draws the world map and every actor body. This intentionally
+ * tiny overlay retains TS ownership of only short-lived combat feedback, so
+ * weapon-specific trails and particles keep their original visual language.
+ */
+export function drawCombatVfxOverlay(
+  ctx: CanvasRenderingContext2D,
+  input: WorldRenderInput,
+  camera: { x: number; y: number; zoom: number },
+) {
+  const zoom = Math.max(0.01, camera.zoom);
+  const viewBounds = getViewBounds(camera.x, camera.y, input.canvasWidth, input.canvasHeight, zoom);
+  const inView = (x: number, y: number) => isInViewBounds(x, y, viewBounds);
+
+  ctx.clearRect(0, 0, input.canvasWidth, input.canvasHeight);
+  ctx.save();
+  ctx.translate(input.canvasWidth / 2, input.canvasHeight / 2);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-input.canvasWidth / 2, -input.canvasHeight / 2);
+  ctx.translate(
+    Math.round(input.canvasWidth / 2 - camera.x),
+    Math.round(input.canvasHeight / 2 - camera.y),
+  );
+  input.monsters.filter((monster) => inView(monster.x, monster.y)).forEach((monster) => {
+    ctx.save();
+    ctx.translate(monster.x, monster.y);
+    drawMonsterAiTelegraph(ctx, monster, input.time);
+    ctx.restore();
+  });
+  drawProjectiles(ctx, input.projectiles.filter((projectile) => inView(projectile.x, projectile.y)));
+  drawParticles(ctx, input.particles.filter((particle) => inView(particle.x, particle.y)));
+  drawDamagePopups(ctx, input.damagePopups.filter((popup) => inView(popup.x, popup.y)));
+  ctx.restore();
 }
 
 function drawParticles(ctx: CanvasRenderingContext2D, particles: VisualParticle[]) {

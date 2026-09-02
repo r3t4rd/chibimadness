@@ -4,9 +4,8 @@ import { Player, Item, ChatMessage } from './types/game';
 import { useGameEngine } from './game/useGameEngine';
 import {
   advanceCanvasCamera,
+  drawCombatVfxOverlay,
   drawWorldInput,
-  getNativeMonsterSpriteFrame,
-  getNativePlayerSpriteFrame,
   screenToWorld,
   type WorldRenderInput,
 } from './game/worldRenderer';
@@ -33,7 +32,7 @@ import { SettingsModal } from './components/SettingsModal';
 
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
-import { CLASS_DEFAULTS } from './game/constants';
+import { CLASS_DEFAULTS, NPCS_DATABASE } from './game/constants';
 import {
   getContentBuildInfo,
   isNativeWorldRendererEnabled,
@@ -46,6 +45,21 @@ import {
 } from './game/multiplayerClient';
 
 type NativeColor = [number, number, number, number];
+const MONSTER_AI_TIER_COLORS = ['#72E6A5', '#54C8FF', '#F5BC61', '#F07A8F', '#D08BFF'];
+
+/** DOM-only UI placed over the native WGPU world. It intentionally contains
+ * no Canvas commands: entity bodies remain native sprites, while TS owns the
+ * readable gameplay UI (names, interaction prompts and health). */
+type NativeUiActor = {
+  id: string;
+  label?: string;
+  labelColor?: string;
+  badge?: string;
+  screenX: number;
+  screenY: number;
+  hpRatio: number;
+  hostile: boolean;
+};
 
 /** CSS world colours are converted once at the bridge boundary. Native never
  * receives Canvas paint commands or browser-only colour objects. */
@@ -140,6 +154,8 @@ export function App() {
   const dynamicCanvasLayerEnabledRef = useRef(dynamicCanvasLayerEnabled);
   const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
   const forceStaticCanvasRef = useRef(forceStaticCanvas);
+  const [nativeUiActors, setNativeUiActors] = useState<NativeUiActor[]>([]);
+  const nativeUiActorElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -275,6 +291,7 @@ export function App() {
   useEffect(() => {
     let animationId: number;
     let lastRenderedAt: number | null = null;
+    let lastNativeUiUpdateAt = 0;
     const canvas = canvasRef.current;
     const staticCanvas = staticCanvasRef.current;
     const webglCanvas = webglCanvasRef.current;
@@ -717,10 +734,104 @@ export function App() {
         curEngine.introCinematic,
       );
       if (nativeWorldRendererRequested) {
+          // React reconciles labels/health at a modest cadence, but their
+          // transforms must follow the exact camera used for this native
+          // frame. Mutating only `transform` avoids layout/reconciliation
+          // work and removes the visible 12 Hz trailing motion.
+          const positionNativeUiActor = (id: string, x: number, y: number, size: number) => {
+            const element = nativeUiActorElementsRef.current.get(id);
+            if (!element) return;
+            const screenX = (x - camera.x) * camera.zoom + viewportWidth / 2;
+            const screenY = (y - camera.y) * camera.zoom + viewportHeight / 2 - size * camera.zoom * 2.08;
+            element.style.transform = `translate3d(${screenX}px, ${screenY}px, 0) translate(-50%, -100%)`;
+          };
+          (Object.values(curEngine.remotePlayers) as Player[])
+            .filter((player) => player.id !== curEngine.player.id)
+            .concat(curEngine.player)
+            .forEach((player) => positionNativeUiActor(player.id, player.x, player.y, 48));
+          curEngine.monsters
+            .filter((monster) => monster.hp > 0)
+            .forEach((monster) => positionNativeUiActor(
+              monster.id,
+              monster.x,
+              monster.y,
+              monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+            ));
+          Object.values(NPCS_DATABASE).forEach((npc) => positionNativeUiActor(npc.id, npc.x, npc.y, 48));
+          // Nameplates and health bars are WebView/DOM UI, not Rust geometry.
+          // Update state at 20 Hz while position stays rAF-bound below: health
+          // must react to each authoritative damage snapshot without turning
+          // labels into an independently paced world renderer.
+          // React frame per native presentation.
+          if (time - lastNativeUiUpdateAt >= 1000 / 20) {
+            lastNativeUiUpdateAt = time;
+            const screenActor = (
+              id: string,
+              label: string | undefined,
+              x: number,
+              y: number,
+              size: number,
+              hpRatio: number,
+              hostile: boolean,
+              badge?: string,
+              labelColor?: string,
+            ): NativeUiActor | null => {
+              const screenX = (x - camera.x) * camera.zoom + viewportWidth / 2;
+              const screenY = (y - camera.y) * camera.zoom + viewportHeight / 2 - size * camera.zoom * 2.08;
+              if (screenX < -180 || screenX > viewportWidth + 180 || screenY < -90 || screenY > viewportHeight + 90) return null;
+              return { id, label, labelColor, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
+            };
+            // Enemy AI levels and HP stay live TS UI from the replicated
+            // snapshot and are positioned every rAF above.
+            const actors = [
+              ...curEngine.monsters
+                .filter((monster) => monster.hp > 0)
+                .map((monster) => {
+                  const aiLevel = Number.isFinite(monster.aiLevel)
+                    ? Math.max(1, Math.min(40, Math.round(monster.aiLevel ?? 20)))
+                    : null;
+                  return screenActor(
+                    monster.id,
+                    aiLevel === null ? undefined : `AI ${aiLevel}`,
+                    monster.x,
+                    monster.y,
+                    monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+                    monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
+                    true,
+                    undefined,
+                    aiLevel === null
+                      ? undefined
+                      : MONSTER_AI_TIER_COLORS[Math.min(4, Math.floor((aiLevel - 1) / 8))],
+                  );
+                }),
+              ...(Object.values(curEngine.remotePlayers) as Player[])
+                .filter((player) => player.id !== curEngine.player.id)
+                .concat(curEngine.player)
+                .map((player) => screenActor(
+                  player.id,
+                  `Lv.${player.stats.level} ${player.name}`,
+                  player.x,
+                  player.y,
+                  48,
+                  player.stats.maxHp > 0 ? player.stats.hp / player.stats.maxHp : 0,
+                  false,
+                )),
+              ...Object.values(NPCS_DATABASE).map((npc) => screenActor(
+                npc.id,
+                `Lv.1 ${npc.name}`,
+                npc.x,
+                npc.y,
+                48,
+                1,
+                false,
+                '[E] TALK',
+              )),
+            ].filter((actor): actor is NativeUiActor => actor !== null);
+            setNativeUiActors(actors);
+          }
           const nativeMonsterSprites: NativeWorldRenderFrame['entities'] = curEngine.monsters
             .filter((monster) => monster.hp > 0)
             .map((monster) => {
-            const spriteKey = getNativeMonsterSpriteFrame(monster);
             return {
               id: monster.id,
               kind: 'monster',
@@ -738,14 +849,17 @@ export function App() {
               weaponType: monster.weaponType,
               hasShield: monster.hasShield,
               effectType: monster.type,
+              hordeKind: monster.hordeKind,
+              isBoss: monster.isBoss,
               chibi: monster.humanChibi,
-              spriteKey: spriteKey ?? undefined,
             };
           });
+          // The server can retain a stale echo under the local id. That echo
+          // must never replace client prediction in the native world frame.
           const nativePlayerSprites: NativeWorldRenderFrame['entities'] = (Object.values(curEngine.remotePlayers) as Player[])
-            .concat(curEngine.remotePlayers[curEngine.player.id] ? [] : [curEngine.player])
+            .filter((player) => player.id !== curEngine.player.id)
+            .concat(curEngine.player)
             .map((player) => {
-              const spriteKey = getNativePlayerSpriteFrame(player);
               return {
                 id: player.id,
                 kind: 'player',
@@ -770,25 +884,24 @@ export function App() {
                   attackTimer: player.attackTimer,
                   dodgeTimer: player.dodgeTimer,
                 },
-                spriteKey: spriteKey ?? undefined,
               };
             });
-          const nativeProjectiles: NativeWorldRenderFrame['entities'] = curEngine.projectiles.map((projectile) => ({
-            id: projectile.id,
-            kind: 'projectile', faction: projectile.faction ?? '', x: projectile.x,
-            y: projectile.y + (projectile.visualOffsetY ?? 0) * Math.max(0, 1 - projectile.distanceTraveled / 260),
-            size: Math.max(1, projectile.size), color: nativeColor(projectile.color),
-            velocityX: projectile.vx, velocityY: projectile.vy, hasVelocity: true, hpRatio: 1,
-            facingLeft: projectile.vx < 0, layer: Math.round(projectile.y),
-            projectileType: projectile.type, projectileRange: projectile.range,
-            tracerLength: projectile.tracerLength, tracerWidth: projectile.tracerWidth,
-            distanceTraveled: projectile.distanceTraveled,
-          }));
-          const nativeParticles: NativeWorldRenderFrame['entities'] = curEngine.particles.map((particle, index) => ({
-            id: `particle:${index}:${particle.x}:${particle.y}`,
-            kind: 'particle', faction: '', x: particle.x, y: particle.y, size: Math.max(1, particle.size),
-            color: nativeColor(particle.color, particle.alpha), velocityX: particle.vx, velocityY: particle.vy,
-            hasVelocity: true, hpRatio: 1, facingLeft: particle.vx < 0, layer: Math.round(particle.y), effectType: particle.shape,
+          const nativeNpcs: NativeWorldRenderFrame['entities'] = Object.values(NPCS_DATABASE).map((npc) => ({
+            id: npc.id,
+            kind: 'npc',
+            faction: '',
+            x: npc.x,
+            y: npc.y,
+            size: 48,
+            color: [1, 1, 1, 1] as NativeColor,
+            velocityX: 0,
+            velocityY: 0,
+            hasVelocity: false,
+            hpRatio: 1,
+            facingLeft: false,
+            layer: Math.round(npc.y),
+            chibi: npc.avatarChibi,
+            animation: { state: 'idle', spawnBounce: 1 },
           }));
           const nativeDrops: NativeWorldRenderFrame['entities'] = curEngine.dropItems.map((drop) => ({
             id: drop.id, kind: 'pickup', faction: '', x: drop.x,
@@ -814,13 +927,6 @@ export function App() {
             hasVelocity: true, hpRatio: car.maxHp > 0 ? car.hp / car.maxHp : 0,
             facingLeft: car.facing === 'left', layer: Math.round(car.y), effectType: car.type,
           }));
-          const nativePopups: NativeWorldRenderFrame['entities'] = curEngine.damagePopups.map((popup) => ({
-            id: popup.id, kind: 'popup', faction: '', x: popup.x, y: popup.y, size: 12 * (popup.scale ?? 1),
-            color: nativeColor(popup.color, popup.maxLife > 0 ? popup.life / popup.maxLife : 1),
-            velocityX: popup.vx ?? 0, velocityY: popup.vy ?? 0, hasVelocity: Boolean(popup.vx || popup.vy),
-            hpRatio: 1, facingLeft: false, layer: Math.round(popup.y),
-            effectType: popup.type ?? (popup.isCrit ? 'crit' : popup.isHeal ? 'heal' : 'damage'),
-          }));
           sendNativeWorldRenderFrame({
             cameraX: camera.x,
             cameraY: camera.y,
@@ -830,9 +936,8 @@ export function App() {
             timeSeconds: timeInSeconds,
             theme: curEngine.player.currentZone,
             entities: [
-              ...nativeDecals, ...nativeDrops, ...nativeCars, ...nativeSummons,
-              ...nativeMonsterSprites, ...nativePlayerSprites, ...nativeProjectiles,
-              ...nativeParticles, ...nativePopups,
+              ...nativeDecals, ...nativeDrops, ...nativeCars, ...nativeSummons, ...nativeNpcs,
+              ...nativeMonsterSprites, ...nativePlayerSprites,
             ],
           });
       }
@@ -866,56 +971,41 @@ export function App() {
         webglHordeMobRenderer?.clear();
       }
       const presentDynamicOverlay = (worldInput: WorldRenderInput) => {
-        // Native owns its generated atlas bodies. Do not leave a WebGL canvas
-        // sandwiched between WGPU and the UI: it would duplicate work and
-        // produce two independently paced actor layers.
+        // Native owns its generated atlas bodies. The only TS pixels allowed
+        // above WGPU are transient combat VFX: projectiles, dash trails,
+        // particles and damage popups. No map or actor body is repainted.
         const nativeSpriteBodies = nativeWorldRenderer;
         if (nativeSpriteBodies) {
-          // `world.frame` above owns every mutable world entity. Do not
-          // rasterize or present a transparent Canvas bitmap over WGPU: that
-          // would reintroduce the 60 Hz WebView compositor cap even when the
-          // Canvas command list is otherwise empty.
-          if (!nativeCanvasOverlaySleeping) {
+          const hasCombatVfx = worldInput.projectiles.length > 0
+            || worldInput.particles.length > 0
+            || worldInput.damagePopups.length > 0
+            || worldInput.monsters.some((monster) => (
+              Number.isFinite(monster.telegraphRemaining)
+              && Number.isFinite(monster.telegraphDuration)
+              && (monster.telegraphRemaining ?? 0) > 0
+              && (monster.telegraphDuration ?? 0) > 0
+              && Number.isFinite(monster.telegraphAimX)
+              && Number.isFinite(monster.telegraphAimY)
+            ));
+          pendingDynamicRender = null;
+          clearDynamicFrame();
+          if (hasCombatVfx) {
+            nativeCanvasOverlaySleeping = false;
+            canvas.style.visibility = 'visible';
+            drawCombatVfxOverlay(ctx, worldInput, camera);
+          } else if (!nativeCanvasOverlaySleeping) {
             nativeCanvasOverlaySleeping = true;
-            pendingDynamicRender = null;
-            clearDynamicFrame();
             ctx.clearRect(0, 0, viewportWidth, viewportHeight);
             canvas.style.visibility = 'hidden';
-            if (staticCanvas) staticCanvas.style.visibility = 'hidden';
-            if (webglCanvas) webglCanvas.style.visibility = 'hidden';
           }
-          return false;
+          if (staticCanvas) staticCanvas.style.visibility = 'hidden';
+          if (webglCanvas) webglCanvas.style.visibility = 'hidden';
+          return hasCombatVfx;
         }
         canvas.style.visibility = 'visible';
         if (webglCanvas) webglCanvas.style.visibility = 'visible';
-        const webglBodiesActive = nativeSpriteBodies
-          ? false
-          : renderWebglHordeMobBodies(worldInput, camera);
+        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
         if (!dynamicCanvasLayerEnabledRef.current) return webglBodiesActive;
-        const allNativeActors = nativeSpriteBodies
-          // A dying enemy still has a Canvas ragdoll / death effect, so do
-          // not sleep the overlay merely because its state is already dead.
-          && worldInput.monsters.every((monster) => getNativeMonsterSpriteFrame(monster) !== null)
-          && [...Object.values(worldInput.players), worldInput.localPlayer]
-            .filter((player): player is Player => Boolean(player))
-            .every((player) => getNativePlayerSpriteFrame(player) !== null);
-        const noCanvasEffects = worldInput.dropItems.length === 0
-          && worldInput.projectiles.length === 0
-          && worldInput.particles.length === 0
-          && worldInput.damagePopups.length === 0
-          && worldInput.groundDecals.length === 0
-          && worldInput.cars.length === 0
-          && worldInput.summons.length === 0
-          && (!worldInput.introCinematic || worldInput.introCinematic.phase === 'none' || worldInput.introCinematic.phase === 'complete');
-        if (allNativeActors && noCanvasEffects) {
-          if (!nativeCanvasOverlaySleeping) {
-            nativeCanvasOverlaySleeping = true;
-            pendingDynamicRender = null;
-            clearDynamicFrame();
-            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-          }
-          return webglBodiesActive;
-        }
         nativeCanvasOverlaySleeping = false;
         const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
         const workerInput = rasterScale === 1
@@ -1164,6 +1254,56 @@ export function App() {
             className="absolute inset-0 block w-full h-full cursor-crosshair bg-transparent"
           />
 
+          {/* The Canvas is intentionally hidden while WGPU owns the world, so
+              it cannot be the input target. This transparent DOM surface has
+              no paint commands and keeps LMB/RMB gameplay input alive. */}
+          {nativeWorldRenderer && (
+            <div
+              onContextMenu={(e) => e.preventDefault()}
+              onMouseDown={handleWorldPointerDown}
+              onMouseUp={handleWorldPointerUp}
+              className="absolute inset-0 z-20 cursor-crosshair bg-transparent"
+            />
+          )}
+
+          {nativeWorldRenderer && (
+            <div className="fixed inset-0 z-30 pointer-events-none font-mono select-none" aria-hidden="true">
+              {nativeUiActors.map((actor) => (
+                <div
+                  key={actor.id}
+                  ref={(element) => {
+                    if (element) nativeUiActorElementsRef.current.set(actor.id, element);
+                    else nativeUiActorElementsRef.current.delete(actor.id);
+                  }}
+                  className="absolute flex w-40 flex-col items-center gap-0.5 will-change-transform"
+                  style={{ transform: `translate3d(${actor.screenX}px, ${actor.screenY}px, 0) translate(-50%, -100%)` }}
+                >
+                  {actor.label && (
+                    <div
+                      className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]"
+                      style={actor.labelColor ? { color: actor.labelColor } : undefined}
+                    >
+                      {actor.label}
+                    </div>
+                  )}
+                  {!actor.badge && (
+                    <div className="h-1.5 w-20 overflow-hidden rounded-full border border-slate-950/95 bg-slate-950/90 shadow-sm">
+                      <div
+                        className={actor.hostile ? 'h-full bg-rose-500' : 'h-full bg-cyan-400'}
+                        style={{ width: `${Math.round(actor.hpRatio * 100)}%` }}
+                      />
+                    </div>
+                  )}
+                  {actor.badge && (
+                    <div className="rounded border border-amber-400 bg-amber-500 px-1.5 py-px text-[9px] font-bold leading-none text-slate-950">
+                      {actor.badge}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* 3. Floating In-Game Toast Notifications */}
           <AnimatePresence>
             {engine.toastNotification && (
@@ -1199,6 +1339,16 @@ export function App() {
                 background: `radial-gradient(circle at 50% 45%, ${engine.hordeRun?.bossRift?.tint ?? '#22D3EE'}55, #000000ee 70%)`,
               }}
             />
+          )}
+
+          {engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete' && (
+            <div className="fixed inset-x-0 top-0 z-[85] pointer-events-none font-mono select-none">
+              <div className="h-px bg-cyan-400/80 shadow-[0_0_12px_rgba(34,211,238,0.9)]" />
+              <div className="flex items-center justify-between px-6 py-3 text-[10px] font-bold tracking-[0.16em] text-cyan-300/90">
+                <span>⚡ ORBITAL RE-ENTRY // PHASE: {engine.introCinematic.phase.toUpperCase()}</span>
+                <span>OPERATOR: {engine.player.name.toUpperCase()} // ARCHETYPE/{engine.player.characterClass.toUpperCase()}</span>
+              </div>
+            </div>
           )}
 
           {/* Hide HUD and UI overlays during Cinematic Sequence */}

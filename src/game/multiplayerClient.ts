@@ -36,11 +36,18 @@ export type NativeWorldRenderFrame = {
     weaponType?: string;
     hasShield?: boolean;
     effectType?: string;
+    /** Simulation identity consumed by Rust when resolving a generated body. */
+    hordeKind?: string;
+    isBoss?: boolean;
+    /** Legacy override for older content bundles; current native frames omit it. */
     spriteKey?: string;
     projectileRange?: number;
     tracerLength?: number;
     tracerWidth?: number;
     distanceTraveled?: number;
+    /** Native world-space nameplate. It is tessellated by Rust, never Canvas. */
+    label?: string;
+    labelBadge?: string;
     chibi?: {
       hairStyle?: string;
       frontHairStyle?: string;
@@ -459,6 +466,16 @@ class MultiplayerClient {
 
   public fireProjectile(projectile: Projectile) {
     this.send({ type: 'world_fire', projectile });
+  }
+
+  /** Shared-combat intent: server Rust selects the loadout and spawns effects. */
+  public castSkill(slot: number, targetX: number, targetY: number) {
+    this.send({ type: 'skill_cast', slot, targetX, targetY });
+  }
+
+  /** Primary-fire intent. Rust chooses the projectile from equipped weapon. */
+  public basicAttack(targetX: number, targetY: number) {
+    this.send({ type: 'basic_attack', targetX, targetY });
   }
 
   public hasSharedWorld() {

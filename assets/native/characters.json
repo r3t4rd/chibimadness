@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "weapons": [
+    "pistol", "revolver", "mac10", "ak47", "shotgun", "cheytac", "katana",
+    "sledgehammer", "throwing_knives", "scythe", "greatsword", "staff", "wand", "grimoire", "totem"
+  ],
+  "characters": [
+    {
+      "id": "hatsune_miku",
+      "name": "Hatsune Miku",
+      "allWeapons": true,
+      "match": {
+        "frontHairStyle": "miku_fringe", "backHairStyle": "miku_twintails", "hairColor": "#06B6D4",
+        "hatType": "headphones", "outfitType": "idol_stage"
+      },
+      "chibi": {
+        "frontHairStyle": "miku_fringe", "backHairStyle": "miku_twintails", "hairStyle": "miku_twintails",
+        "hairColor": "#06B6D4", "eyesOverHair": true, "hatType": "headphones", "hatColor": "#06B6D4",
+        "wingType": "pixel_wings", "wingColor": "#67E8F9", "earType": "none", "earColor": "#2B272C",
+        "haloType": "music_notes", "haloColor": "#06B6D4", "coatColor": "#0F172A", "accentColor": "#06B6D4",
+        "skirtColor": "#0F172A", "eyeType": "wink_star", "eyeColor": "#0EA5E9", "skinTone": "#FFF1E0",
+        "outfitType": "idol_stage", "ribbonColor": "#06B6D4"
+      }
+    },
+    {
+      "id": "bloomer_yuuka",
+      "name": "Yuuka (PE Sports)",
+      "allWeapons": true,
+      "match": {
+        "frontHairStyle": "straight_bangs", "backHairStyle": "twintails", "hairColor": "#38BDF8",
+        "hatType": "cyber_cap", "outfitType": "gym_bloomer"
+      },
+      "chibi": {
+        "frontHairStyle": "straight_bangs", "backHairStyle": "twintails", "hairColor": "#38BDF8",
+        "eyesOverHair": true, "hatType": "cyber_cap", "hatColor": "#1E3A8A", "wingType": "none",
+        "earType": "none", "earColor": "#2B272C", "haloType": "cyber_hex", "haloColor": "#38BDF8",
+        "coatColor": "#FFFFFF", "accentColor": "#1E3A8A", "skirtColor": "#1E3A8A", "eyeType": "determined",
+        "eyeColor": "#38BDF8", "skinTone": "#FFF1E0", "outfitType": "gym_bloomer", "ribbonColor": "#1E3A8A"
+      }
+    },
+    {
+      "id": "millennium_student",
+      "name": "Millennium Student",
+      "weapon": "mac10",
+      "chibi": {
+        "frontHairStyle": "straight_bangs", "backHairStyle": "twintails", "hairColor": "#38BDF8", "skinTone": "#FFE4D6",
+        "eyeType": "happy", "eyeColor": "#0284C7", "earType": "cat", "haloType": "cyber_hex", "haloColor": "#38BDF8",
+        "outfitType": "academy_blazer", "coatColor": "#FFFFFF", "skirtColor": "#3A3640", "ribbonColor": "#F472B6", "earColor": "#18181B"
+      }
+    },
+    {
+      "id": "trinity_scholar",
+      "name": "Trinity Scholar",
+      "weapon": "cheytac",
+      "chibi": {
+        "frontHairStyle": "curtain_bangs", "backHairStyle": "long_flowing", "hairColor": "#FDE047", "skinTone": "#FFE4D6",
+        "eyeType": "determined", "eyeColor": "#10B981", "earType": "none", "haloType": "winged", "haloColor": "#FDE047",
+        "wingType": "angel_feathers", "outfitType": "sailor_uniform", "coatColor": "#F1F5F9", "skirtColor": "#1E3A8A", "ribbonColor": "#F43F5E", "earColor": "#18181B"
+      }
+    },
+    {
+      "id": "gehenna_rebel",
+      "name": "Gehenna Rebel",
+      "weapon": "ak47",
+      "chibi": {
+        "frontHairStyle": "side_swept", "backHairStyle": "wolf_cut", "hairColor": "#EF4444", "skinTone": "#FFE4D6",
+        "eyeType": "anya_smug", "eyeColor": "#DC2626", "earType": "devil_horns", "haloType": "circle", "haloColor": "#EF4444",
+        "wingType": "devil_bat", "outfitType": "sukeban_trench", "coatColor": "#18181B", "skirtColor": "#991B1B", "earColor": "#18181B"
+      }
+    },
+    {
+      "id": "cyber_shinobi",
+      "name": "Cyber Shinobi",
+      "weapon": "katana",
+      "chibi": {
+        "frontHairStyle": "spiky_bangs", "backHairStyle": "bob", "hairColor": "#A855F7", "skinTone": "#FFE4D6",
+        "eyeType": "nya_cat", "eyeColor": "#C084FC", "earType": "cyber_antennas", "haloType": "star", "haloColor": "#C084FC",
+        "outfitType": "cyber_ninja", "coatColor": "#0F172A", "skirtColor": "#0284C7", "earColor": "#18181B"
+      }
+    },
+    {
+      "id": "tactical_vanguard",
+      "name": "Tactical Vanguard",
+      "weapon": "shotgun",
+      "chibi": {
+        "frontHairStyle": "chad_quiff", "backHairStyle": "short_messy", "hairColor": "#475569", "skinTone": "#FAD2B8",
+        "eyeType": "giga_chad", "eyeColor": "#0F172A", "earType": "wolf", "haloType": "cross", "haloColor": "#E2E8F0",
+        "outfitType": "combat_commando", "coatColor": "#334155", "skirtColor": "#1E293B", "earColor": "#334155"
+      }
+    },
+    {
+      "id": "idol_superstar",
+      "name": "Idol Superstar",
+      "weapon": "wand",
+      "chibi": {
+        "frontHairStyle": "teto_arched_bangs", "backHairStyle": "teto_drills", "hairColor": "#F43F5E", "skinTone": "#FFE4D6",
+        "eyeType": "sparkle_stars", "eyeColor": "#EC4899", "earType": "bunny", "haloType": "heart", "haloColor": "#F43F5E",
+        "outfitType": "idol_stage", "coatColor": "#FB7185", "skirtColor": "#BE185D", "earColor": "#FFFFFF"
+      }
+    },
+    {
+      "id": "modern_onmyoji",
+      "name": "Modern Onmyoji",
+      "weapon": "grimoire",
+      "chibi": {
+        "frontHairStyle": "hime_sidelocks", "backHairStyle": "hime_cut", "hairColor": "#18181B", "skinTone": "#FFE4D6",
+        "eyeType": "fox", "eyeColor": "#E11D48", "earType": "fox", "haloType": "floral", "haloColor": "#F43F5E",
+        "outfitType": "shrine_miko", "coatColor": "#FFFFFF", "skirtColor": "#DC2626", "hatType": "kitsune_mask", "hatColor": "#FFFFFF", "earColor": "#FFFFFF"
+      }
+    }
+  ],
+  "npcs": {
+    "npc_hank_guide": "npc_npc_hank_guide",
+    "npc_seraph_smith": "npc_npc_seraph_smith",
+    "npc_momoi_guide": "npc_npc_momoi_guide",
+    "npc_chibi_cafe": "npc_npc_chibi_cafe",
+    "npc_nyx_crucible": "npc_npc_nyx_crucible"
+  },
+  "fallbacks": {
+    "player": "character_millennium_student",
+    "npc": "npc_npc_hank_guide",
+    "monster": "police_cop_officer"
+  }
+}

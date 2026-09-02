@@ -6979,10 +6979,14 @@ export function drawHumanoidEnemy(
       ctx.strokeRect(-6, -22, 12, 7);
 
       // Police / Skull Emblem
-      ctx.fillStyle = monster.faction === 'police' ? '#38BDF8' : '#EF4444';
-      ctx.font = '900 8px Fredoka, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(monster.faction === 'police' ? 'POLICE' : '⚡PUNK', 0, 0);
+      // Faction lettering is runtime UI, never part of a flippable atlas
+      // cell. Otherwise it mirrors with the enemy when WGPU flips UVs.
+      if (!options.bodyOnly) {
+        ctx.fillStyle = monster.faction === 'police' ? '#38BDF8' : '#EF4444';
+        ctx.font = '900 8px Fredoka, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(monster.faction === 'police' ? 'POLICE' : '⚡PUNK', 0, 0);
+      }
       ctx.restore();
     }
 
