@@ -97,6 +97,9 @@ impl Ability for ProjectileAbility {
                 "damage": (atk * self.damage_multiplier).round(), "range": self.range,
                 "distanceTraveled": 0.0, "color": self.color, "size": self.size,
                 "piercing": self.piercing, "visualOffsetY": visual_offset_y,
+                // The visible Reaper crescent is much wider than its centre
+                // point. Preserve that volume for server collision too.
+                "collisionRadius": if self.id == "basic_scythe" { 80.0 } else { 30.0 + self.size },
             }));
         }
         CastOutput { id: self.id(), cooldown: self.cooldown(), projectiles, cone_hits: Vec::new(), destination: None }
@@ -297,5 +300,6 @@ mod tests {
         assert_eq!(output.cone_hits[0].range, 140.0);
         assert_eq!(output.cone_hits[0].arc_radians, 2.5);
         assert_eq!(output.cone_hits[0].damage, 30.0);
+        assert!(output.projectiles.iter().all(|projectile| projectile["collisionRadius"] == 80.0));
     }
 }

@@ -1595,6 +1595,12 @@ fn tick_combat_world(state: &mut WorldState) {
             .to_owned();
         let damage = number(&projectile, "damage", 1.0).clamp(1.0, 250.0);
         let size = number(&projectile, "size", 4.0).clamp(2.0, 32.0);
+        let hit_radius = projectile
+            .get("collisionRadius")
+            .and_then(Value::as_f64)
+            .filter(|radius| radius.is_finite())
+            .unwrap_or(30.0 + size)
+            .clamp(size, 96.0);
         let piercing = projectile
             .get("piercing")
             .and_then(Value::as_bool)
@@ -1627,7 +1633,7 @@ fn tick_combat_world(state: &mut WorldState) {
                         y,
                         number(monster, "x", 0.0),
                         number(monster, "y", 0.0),
-                        30.0 + size,
+                        hit_radius,
                     )
                     .map(|fraction| (fraction, id.clone()))
                 })
@@ -2205,6 +2211,34 @@ mod tests {
 
         let world = state.combat_world.expect("world remains available");
         assert_eq!(number(world.monsters.get("outer_crescent_target").expect("monster"), "hp", 0.0), 70.0);
+    }
+
+    #[test]
+    fn reaper_outer_crescent_damages_a_target_outside_the_center_line() {
+        let (_, player_value) = sanitize_player(&player("reaper", 100.0, 100.0)).expect("valid player");
+        let mut sequence = 0;
+        let cast = abilities::basic_attack("scythe", &mut abilities::CastContext {
+            owner_id: "reaper", player: &player_value, target_x: 300.0, target_y: 100.0, sequence: &mut sequence,
+        });
+        let monsters = sanitize_world_monsters(&[json!({
+            // This sits within the large +0.45 rad crescent volume, far enough
+            // away that the 140-unit immediate center sweep cannot explain it.
+            "id": "outer_wave_target", "x": 250.0, "y": 245.0,
+            "hp": 100.0, "maxHp": 100.0, "speed": 0.5, "atk": 10.0,
+        })]).expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.players.insert("reaper".into(), PlayerRecord {
+            session_id: 1, value: player_value, respawn_at: None,
+            immune_until: None, resume_token: "test-token".into(),
+        });
+        state.combat_world = Some(CombatWorld { monsters, projectiles: cast.projectiles });
+
+        for _ in 0..15 {
+            tick_combat_world(&mut state);
+        }
+
+        let world = state.combat_world.expect("world remains available");
+        assert_eq!(number(world.monsters.get("outer_wave_target").expect("monster"), "hp", 0.0), 95.0);
     }
 
     #[test]
