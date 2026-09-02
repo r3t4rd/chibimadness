@@ -786,15 +786,15 @@ export function App() {
               if (screenX < -180 || screenX > viewportWidth + 180 || screenY < -90 || screenY > viewportHeight + 90) return null;
               return { id, label, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
             };
-            // Enemy text belongs to neither the sprite nor WGPU primitives:
-            // it is intentionally omitted here. HP is live TS UI from the
-            // replicated snapshot and is positioned every rAF above.
+            // Exactly one enemy nameplate lives in DOM UI. It is never baked
+            // into a flippable sprite or emitted as Rust geometry; HP and its
+            // label therefore share the same rAF-bound anchor.
             const actors = [
               ...curEngine.monsters
                 .filter((monster) => monster.hp > 0)
                 .map((monster) => screenActor(
                   monster.id,
-                  undefined,
+                  `Lv.1 ${monster.name}`,
                   monster.x,
                   monster.y,
                   monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
