@@ -713,7 +713,15 @@ export function App() {
         monsters: curEngine.monsters,
         resourceNodes: curEngine.resourceNodes,
         dropItems: curEngine.dropItems,
-        projectiles: curEngine.projectiles,
+        // Rust remains authoritative for hit detection. Its local-player
+        // projectiles are deliberately not painted a second time: TS owns the
+        // matching presentation trail/orb while enemy and remote shots stay
+        // visible from the replicated snapshot.
+        projectiles: net.hasSharedWorld()
+          ? curEngine.projectiles.filter((projectile) => (
+            projectile.ownerId !== curEngine.player.id || projectile.id.startsWith('vfx_')
+          ))
+          : curEngine.projectiles,
         particles: curEngine.particles,
         damagePopups: curEngine.damagePopups,
         screenShake: curEngine.screenShake,

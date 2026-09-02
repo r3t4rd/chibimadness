@@ -48,7 +48,7 @@ import {
 import { sound } from './audioEngine';
 import { net } from './multiplayerClient';
 import { screenToWorld } from './worldRenderer';
-import { createSharedSkillVfx, type CombatVisualProjectile } from './sharedCombatVfx';
+import { createSharedPrimaryVfx, createSharedSkillVfx, type CombatVisualProjectile } from './sharedCombatVfx';
 import {
   BUILDINGS,
   Occupancy,
@@ -2269,30 +2269,22 @@ export function useGameEngine(initialPlayer: Player) {
     // Rust ever hears about the shot.  Weapon shape, cooldown and projectile
     // count remain server-owned in `abilities::basic_attack`.
     if (net.hasSharedWorld()) {
-      // TS owns immediate presentation, while the server-owned projectile
-      // arrives in the next replication frame. This one short tracer removes
-      // network-latency from click feedback without becoming a damage source.
-      const visualShot: Projectile = {
-        id: `vfx_primary_${now}_${Math.random()}`,
-        ownerId: curPlayer.id,
-        type: 'bullet',
-        x: curPlayer.x + aimDirX * 24,
-        y: curPlayer.y + aimDirY * 24 + visualLaunchOffsetY,
-        vx: aimDirX * 26,
-        vy: aimDirY * 26,
-        damage: 0,
-        range: 180,
-        distanceTraveled: 0,
-        color: '#FDE047',
-        size: 4.5,
-        piercing: false,
-      };
-      combatVfxRef.current.push({
-        projectile: visualShot,
-        startsAt: performance.now(),
-        expiresAt: performance.now() + 130,
-      });
-      projectilesRef.current = [...projectilesRef.current, visualShot];
+      // TS owns the weapon-specific visual, while Rust remains authoritative
+      // for hits and cooldown. This mirrors the server pattern instead of
+      // emitting one hard-coded, short yellow fallback tracer.
+      const visualShots = createSharedPrimaryVfx(
+        curPlayer,
+        curPlayer.equipment.weapon?.gunType,
+        targetX,
+        targetY,
+        performance.now(),
+        visualLaunchOffsetY,
+      );
+      combatVfxRef.current.push(...visualShots);
+      const immediateShots = visualShots
+        .filter((effect) => effect.startsAt <= performance.now())
+        .map((effect) => effect.projectile);
+      projectilesRef.current = [...projectilesRef.current, ...immediateShots];
       setProjectiles(projectilesRef.current);
       sound.playShoot();
       net.basicAttack(targetX, targetY);

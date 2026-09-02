@@ -3014,22 +3014,6 @@ impl NativeWorldRenderer {
         }) {
             self.add_miku_asset(style, entity, x, y, size, world);
             self.add_weapon_asset(entity, x, y, size, outline, world);
-            if entity.kind == "monster" {
-                let bar_width = size * 1.28;
-                self.add_world_rect(x, y - size * 0.86, bar_width, size * 0.11, outline, world);
-                self.add_world_rect(
-                    x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
-                    y - size * 0.86,
-                    bar_width * entity.hp_ratio,
-                    size * 0.065,
-                    if entity.faction == "police" {
-                        hex("#22D3EE")
-                    } else {
-                        hex("#FB2C4A")
-                    },
-                    world,
-                );
-            }
             return;
         }
 
@@ -3688,22 +3672,6 @@ impl NativeWorldRenderer {
                     [0.22, 0.82, 1.0, 0.72]
                 } else {
                     [1.0, 0.22, 0.31, 0.72]
-                },
-                world,
-            );
-        }
-        if entity.kind == "monster" {
-            let bar_width = size * 1.28;
-            self.add_world_rect(x, y - size * 0.86, bar_width, size * 0.11, outline, world);
-            self.add_world_rect(
-                x - bar_width * (1.0 - entity.hp_ratio) * 0.5,
-                y - size * 0.86,
-                bar_width * entity.hp_ratio,
-                size * 0.065,
-                if entity.faction == "police" {
-                    [0.12, 0.86, 1.0, 1.0]
-                } else {
-                    [1.0, 0.18, 0.31, 1.0]
                 },
                 world,
             );
