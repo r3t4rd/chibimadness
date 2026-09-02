@@ -573,7 +573,9 @@ async fn world_fire(server: &Arc<Server>, session_id: u64, message: Value) {
             }
             world.projectiles.push(projectile);
         }
-        (recipients_except(&state, 0), world_snapshot(&state))
+        // The casting player receives the spawn too; its client is a renderer,
+        // not an alternate source of projectile parameters.
+        (recipients(&state), world_snapshot(&state))
     };
     send_to(recipients, payload);
 }
@@ -657,7 +659,9 @@ async fn skill_cast(server: &Arc<Server>, session_id: u64, message: Value) {
         };
         let available = MAX_WORLD_PROJECTILES.saturating_sub(world.projectiles.len());
         world.projectiles.extend(output.projectiles.into_iter().take(available));
-        (recipients_except(&state, 0), world_snapshot(&state))
+        // Include the caster so every client paints the same server-created
+        // projectile stream immediately after an accepted input intent.
+        (recipients(&state), world_snapshot(&state))
     };
     send_to(recipients, payload);
 }
@@ -709,7 +713,9 @@ async fn basic_attack(server: &Arc<Server>, session_id: u64, message: Value) {
         let Some(world) = state.combat_world.as_mut() else { return; };
         let available = MAX_WORLD_PROJECTILES.saturating_sub(world.projectiles.len());
         world.projectiles.extend(output.projectiles.into_iter().take(available));
-        (recipients_except(&state, 0), world_snapshot(&state))
+        // Include the caster so every client paints the same server-created
+        // projectile stream immediately after an accepted input intent.
+        (recipients(&state), world_snapshot(&state))
     };
     send_to(recipients, payload);
 }
@@ -2000,6 +2006,15 @@ fn sanitize_player(value: &Value) -> Option<(String, Value)> {
 fn bounded_number(value: &Value, field: &str, min: f64, max: f64) -> Option<f64> {
     let number = value.get(field)?.as_f64()?;
     (number.is_finite() && (min..=max).contains(&number)).then_some(number)
+}
+
+fn recipients(state: &WorldState) -> Vec<mpsc::Sender<Outbound>> {
+    state
+        .sessions
+        .values()
+        .filter(|session| session.player_id.is_some())
+        .map(|session| session.sender.clone())
+        .collect()
 }
 
 fn recipients_except(state: &WorldState, excluded_session: u64) -> Vec<mpsc::Sender<Outbound>> {

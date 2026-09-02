@@ -48,7 +48,6 @@ import {
 import { sound } from './audioEngine';
 import { net } from './multiplayerClient';
 import { screenToWorld } from './worldRenderer';
-import { createSharedPrimaryVfx, createSharedSkillVfx, type CombatVisualProjectile } from './sharedCombatVfx';
 import {
   BUILDINGS,
   Occupancy,
@@ -1180,20 +1179,13 @@ export function useGameEngine(initialPlayer: Player) {
 
   const projectilesRef = useRef<Projectile[]>(projectiles);
   projectilesRef.current = projectiles;
-  // Cosmetic client-side muzzle tracers. They never enter the combat protocol
-  // and are intentionally kept outside the authoritative snapshot history.
-  const combatVfxRef = useRef<CombatVisualProjectile[]>([]);
-
   // Authoritative combat snapshots arrive at 20 Hz, but the canvas renders
   // every animation frame. Keep a small visual delay so most frames can be
   // drawn between two server states instead of snapping to the latest one.
   useEffect(() => {
     let animationFrameId = 0;
-    let previousTime = performance.now();
     const renderReplicatedWorld = (time: number) => {
       if (net.hasSharedWorld() && replicationFrameReceivedRef.current) {
-        const dt = Math.min(0.05, Math.max(0, (time - previousTime) / 1000));
-        previousTime = time;
         const renderAt = time - REPLICATION_INTERPOLATION_DELAY_MS;
         const monsterHistories = Object.values(monsterReplicationHistoryRef.current) as Array<ReplicationFrame<Monster>[]>;
         const projectileHistories = Object.values(projectileReplicationHistoryRef.current) as Array<ReplicationFrame<Projectile>[]>;
@@ -1203,35 +1195,10 @@ export function useGameEngine(initialPlayer: Player) {
         const nextProjectiles = projectileHistories
           .filter((frames) => frames.length > 0)
           .map((frames) => interpolatedProjectileState(frames, renderAt));
-        const retainedVisuals = combatVfxRef.current
-          .filter((entry) => entry.expiresAt > time);
-        const nextVisuals: CombatVisualProjectile[] = [];
-        const visualProjectiles: Projectile[] = [];
-        retainedVisuals.forEach((entry) => {
-          if (entry.startsAt > time) {
-            nextVisuals.push(entry);
-            return;
-          }
-          entry.projectile.x += entry.projectile.vx * dt * 60;
-          entry.projectile.y += entry.projectile.vy * dt * 60;
-          entry.projectile.distanceTraveled += Math.hypot(entry.projectile.vx, entry.projectile.vy) * dt * 60;
-          const hitReplicatedMonster = !entry.projectile.piercing && nextMonsters.some((monster) => (
-            monster.hp > 0
-            && Math.hypot(monster.x - entry.projectile.x, monster.y - entry.projectile.y)
-              <= Math.max(18, entry.projectile.size + (monster.isBoss ? 34 : 20))
-          ));
-          if (!hitReplicatedMonster) {
-            nextVisuals.push(entry);
-            visualProjectiles.push(entry.projectile);
-          }
-        });
-        combatVfxRef.current = nextVisuals;
-        const renderedProjectiles = [...nextProjectiles, ...visualProjectiles];
-
         monstersRef.current = nextMonsters;
-        projectilesRef.current = renderedProjectiles;
+        projectilesRef.current = nextProjectiles;
         setMonsters(nextMonsters);
-        setProjectiles(renderedProjectiles);
+        setProjectiles(nextProjectiles);
       }
       animationFrameId = requestAnimationFrame(renderReplicatedWorld);
     };
@@ -2285,23 +2252,8 @@ export function useGameEngine(initialPlayer: Player) {
     // Rust ever hears about the shot.  Weapon shape, cooldown and projectile
     // count remain server-owned in `abilities::basic_attack`.
     if (net.hasSharedWorld()) {
-      // TS owns the weapon-specific visual, while Rust remains authoritative
-      // for hits and cooldown. This mirrors the server pattern instead of
-      // emitting one hard-coded, short yellow fallback tracer.
-      const visualShots = createSharedPrimaryVfx(
-        curPlayer,
-        curPlayer.equipment.weapon?.gunType,
-        targetX,
-        targetY,
-        performance.now(),
-        visualLaunchOffsetY,
-      );
-      combatVfxRef.current.push(...visualShots);
-      const immediateShots = visualShots
-        .filter((effect) => effect.startsAt <= performance.now())
-        .map((effect) => effect.projectile);
-      projectilesRef.current = [...projectilesRef.current, ...immediateShots];
-      setProjectiles(projectilesRef.current);
+      // Server owns every spawn parameter and collision. The client paints
+      // only the projectile returned by its authoritative world snapshot.
       sound.playShoot();
       net.basicAttack(targetX, targetY);
       return;
@@ -2821,15 +2773,6 @@ export function useGameEngine(initialPlayer: Player) {
     // class ability, enforces cooldown and produces the authoritative effects;
     // do not replay the large local TS skill branch in this mode.
     if (net.hasSharedWorld()) {
-      const visualEffects = createSharedSkillVfx(skill.id, curPlayer, targetX, targetY, performance.now());
-      combatVfxRef.current.push(...visualEffects);
-      const immediateEffects = visualEffects
-        .filter((effect) => effect.startsAt <= performance.now())
-        .map((effect) => effect.projectile);
-      if (immediateEffects.length > 0) {
-        projectilesRef.current = [...projectilesRef.current, ...immediateEffects];
-        setProjectiles(projectilesRef.current);
-      }
       net.castSkill(skillIndex, targetX, targetY);
       return;
     }
