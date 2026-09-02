@@ -190,7 +190,7 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
 }
 "#;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeChibiRecipe {
     #[serde(default)]
@@ -286,6 +286,10 @@ pub struct NativeRenderEntity {
     pub has_shield: bool,
     #[serde(default)]
     pub effect_type: String,
+    #[serde(default)]
+    pub horde_kind: String,
+    #[serde(default)]
+    pub is_boss: bool,
     /// Stable generated-atlas frame name (for example `horde_mite`). The
     /// bridge sends state, never image bytes or Canvas commands.
     #[serde(default)]
@@ -528,6 +532,7 @@ impl NativeWorldState {
                 && entity.projectile_type.len() <= 32
                 && entity.weapon_type.len() <= 32
                 && entity.effect_type.len() <= 32
+                && entity.horde_kind.len() <= 32
                 && entity.sprite_key.len() <= 96
                 && entity.label.len() <= 96
                 && entity.label_badge.len() <= 32
@@ -2930,10 +2935,24 @@ impl NativeWorldRenderer {
         y: f32,
         world: &NativeRenderFrame,
     ) -> bool {
-        if entity.sprite_key.is_empty() {
+        let frame_key = if entity.sprite_key.is_empty() {
+            native_sprites::resolve_actor_frame(
+                &entity.kind,
+                &entity.id,
+                &entity.faction,
+                &entity.effect_type,
+                &entity.weapon_type,
+                &entity.horde_kind,
+                entity.is_boss,
+                entity.chibi.as_ref(),
+            )
+        } else {
+            Some(entity.sprite_key.as_str())
+        };
+        let Some(frame_key) = frame_key else {
             return false;
-        }
-        let Some(atlas_id) = native_sprites::atlas_for_frame(&entity.sprite_key) else {
+        };
+        let Some(atlas_id) = native_sprites::atlas_for_frame(frame_key) else {
             return false;
         };
         let world_to_ndc = |world_x: f32, world_y: f32| {
@@ -2954,7 +2973,7 @@ impl NativeWorldRenderer {
         else {
             return false;
         };
-        let Some(frame) = atlas.frames.get(&entity.sprite_key).copied() else {
+        let Some(frame) = atlas.frames.get(frame_key).copied() else {
             return false;
         };
         if frame.w == 0 || frame.h == 0 {
@@ -5379,6 +5398,36 @@ mod tests {
                 .animation
                 .as_ref()
                 .is_some_and(|animation| animation.is_sprinting)
+        );
+    }
+
+    #[test]
+    fn native_sprite_resolver_owns_operator_selection() {
+        let yuuka = NativeChibiRecipe {
+            front_hair_style: "straight_bangs".into(),
+            back_hair_style: "twintails".into(),
+            hair_color: "#38BDF8".into(),
+            hat_type: "cyber_cap".into(),
+            outfit_type: "gym_bloomer".into(),
+            ..NativeChibiRecipe::default()
+        };
+        assert_eq!(
+            native_sprites::resolve_actor_frame(
+                "player", "local", "", "", "pistol", "", false, Some(&yuuka),
+            ),
+            Some("character_bloomer_yuuka_pistol")
+        );
+        assert_eq!(
+            native_sprites::resolve_actor_frame(
+                "npc", "npc_hank_guide", "", "", "", "", false, None,
+            ),
+            Some("npc_npc_hank_guide")
+        );
+        assert_eq!(
+            native_sprites::resolve_actor_frame(
+                "monster", "", "punk_demon", "punk_grunt", "", "", false, None,
+            ),
+            Some("punk_punk_grunt")
         );
     }
 

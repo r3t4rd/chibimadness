@@ -24,7 +24,7 @@ import { NPCS_DATABASE } from '../src/game/constants';
 import {
   NATIVE_CHARACTER_SPRITE_RECIPES,
   NATIVE_CHARACTER_WEAPONS,
-} from '../src/game/nativeVisualRecipes';
+} from './native-visual-recipes';
 import { ChibiConfig, Player, Monster, GunType } from '../src/types/game';
 
 const OUTPUT_DIR = path.resolve(process.cwd(), 'assets/sprites');

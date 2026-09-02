@@ -36,6 +36,10 @@ export type NativeWorldRenderFrame = {
     weaponType?: string;
     hasShield?: boolean;
     effectType?: string;
+    /** Simulation identity consumed by Rust when resolving a generated body. */
+    hordeKind?: string;
+    isBoss?: boolean;
+    /** Legacy override for older content bundles; current native frames omit it. */
     spriteKey?: string;
     projectileRange?: number;
     tracerLength?: number;

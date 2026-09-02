@@ -1,7 +1,6 @@
 import { Monster, DropItem, ResourceNode, NPC, Projectile, DamagePopup, VisualParticle, Player, GroundDecal, InteractiveObject, IntroCinematicState, WorldPOI, Platform, CarEntity, SummonedAlly } from '../types/game';
 import { drawChibiCharacter, drawHumanoidEnemy, drawPoliceCruiser, drawCyberMuscleCar } from './chibiRenderer';
 import { WORLD_WIDTH, WORLD_HEIGHT, ZONES, NPCS_DATABASE, OBSTACLES, INITIAL_INTERACTIVE_OBJECTS, PLATFORMS, WORLD_POIS } from './constants';
-import { getNativeCharacterSpriteFrame } from './nativeVisualRecipes';
 import { HORDE_ARENA, HORDE_FEATURES, getHordeBlindness, getHordeHazards, getHordeRiftFx, isInHordeArena, type HordeHazard } from './hordeMode';
 import { drawEvolutionFx } from './evolutions';
 import { clipToViewBounds, getViewBounds, isInViewBounds } from './viewCull';
@@ -613,8 +612,7 @@ export function renderWorld(
       const isDashSlashing = (p.dashSlashTimer ?? 0) > 0;
 
       const useWebglPlayerBody = skipWebglPlayerBodies && getWebglPlayerAtlasKey(p) !== null;
-      const useNativeSpriteBody = skipNativeSpriteBodies && getNativePlayerSpriteFrame(p) !== null;
-      if (useWebglPlayerBody || useNativeSpriteBody) continue;
+      if (useWebglPlayerBody) continue;
       if (isOmni) {
         ctx.save();
         ctx.globalAlpha = 0.25;
@@ -4509,79 +4507,6 @@ export function getWebglMonsterAtlasKey(monster: Monster): string | null {
   return `humanoid:${monster.type}:${monster.weaponType ?? 'pistol'}:${monster.isBoss ? 1 : 0}:${monster.faction ?? 'none'}`;
 }
 
-const NATIVE_FACTION_SPRITES = new Set([
-  'police_cop_officer', 'police_cop_swat', 'police_cop_enforcer', 'police_cop_marksman',
-  'punk_punk_grunt', 'punk_punk_anarchist', 'punk_punk_molotov',
-  'bandit_bandit_grunt', 'bandit_bandit_scout', 'bandit_bandit_gunner',
-  'bandit_bandit_shotgunner', 'bandit_bandit_sniper', 'bandit_bandit_brawler',
-  'cadet_cadet_bat', 'cadet_cadet_gunner', 'cadet_cadet_mage', 'cadet_human_target',
-]);
-
-const NATIVE_BOSS_SPRITES: Record<string, string> = {
-  boss_welder: 'boss_boss_welder',
-  boss_outlaw_viktor: 'boss_boss_outlaw_viktor',
-  bandit_boss: 'boss_boss_bandit_warlord',
-  cop_juggernaut: 'boss_boss_police_juggernaut',
-  punk_juggernaut: 'boss_boss_punk_juggernaut',
-};
-
-/**
- * Native actor sprites deliberately stay selected through combat state.
- *
- * The atlas cells are generated from the source Canvas routines, so a
- * cooldown, a charged shot, or a `humanChibi` descriptor is not a different
- * body asset. Treating those flags as a Canvas fallback made every crowded
- * firefight re-rasterize the complete WebView layer and capped the picture at
- * the browser rAF cadence. Transient muzzle flashes, telegraphs and damage
- * effects remain an overlay; the actor body itself is always a sprite.
- */
-export function getNativeMonsterSpriteFrame(monster: Monster): string | null {
-  if (monster.hp <= 0) return null;
-  const horde = getWebglHordeMobAtlasKey(monster);
-  if (horde) {
-    const [kind, boss] = horde.split(':');
-    return `horde_${kind}${boss === '1' ? '_boss' : ''}`;
-  }
-  const bossFrame = NATIVE_BOSS_SPRITES[monster.type];
-  if (bossFrame) return bossFrame;
-  if (
-    monster.hordeKind
-    || monster.type === 'forest_wolf'
-  ) return null;
-  const faction = monster.faction === 'punk_demon' ? 'punk' : monster.faction;
-  const frame = `${faction}_${monster.type}`;
-  return NATIVE_FACTION_SPRITES.has(frame) ? frame : null;
-}
-
-/** Full-frame Miku is generated from the exact character-creator recipe. */
-export function getNativePlayerSpriteFrame(player: Player): string | null {
-  const chibi = player.chibi;
-  if (
-    player.state === 'dead'
-    || player.isRiding
-    || player.activeVehicleId
-    || player.emote
-    || (player.chatTimer ?? 0) > 0
-    || player.isReloading
-    || (player.dodgeTimer ?? 0) > 0
-    || (player.jumpZ ?? 0) > 0
-    || (player.omnislashStrikesLeft ?? 0) > 0
-    || (player.dashSlashTimer ?? 0) > 0
-    || (player.bhopStreak ?? 0) >= 2
-    || (player.coolStreak ?? 0) >= 2
-    || player.attackTimer > 0
-    || !chibi
-  ) return null;
-  const isMiku = chibi.frontHairStyle === 'miku_fringe'
-    && chibi.backHairStyle === 'miku_twintails'
-    && chibi.hairColor.toUpperCase() === '#06B6D4'
-    && chibi.hatType === 'headphones'
-    && chibi.outfitType === 'idol_stage';
-  if (!isMiku) return getNativeCharacterSpriteFrame(player);
-  const weapon = player.equipment.weapon?.gunType ?? 'pistol';
-  return `character_hatsune_miku_${weapon}`;
-}
-
 /**
  * Runtime visual key for procedural players. Position and combat state are
  * intentionally excluded: moving a player must never allocate a new raster.
@@ -4931,7 +4856,7 @@ function drawMonsters(
   monsters: Monster[],
   time: number,
   skipWebglHordeMobBodies = false,
-  skipNativeSpriteBodies = false,
+  _skipNativeSpriteBodies = false,
 ) {
   monsters.forEach((m) => {
     // Render living monsters and dead monsters during their ragdoll fall
@@ -4939,8 +4864,7 @@ function drawMonsters(
     // Stable bodies and their HP bars are emitted by the WebGL actor pass.
     // Transient states deliberately fall through to Canvas for visual parity.
     if (
-      (skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null)
-      || (skipNativeSpriteBodies && getNativeMonsterSpriteFrame(m) !== null)
+      skipWebglHordeMobBodies && getWebglMonsterAtlasKey(m) !== null
     ) return;
 
     ctx.save();

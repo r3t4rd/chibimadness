@@ -5,12 +5,9 @@ import { useGameEngine } from './game/useGameEngine';
 import {
   advanceCanvasCamera,
   drawWorldInput,
-  getNativeMonsterSpriteFrame,
-  getNativePlayerSpriteFrame,
   screenToWorld,
   type WorldRenderInput,
 } from './game/worldRenderer';
-import { getNativeNpcSpriteFrame } from './game/nativeVisualRecipes';
 import { perfMonitor, type CanvasProbeMode } from './game/performanceMonitor';
 import {
   createWebglHordeMobRenderer,
@@ -721,7 +718,6 @@ export function App() {
           const nativeMonsterSprites: NativeWorldRenderFrame['entities'] = curEngine.monsters
             .filter((monster) => monster.hp > 0)
             .map((monster) => {
-            const spriteKey = getNativeMonsterSpriteFrame(monster);
             return {
               id: monster.id,
               kind: 'monster',
@@ -739,8 +735,9 @@ export function App() {
               weaponType: monster.weaponType,
               hasShield: monster.hasShield,
               effectType: monster.type,
+              hordeKind: monster.hordeKind,
+              isBoss: monster.isBoss,
               chibi: monster.humanChibi,
-              spriteKey: spriteKey ?? undefined,
             };
           });
           // The server can retain a stale echo under the local id. That echo
@@ -749,7 +746,6 @@ export function App() {
             .filter((player) => player.id !== curEngine.player.id)
             .concat(curEngine.player)
             .map((player) => {
-              const spriteKey = getNativePlayerSpriteFrame(player);
               return {
                 id: player.id,
                 kind: 'player',
@@ -775,7 +771,6 @@ export function App() {
                   attackTimer: player.attackTimer,
                   dodgeTimer: player.dodgeTimer,
                 },
-                spriteKey: spriteKey ?? undefined,
               };
             });
           const nativeProjectiles: NativeWorldRenderFrame['entities'] = curEngine.projectiles.map((projectile) => ({
@@ -807,7 +802,6 @@ export function App() {
             labelBadge: '[E] TALK',
             chibi: npc.avatarChibi,
             animation: { state: 'idle', spawnBounce: 1 },
-            spriteKey: getNativeNpcSpriteFrame(npc.id),
           }));
           const nativeParticles: NativeWorldRenderFrame['entities'] = curEngine.particles.map((particle, index) => ({
             id: `particle:${index}:${particle.x}:${particle.y}`,
@@ -913,34 +907,8 @@ export function App() {
         }
         canvas.style.visibility = 'visible';
         if (webglCanvas) webglCanvas.style.visibility = 'visible';
-        const webglBodiesActive = nativeSpriteBodies
-          ? false
-          : renderWebglHordeMobBodies(worldInput, camera);
+        const webglBodiesActive = renderWebglHordeMobBodies(worldInput, camera);
         if (!dynamicCanvasLayerEnabledRef.current) return webglBodiesActive;
-        const allNativeActors = nativeSpriteBodies
-          // A dying enemy still has a Canvas ragdoll / death effect, so do
-          // not sleep the overlay merely because its state is already dead.
-          && worldInput.monsters.every((monster) => getNativeMonsterSpriteFrame(monster) !== null)
-          && [...Object.values(worldInput.players), worldInput.localPlayer]
-            .filter((player): player is Player => Boolean(player))
-            .every((player) => getNativePlayerSpriteFrame(player) !== null);
-        const noCanvasEffects = worldInput.dropItems.length === 0
-          && worldInput.projectiles.length === 0
-          && worldInput.particles.length === 0
-          && worldInput.damagePopups.length === 0
-          && worldInput.groundDecals.length === 0
-          && worldInput.cars.length === 0
-          && worldInput.summons.length === 0
-          && (!worldInput.introCinematic || worldInput.introCinematic.phase === 'none' || worldInput.introCinematic.phase === 'complete');
-        if (allNativeActors && noCanvasEffects) {
-          if (!nativeCanvasOverlaySleeping) {
-            nativeCanvasOverlaySleeping = true;
-            pendingDynamicRender = null;
-            clearDynamicFrame();
-            ctx.clearRect(0, 0, viewportWidth, viewportHeight);
-          }
-          return webglBodiesActive;
-        }
         nativeCanvasOverlaySleeping = false;
         const rasterScale = nativeWorldRenderer ? 1 : dynamicRasterScaleRef.current;
         const workerInput = rasterScale === 1
