@@ -473,6 +473,11 @@ class MultiplayerClient {
     this.send({ type: 'skill_cast', slot, targetX, targetY });
   }
 
+  /** Primary-fire intent. Rust chooses the projectile from equipped weapon. */
+  public basicAttack(targetX: number, targetY: number) {
+    this.send({ type: 'basic_attack', targetX, targetY });
+  }
+
   public hasSharedWorld() {
     return this.sharedWorldReady;
   }

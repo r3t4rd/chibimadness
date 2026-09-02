@@ -964,10 +964,10 @@ export function useGameEngine(initialPlayer: Player) {
           const shouldApplyServerTransform = serverMovedAcrossWorlds || serverRespawned || serverHordeWarped;
           const entryIFrames = serverMovedAcrossWorlds && selfInHorde ? 2.5 : 0;
           playerRef.current = shouldApplyServerTransform
-            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(current.dodgeTimer ?? 0, entryIFrames) }
+            ? { ...current, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, interiorBuildingId: serverRespawned ? undefined : current.interiorBuildingId, interiorFloor: serverRespawned ? undefined : current.interiorFloor, dodgeTimer: Math.max(current.dodgeTimer ?? 0, entryIFrames) }
             : { ...current, stats, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? current.respawnTimer ?? 3 : undefined };
           setPlayer((previous) => shouldApplyServerTransform
-            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, dodgeTimer: Math.max(previous.dodgeTimer ?? 0, entryIFrames) }
+            ? { ...previous, x: self.x, y: self.y, vx: self.vx, vy: self.vy, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined, currentZone: selfInHorde ? HORDE_ZONE_ID : undefined, interiorBuildingId: serverRespawned ? undefined : previous.interiorBuildingId, interiorFloor: serverRespawned ? undefined : previous.interiorFloor, dodgeTimer: Math.max(previous.dodgeTimer ?? 0, entryIFrames) }
             : { ...previous, stats: { ...previous.stats, hp: self.stats.hp, maxHp: self.stats.maxHp }, state: syncedState, isRespawning: serverSaysDead, respawnTimer: serverSaysDead ? previous.respawnTimer ?? 3 : undefined });
         }
         const remote = Object.fromEntries(players
@@ -2310,7 +2310,9 @@ export function useGameEngine(initialPlayer: Player) {
         ? proj
         : { ...proj, visualOffsetY: visualLaunchOffsetY };
       if (net.hasSharedWorld()) {
-        net.fireProjectile(launchedProjectile);
+        // Shared/native combat accepts aim input, never a ready-made JS
+        // projectile. Rust resolves the equipped weapon and its payload.
+        net.basicAttack(targetX, targetY);
         return;
       }
       projectilesRef.current = [...projectilesRef.current, launchedProjectile];

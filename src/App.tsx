@@ -1194,6 +1194,16 @@ export function App() {
             />
           )}
 
+          {engine.introCinematic.phase !== 'none' && engine.introCinematic.phase !== 'complete' && (
+            <div className="fixed inset-x-0 top-0 z-[85] pointer-events-none font-mono select-none">
+              <div className="h-px bg-cyan-400/80 shadow-[0_0_12px_rgba(34,211,238,0.9)]" />
+              <div className="flex items-center justify-between px-6 py-3 text-[10px] font-bold tracking-[0.16em] text-cyan-300/90">
+                <span>⚡ ORBITAL RE-ENTRY // PHASE: {engine.introCinematic.phase.toUpperCase()}</span>
+                <span>OPERATOR: {engine.player.name.toUpperCase()} // ARCHETYPE/{engine.player.characterClass.toUpperCase()}</span>
+              </div>
+            </div>
+          )}
+
           {/* Hide HUD and UI overlays during Cinematic Sequence */}
           {engine.introCinematic.phase === 'none' || engine.introCinematic.phase === 'complete' ? (
             <>

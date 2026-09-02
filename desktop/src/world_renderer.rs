@@ -2347,11 +2347,14 @@ impl NativeWorldRenderer {
         ] {
             self.add_source_boulder(x, y, r, world);
         }
-        for i in 0..74 {
+        // The source forest is deliberately crowded. Sparse repeated trees
+        // made the retained native terrain read as an empty prototype once
+        // Canvas stopped painting its decoration layer.
+        for i in 0..224 {
             let x = ((i * 197) % 2_450 + 65) as f32;
             let y = ((i * 349) % 3_000 + 85) as f32;
             if (x - 680.0).abs() > 540.0 || (y - 650.0).abs() > 420.0 {
-                self.add_source_tree(x, y, 0.78 + (i % 4) as f32 * 0.13, world);
+                self.add_source_tree(x, y, 0.64 + (i % 7) as f32 * 0.12, (i % 4) as u8, world);
             }
         }
     }
@@ -2535,7 +2538,13 @@ impl NativeWorldRenderer {
         );
     }
 
-    fn add_source_tree(&mut self, x: f32, y: f32, scale: f32, world: &NativeRenderFrame) {
+    fn add_source_tree(&mut self, x: f32, y: f32, scale: f32, variant: u8, world: &NativeRenderFrame) {
+        let (dark, mid, light) = match variant {
+            1 => (hex("#0C5A3E"), hex("#14834F"), hex("#22C55E")),
+            2 => (hex("#15513A"), hex("#2D7A42"), hex("#84CC16")),
+            3 => (hex("#6B3418"), hex("#D95B10"), hex("#FACC15")),
+            _ => (hex("#0B6B45"), hex("#15995A"), hex("#1DBA68")),
+        };
         self.add_world_ellipse(
             x,
             y + 20.0 * scale,
@@ -2553,12 +2562,12 @@ impl NativeWorldRenderer {
             hex("#4A270B"),
             world,
         );
-        self.add_world_circle(x, y - 28.0 * scale, 28.0 * scale, hex("#0B6B45"), 12, world);
+        self.add_world_circle(x, y - 28.0 * scale, 28.0 * scale, dark, 12, world);
         self.add_world_circle(
             x - 16.0 * scale,
             y - 12.0 * scale,
             19.0 * scale,
-            hex("#15995A"),
+            mid,
             10,
             world,
         );
@@ -2566,7 +2575,7 @@ impl NativeWorldRenderer {
             x + 17.0 * scale,
             y - 12.0 * scale,
             19.0 * scale,
-            hex("#1DBA68"),
+            light,
             10,
             world,
         );
@@ -2986,7 +2995,10 @@ impl NativeWorldRenderer {
         // bounds. Map those bounds to the native entity footprint rather than
         // cropping artwork per frame; this keeps wing/weapon silhouettes and
         // avoids a per-entity texture allocation.
-        let scale = if atlas_id == "horde" { 2.05 } else { 2.55 };
+        // Atlas cells preserve source-canvas padding; the old footprint made
+        // every operator look toy-sized beside the map. Scale all actor
+        // bodies consistently without allocating a texture per entity.
+        let scale = if atlas_id == "horde" { 3.28 } else { 4.08 };
         let height = entity.size * scale;
         let width = height * frame.w as f32 / frame.h as f32;
         let center_x = x;

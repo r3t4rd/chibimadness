@@ -150,6 +150,40 @@ pub fn cast(class: &str, slot: usize, context: &mut CastContext<'_>) -> Option<C
     Some(ability.execute(context))
 }
 
+/// Server-owned primary attack. The client supplies only where it aimed; the
+/// active weapon comes from the server's player record and never from a
+/// client-built projectile payload.
+pub fn basic_attack(weapon: &str, context: &mut CastContext<'_>) -> CastOutput {
+    let ability = match weapon {
+        "katana" | "sledgehammer" | "scythe" | "greatsword" => ProjectileAbility {
+            id: "basic_melee", cooldown_seconds: 0.22, kind: ProjectileKind::SlashWave,
+            count: 1, spread_radians: 0.0, speed: 14.0, damage_multiplier: 1.25,
+            range: 190.0, color: "#F8FAFC", size: 16.0, piercing: true, target_origin: false,
+        },
+        "staff" | "wand" | "grimoire" | "totem" => ProjectileAbility {
+            id: "basic_magic", cooldown_seconds: 0.18, kind: ProjectileKind::MagicOrb,
+            count: 1, spread_radians: 0.0, speed: 18.0, damage_multiplier: 1.15,
+            range: 1_050.0, color: "#A78BFA", size: 8.0, piercing: false, target_origin: false,
+        },
+        "shotgun" => ProjectileAbility {
+            id: "basic_shotgun", cooldown_seconds: 0.45, kind: ProjectileKind::Bullet,
+            count: 6, spread_radians: 0.42, speed: 22.0, damage_multiplier: 0.58,
+            range: 680.0, color: "#FDE047", size: 4.5, piercing: false, target_origin: false,
+        },
+        "cheytac" => ProjectileAbility {
+            id: "basic_cheytac", cooldown_seconds: 0.85, kind: ProjectileKind::Bullet,
+            count: 1, spread_radians: 0.0, speed: 38.0, damage_multiplier: 3.1,
+            range: 2_200.0, color: "#E2E8F0", size: 6.0, piercing: true, target_origin: false,
+        },
+        "ak47" | "mac10" | "revolver" | "pistol" | "throwing_knives" | _ => ProjectileAbility {
+            id: "basic_firearm", cooldown_seconds: 0.12, kind: ProjectileKind::Bullet,
+            count: 1, spread_radians: 0.0, speed: 24.0, damage_multiplier: 1.2,
+            range: 1_500.0, color: "#38BDF8", size: 5.0, piercing: false, target_origin: false,
+        },
+    };
+    ability.execute(context)
+}
+
 fn next_projectile_id(context: &mut CastContext<'_>) -> String {
     *context.sequence = context.sequence.wrapping_add(1);
     format!("skill_{}_{}", context.owner_id, *context.sequence)
@@ -194,5 +228,15 @@ mod tests {
         assert_eq!(output.projectiles.len(), 12);
         assert_eq!(output.projectiles[0]["ownerId"], "miku");
         assert!(cast("gunslinger", 3, &mut CastContext { owner_id: "miku", player: &player, target_x: 300.0, target_y: 200.0, sequence: &mut sequence }).is_none());
+    }
+
+    #[test]
+    fn primary_shot_uses_server_weapon_pattern() {
+        let player = json!({ "x": 100.0, "y": 200.0, "level": 3.0 });
+        let mut sequence = 0;
+        let output = basic_attack("shotgun", &mut CastContext { owner_id: "miku", player: &player, target_x: 300.0, target_y: 200.0, sequence: &mut sequence });
+        assert_eq!(output.id, "basic_shotgun");
+        assert_eq!(output.projectiles.len(), 6);
+        assert!(output.projectiles.iter().all(|projectile| projectile["ownerId"] == "miku"));
     }
 }
