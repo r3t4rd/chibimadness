@@ -152,6 +152,7 @@ export function App() {
   const [forceStaticCanvas, setForceStaticCanvas] = useState(false);
   const forceStaticCanvasRef = useRef(forceStaticCanvas);
   const [nativeUiActors, setNativeUiActors] = useState<NativeUiActor[]>([]);
+  const nativeUiActorElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const nativeWorldRenderer = nativeWorldRendererRequested && nativeWorldRendererReady;
 
   const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -730,6 +731,22 @@ export function App() {
         curEngine.introCinematic,
       );
       if (nativeWorldRendererRequested) {
+          // React reconciles labels/health at a modest cadence, but their
+          // transforms must follow the exact camera used for this native
+          // frame. Mutating only `transform` avoids layout/reconciliation
+          // work and removes the visible 12 Hz trailing motion.
+          const positionNativeUiActor = (id: string, x: number, y: number, size: number) => {
+            const element = nativeUiActorElementsRef.current.get(id);
+            if (!element) return;
+            const screenX = (x - camera.x) * camera.zoom + viewportWidth / 2;
+            const screenY = (y - camera.y) * camera.zoom + viewportHeight / 2 - size * camera.zoom * 2.08;
+            element.style.transform = `translate3d(${screenX}px, ${screenY}px, 0) translate(-50%, -100%)`;
+          };
+          (Object.values(curEngine.remotePlayers) as Player[])
+            .filter((player) => player.id !== curEngine.player.id)
+            .concat(curEngine.player)
+            .forEach((player) => positionNativeUiActor(player.id, player.x, player.y, 48));
+          Object.values(NPCS_DATABASE).forEach((npc) => positionNativeUiActor(npc.id, npc.x, npc.y, 48));
           // Nameplates and health bars are WebView/DOM UI, not Rust geometry.
           // Update at 12 Hz: enough for a legible overlay while avoiding a
           // React frame per native presentation.
@@ -1219,13 +1236,29 @@ export function App() {
             className="absolute inset-0 block w-full h-full cursor-crosshair bg-transparent"
           />
 
+          {/* The Canvas is intentionally hidden while WGPU owns the world, so
+              it cannot be the input target. This transparent DOM surface has
+              no paint commands and keeps LMB/RMB gameplay input alive. */}
+          {nativeWorldRenderer && (
+            <div
+              onContextMenu={(e) => e.preventDefault()}
+              onMouseDown={handleWorldPointerDown}
+              onMouseUp={handleWorldPointerUp}
+              className="absolute inset-0 z-20 cursor-crosshair bg-transparent"
+            />
+          )}
+
           {nativeWorldRenderer && (
             <div className="fixed inset-0 z-30 pointer-events-none font-mono select-none" aria-hidden="true">
               {nativeUiActors.map((actor) => (
                 <div
                   key={actor.id}
-                  className="absolute flex w-40 -translate-x-1/2 -translate-y-full flex-col items-center gap-0.5"
-                  style={{ left: actor.screenX, top: actor.screenY }}
+                  ref={(element) => {
+                    if (element) nativeUiActorElementsRef.current.set(actor.id, element);
+                    else nativeUiActorElementsRef.current.delete(actor.id);
+                  }}
+                  className="absolute flex w-40 flex-col items-center gap-0.5 will-change-transform"
+                  style={{ transform: `translate3d(${actor.screenX}px, ${actor.screenY}px, 0) translate(-50%, -100%)` }}
                 >
                   <div className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]">
                     {actor.label}
