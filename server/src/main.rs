@@ -1391,6 +1391,32 @@ fn monster_move_delta() -> f64 {
     WORLD_TICK.as_secs_f64() * 40.0
 }
 
+/// Returns the first normalized point on a projectile's movement segment that
+/// enters a circular hitbox. Testing only the end point lets a high-velocity
+/// shot tunnel through a target between two 20 ms world ticks.
+fn segment_circle_hit_fraction(
+    start_x: f64,
+    start_y: f64,
+    end_x: f64,
+    end_y: f64,
+    center_x: f64,
+    center_y: f64,
+    radius: f64,
+) -> Option<f64> {
+    let delta_x = end_x - start_x;
+    let delta_y = end_y - start_y;
+    let length_squared = delta_x * delta_x + delta_y * delta_y;
+    let fraction = if length_squared <= f64::EPSILON {
+        0.0
+    } else {
+        (((center_x - start_x) * delta_x + (center_y - start_y) * delta_y) / length_squared)
+            .clamp(0.0, 1.0)
+    };
+    let closest_x = start_x + delta_x * fraction;
+    let closest_y = start_y + delta_y * fraction;
+    ((center_x - closest_x).hypot(center_y - closest_y) <= radius).then_some(fraction)
+}
+
 fn tick_combat_world(state: &mut WorldState) {
     let now = Instant::now();
     let step = monster_move_delta();
@@ -1508,8 +1534,10 @@ fn tick_combat_world(state: &mut WorldState) {
     world.projectiles.extend(enemy_projectiles);
     let mut remaining = Vec::with_capacity(world.projectiles.len());
     for mut projectile in std::mem::take(&mut world.projectiles) {
-        let x = number(&projectile, "x", 0.0) + number(&projectile, "vx", 0.0) * shot_step;
-        let y = number(&projectile, "y", 0.0) + number(&projectile, "vy", 0.0) * shot_step;
+        let start_x = number(&projectile, "x", 0.0);
+        let start_y = number(&projectile, "y", 0.0);
+        let x = start_x + number(&projectile, "vx", 0.0) * shot_step;
+        let y = start_y + number(&projectile, "vy", 0.0) * shot_step;
         let travelled = number(&projectile, "distanceTraveled", 0.0)
             + number(&projectile, "vx", 0.0).hypot(number(&projectile, "vy", 0.0)) * shot_step;
         set_number(&mut projectile, "x", x);
@@ -1522,17 +1550,57 @@ fn tick_combat_world(state: &mut WorldState) {
             .to_owned();
         let damage = number(&projectile, "damage", 1.0).clamp(1.0, 250.0);
         let size = number(&projectile, "size", 4.0).clamp(2.0, 32.0);
+        let piercing = projectile
+            .get("piercing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let mut consumed = false;
         if player_records.contains_key(&owner) {
-            for monster in world.monsters.values_mut() {
-                if number(monster, "hp", 0.0) <= 0.0
-                    || monster.get("id").and_then(Value::as_str) == Some(owner.as_str())
-                {
-                    continue;
-                }
-                if (number(monster, "x", 0.0) - x).hypot(number(monster, "y", 0.0) - y)
-                    <= 30.0 + size
-                {
+            let prior_hits = projectile
+                .get("hitMonsterIds")
+                .and_then(Value::as_array)
+                .map(|hits| {
+                    hits.iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut hit_targets = world
+                .monsters
+                .iter()
+                .filter_map(|(id, monster)| {
+                    if number(monster, "hp", 0.0) <= 0.0
+                        || id == &owner
+                        || prior_hits.iter().any(|previous| previous == id)
+                    {
+                        return None;
+                    }
+                    segment_circle_hit_fraction(
+                        start_x,
+                        start_y,
+                        x,
+                        y,
+                        number(monster, "x", 0.0),
+                        number(monster, "y", 0.0),
+                        30.0 + size,
+                    )
+                    .map(|fraction| (fraction, id.clone()))
+                })
+                .collect::<Vec<_>>();
+            hit_targets.sort_by(|left, right| {
+                left.0
+                    .partial_cmp(&right.0)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            if !piercing {
+                hit_targets.truncate(1);
+            }
+            let mut hit_ids = prior_hits
+                .iter()
+                .map(|id| (*id).to_owned())
+                .collect::<Vec<_>>();
+            for (_, monster_id) in hit_targets {
+                if let Some(monster) = world.monsters.get_mut(&monster_id) {
                     let next_hp = (number(monster, "hp", 0.0) - damage).max(0.0);
                     set_number(monster, "hp", next_hp);
                     set_number(monster, "hitFlash", 0.2);
@@ -1552,17 +1620,31 @@ fn tick_combat_world(state: &mut WorldState) {
                             );
                         }
                     }
-                    consumed = true;
-                    break;
+                    hit_ids.push(monster_id);
                 }
+            }
+            if piercing {
+                if hit_ids.len() > prior_hits.len() {
+                    projectile["hitMonsterIds"] = json!(hit_ids);
+                }
+            } else {
+                consumed = hit_ids.len() > prior_hits.len();
             }
         } else {
             for player in player_records.values_mut() {
                 if player_cannot_be_hurt(player, now) {
                     continue;
                 }
-                if (number(&player.value, "x", 0.0) - x).hypot(number(&player.value, "y", 0.0) - y)
-                    <= 26.0 + size
+                if segment_circle_hit_fraction(
+                    start_x,
+                    start_y,
+                    x,
+                    y,
+                    number(&player.value, "x", 0.0),
+                    number(&player.value, "y", 0.0),
+                    26.0 + size,
+                )
+                .is_some()
                 {
                     let hp = (number(&player.value, "hp", 100.0) - damage).max(0.0);
                     set_number(&mut player.value, "hp", hp);
@@ -2015,6 +2097,49 @@ mod tests {
                 0.0
             ),
             60.0
+        );
+        assert!(world.projectiles.is_empty());
+    }
+
+    #[test]
+    fn combat_tick_sweeps_fast_projectiles_through_monster_hitboxes() {
+        let (_, player_value) =
+            sanitize_player(&player("player_one", 100.0, 100.0)).expect("valid player");
+        // At 60 units/sec simulation scale the 50-unit velocity advances 60
+        // units per tick. The old endpoint-only check saw x=160 and skipped
+        // the monster at x=125 despite the path crossing its hit circle.
+        let monsters = sanitize_world_monsters(&[json!({
+            "id": "monster_one", "x": 125.0, "y": 100.0,
+            "hp": 100.0, "maxHp": 100.0, "speed": 1.0, "atk": 10.0,
+        })])
+        .expect("valid monster manifest");
+        let mut state = WorldState::default();
+        state.players.insert(
+            "player_one".into(),
+            PlayerRecord {
+                session_id: 1,
+                value: player_value,
+                respawn_at: None,
+                immune_until: None,
+                resume_token: "test-token".into(),
+            },
+        );
+        state.combat_world = Some(CombatWorld {
+            monsters,
+            projectiles: vec![json!({
+                "id": "fast_projectile", "ownerId": "player_one", "type": "bullet",
+                "x": 100.0, "y": 100.0, "vx": 50.0, "vy": 0.0,
+                "damage": 40.0, "range": 400.0, "distanceTraveled": 0.0,
+                "color": "#fff", "size": 4.0,
+            })],
+        });
+
+        tick_combat_world(&mut state);
+
+        let world = state.combat_world.expect("world remains available");
+        assert_eq!(
+            number(world.monsters.get("monster_one").expect("monster"), "hp", 0.0),
+            60.0,
         );
         assert!(world.projectiles.is_empty());
     }
