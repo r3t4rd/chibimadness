@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-use ab_glyph::FontArc;
+use ab_glyph::{Font, FontArc, ScaleFont, point as font_point};
 use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use yuyib::render::{RenderFrame, wgpu};
@@ -298,6 +298,12 @@ pub struct NativeRenderEntity {
     pub tracer_width: f32,
     #[serde(default)]
     pub distance_traveled: f32,
+    /// Short world-space labels (names and interaction badges) are rasterized
+    /// by the native WGPU path, never by a transparent Canvas overlay.
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub label_badge: String,
     #[serde(default)]
     pub chibi: Option<NativeChibiRecipe>,
     #[serde(default)]
@@ -523,6 +529,8 @@ impl NativeWorldState {
                 && entity.weapon_type.len() <= 32
                 && entity.effect_type.len() <= 32
                 && entity.sprite_key.len() <= 96
+                && entity.label.len() <= 96
+                && entity.label_badge.len() <= 32
                 && entity.chibi.as_ref().is_none_or(visual_recipe_is_bounded)
                 && entity
                     .animation
@@ -1328,14 +1336,6 @@ impl NativeWorldRenderer {
                     pass.draw(0..dynamic_vertex_count, 0..1);
                 }
             }
-            if overlay_vertex_count > 0 {
-                pass.set_pipeline(pipeline);
-                pass.set_bind_group(0, camera_bind_group, &[]);
-                if let Some(overlay_vertex_buffer) = overlay_vertex_buffer {
-                    pass.set_vertex_buffer(0, overlay_vertex_buffer.slice(..));
-                    pass.draw(0..overlay_vertex_count, 0..1);
-                }
-            }
             if let Some(sprite_pipeline) = sprite_pipeline {
                 pass.set_pipeline(sprite_pipeline);
                 for atlas in sprite_atlases {
@@ -1351,6 +1351,14 @@ impl NativeWorldRenderer {
                     pass.set_bind_group(0, bind_group, &[]);
                     pass.set_vertex_buffer(0, vertex_buffer.slice(..));
                     pass.draw(0..vertex_count, 0..1);
+                }
+            }
+            if overlay_vertex_count > 0 {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, camera_bind_group, &[]);
+                if let Some(overlay_vertex_buffer) = overlay_vertex_buffer {
+                    pass.set_vertex_buffer(0, overlay_vertex_buffer.slice(..));
+                    pass.draw(0..overlay_vertex_count, 0..1);
                 }
             }
         });
@@ -2075,6 +2083,17 @@ impl NativeWorldRenderer {
             let y = entity.y + entity.velocity_y * prediction_seconds;
             self.add_entity(entity, x, y, world);
         }
+        // Nameplates are a final native overlay: moving sprites can never
+        // cover them and no Canvas compositor has to wake up for text.
+        for entity in &world.entities {
+            if entity.label.is_empty() && entity.label_badge.is_empty() {
+                continue;
+            }
+            let x = entity.x + entity.velocity_x * prediction_seconds;
+            let y = entity.y + entity.velocity_y * prediction_seconds;
+            self.add_entity_label(entity, x, y, world);
+        }
+        self.overlay_vertices_dirty = true;
     }
 
     fn scene_vertices(
@@ -2794,6 +2813,97 @@ impl NativeWorldRenderer {
             "popup" => self.add_popup(entity, x, y, world),
             "monster" if entity.effect_type == "forest_wolf" => self.add_forest_wolf(entity, x, y, world),
             _ => self.add_humanoid(entity, x, y, world),
+        }
+    }
+
+    fn add_entity_label(
+        &mut self,
+        entity: &NativeRenderEntity,
+        x: f32,
+        y: f32,
+        world: &NativeRenderFrame,
+    ) {
+        let name_y = y - entity.size * 1.52;
+        if !entity.label.is_empty() {
+            self.add_nameplate(
+                &entity.label,
+                x,
+                name_y,
+                8.5,
+                [0.02, 0.04, 0.10, 0.92],
+                [0.94, 0.96, 1.0, 1.0],
+                world,
+            );
+        }
+        if !entity.label_badge.is_empty() {
+            self.add_nameplate(
+                &entity.label_badge,
+                x,
+                name_y + 15.0,
+                7.0,
+                [0.96, 0.55, 0.04, 0.96],
+                [0.05, 0.08, 0.12, 1.0],
+                world,
+            );
+        }
+    }
+
+    /// A deliberately bounded, small text path for entity nameplates. Unlike
+    /// Canvas text it is tessellated directly into the native final overlay,
+    /// which remains correct while the camera is predicted at display rate.
+    fn add_nameplate(
+        &mut self,
+        value: &str,
+        x: f32,
+        y: f32,
+        size: f32,
+        background: [f32; 4],
+        foreground: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let Some(font) = self.text_font.clone() else {
+            return;
+        };
+        let value = value.chars().take(48).collect::<String>();
+        if value.is_empty() {
+            return;
+        }
+        let scaled = font.as_scaled(size);
+        let glyphs = value
+            .chars()
+            .map(|character| font.glyph_id(character))
+            .collect::<Vec<_>>();
+        let width = glyphs
+            .iter()
+            .map(|glyph| scaled.h_advance(*glyph))
+            .sum::<f32>();
+        let plate_width = (width + 8.0).max(18.0);
+        let plate_height = size + 6.0;
+        self.add_overlay_world_rect(x, y, plate_width, plate_height, background, world);
+
+        let mut pen_x = x - width * 0.5;
+        let baseline_y = y + (scaled.ascent() + scaled.descent()) * 0.5;
+        for glyph_id in glyphs {
+            let glyph = glyph_id.with_scale_and_position(size, font_point(pen_x, baseline_y));
+            if let Some(outline) = font.outline_glyph(glyph) {
+                let bounds = outline.px_bounds();
+                outline.draw(|pixel_x, pixel_y, coverage| {
+                    if coverage <= 0.08 {
+                        return;
+                    }
+                    let mut color = foreground;
+                    color[3] *= coverage;
+                    self.add_overlay_world_rect(
+                        bounds.min.x + pixel_x as f32 + 0.5,
+                        bounds.min.y + pixel_y as f32 + 0.5,
+                        1.0,
+                        1.0,
+                        color,
+                        world,
+                    );
+                });
+            }
+            pen_x += scaled.h_advance(glyph_id);
         }
     }
 
@@ -4908,6 +5018,49 @@ impl NativeWorldRenderer {
         let bottom_right = self.world_to_ndc(x + half_width, y + half_height, world);
         let bottom_left = self.world_to_ndc(x - half_width, y + half_height, world);
         self.vertices.extend_from_slice(&[
+            Vertex {
+                position: top_left,
+                color,
+            },
+            Vertex {
+                position: bottom_left,
+                color,
+            },
+            Vertex {
+                position: bottom_right,
+                color,
+            },
+            Vertex {
+                position: top_left,
+                color,
+            },
+            Vertex {
+                position: bottom_right,
+                color,
+            },
+            Vertex {
+                position: top_right,
+                color,
+            },
+        ]);
+    }
+
+    fn add_overlay_world_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: [f32; 4],
+        world: &NativeRenderFrame,
+    ) {
+        let half_width = width * 0.5;
+        let half_height = height * 0.5;
+        let top_left = self.world_to_ndc(x - half_width, y - half_height, world);
+        let top_right = self.world_to_ndc(x + half_width, y - half_height, world);
+        let bottom_right = self.world_to_ndc(x + half_width, y + half_height, world);
+        let bottom_left = self.world_to_ndc(x - half_width, y + half_height, world);
+        self.overlay_vertices.extend_from_slice(&[
             Vertex {
                 position: top_left,
                 color,

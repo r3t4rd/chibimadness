@@ -33,7 +33,7 @@ import { SettingsModal } from './components/SettingsModal';
 
 import { BossBar } from './components/BossBar';
 import { MobileControls } from './components/MobileControls';
-import { CLASS_DEFAULTS } from './game/constants';
+import { CLASS_DEFAULTS, NPCS_DATABASE } from './game/constants';
 import {
   getContentBuildInfo,
   isNativeWorldRendererEnabled,
@@ -742,8 +742,11 @@ export function App() {
               spriteKey: spriteKey ?? undefined,
             };
           });
+          // The server can retain a stale echo under the local id. That echo
+          // must never replace client prediction in the native world frame.
           const nativePlayerSprites: NativeWorldRenderFrame['entities'] = (Object.values(curEngine.remotePlayers) as Player[])
-            .concat(curEngine.remotePlayers[curEngine.player.id] ? [] : [curEngine.player])
+            .filter((player) => player.id !== curEngine.player.id)
+            .concat(curEngine.player)
             .map((player) => {
               const spriteKey = getNativePlayerSpriteFrame(player);
               return {
@@ -761,6 +764,7 @@ export function App() {
                 facingLeft: player.facing === 'left',
                 layer: Math.round(player.y),
                 weaponType: player.equipment.weapon?.gunType,
+                label: `Lv.${player.stats.level} ${player.name}`,
                 chibi: player.chibi,
                 animation: {
                   state: player.state,
@@ -783,6 +787,25 @@ export function App() {
             projectileType: projectile.type, projectileRange: projectile.range,
             tracerLength: projectile.tracerLength, tracerWidth: projectile.tracerWidth,
             distanceTraveled: projectile.distanceTraveled,
+          }));
+          const nativeNpcs: NativeWorldRenderFrame['entities'] = Object.values(NPCS_DATABASE).map((npc) => ({
+            id: npc.id,
+            kind: 'npc',
+            faction: '',
+            x: npc.x,
+            y: npc.y,
+            size: 48,
+            color: [1, 1, 1, 1] as NativeColor,
+            velocityX: 0,
+            velocityY: 0,
+            hasVelocity: false,
+            hpRatio: 1,
+            facingLeft: false,
+            layer: Math.round(npc.y),
+            label: `Lv.1 ${npc.name}`,
+            labelBadge: '[E] TALK',
+            chibi: npc.avatarChibi,
+            animation: { state: 'idle', spawnBounce: 1 },
           }));
           const nativeParticles: NativeWorldRenderFrame['entities'] = curEngine.particles.map((particle, index) => ({
             id: `particle:${index}:${particle.x}:${particle.y}`,
@@ -830,7 +853,7 @@ export function App() {
             timeSeconds: timeInSeconds,
             theme: curEngine.player.currentZone,
             entities: [
-              ...nativeDecals, ...nativeDrops, ...nativeCars, ...nativeSummons,
+              ...nativeDecals, ...nativeDrops, ...nativeCars, ...nativeSummons, ...nativeNpcs,
               ...nativeMonsterSprites, ...nativePlayerSprites, ...nativeProjectiles,
               ...nativeParticles, ...nativePopups,
             ],

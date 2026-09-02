@@ -41,6 +41,9 @@ export type NativeWorldRenderFrame = {
     tracerLength?: number;
     tracerWidth?: number;
     distanceTraveled?: number;
+    /** Native world-space nameplate. It is tessellated by Rust, never Canvas. */
+    label?: string;
+    labelBadge?: string;
     chibi?: {
       hairStyle?: string;
       frontHairStyle?: string;
