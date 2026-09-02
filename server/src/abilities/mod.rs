@@ -62,6 +62,10 @@ struct ProjectileAbility {
     range: f64,
     color: &'static str,
     size: f64,
+    /// Visual width of one travelling wave. It is server-authored alongside
+    /// the trajectory, so a client cannot turn a three-wave attack into a
+    /// different presentation or collision pattern.
+    visual_arc_radians: f64,
     piercing: bool,
     target_origin: bool,
 }
@@ -96,6 +100,7 @@ impl Ability for ProjectileAbility {
                 "x": x, "y": y, "vx": shot_angle.cos() * self.speed, "vy": shot_angle.sin() * self.speed,
                 "damage": (atk * self.damage_multiplier).round(), "range": self.range,
                 "distanceTraveled": 0.0, "color": self.color, "size": self.size,
+                "arcRadians": self.visual_arc_radians,
                 "piercing": self.piercing, "visualOffsetY": visual_offset_y,
                 // The visible Reaper crescent is much wider than its centre
                 // point. Preserve that volume for server collision too.
@@ -136,20 +141,20 @@ impl Ability for DashAbility {
 }
 
 static GUNSLINGER: [ProjectileAbility; 3] = [
-    ProjectileAbility { id: "skill_gatling_burst", cooldown_seconds: 2.2, kind: ProjectileKind::Bullet, count: 12, spread_radians: 0.16, speed: 24.0, damage_multiplier: 0.95, range: 1_400.0, color: "#F472B6", size: 5.0, piercing: false, target_origin: false },
-    ProjectileAbility { id: "skill_bullet_fan", cooldown_seconds: 3.2, kind: ProjectileKind::Bullet, count: 9, spread_radians: 70.0_f64.to_radians(), speed: 22.0, damage_multiplier: 1.3, range: 1_300.0, color: "#38BDF8", size: 6.0, piercing: true, target_origin: false },
-    ProjectileAbility { id: "skill_aerial_aimbot", cooldown_seconds: 7.0, kind: ProjectileKind::Bullet, count: 6, spread_radians: 1.25, speed: 24.0, damage_multiplier: 1.7, range: 1_600.0, color: "#FDE047", size: 6.0, piercing: true, target_origin: false },
+    ProjectileAbility { id: "skill_gatling_burst", cooldown_seconds: 2.2, kind: ProjectileKind::Bullet, count: 12, spread_radians: 0.16, speed: 24.0, damage_multiplier: 0.95, range: 1_400.0, color: "#F472B6", size: 5.0, visual_arc_radians: 0.9, piercing: false, target_origin: false },
+    ProjectileAbility { id: "skill_bullet_fan", cooldown_seconds: 3.2, kind: ProjectileKind::Bullet, count: 9, spread_radians: 70.0_f64.to_radians(), speed: 22.0, damage_multiplier: 1.3, range: 1_300.0, color: "#38BDF8", size: 6.0, visual_arc_radians: 0.9, piercing: true, target_origin: false },
+    ProjectileAbility { id: "skill_aerial_aimbot", cooldown_seconds: 7.0, kind: ProjectileKind::Bullet, count: 6, spread_radians: 1.25, speed: 24.0, damage_multiplier: 1.7, range: 1_600.0, color: "#FDE047", size: 6.0, visual_arc_radians: 0.9, piercing: true, target_origin: false },
 ];
 
 static SWORDMASTER: [ProjectileAbility; 3] = [
-    ProjectileAbility { id: "skill_spinning_blade", cooldown_seconds: 4.0, kind: ProjectileKind::SlashWave, count: 8, spread_radians: std::f64::consts::TAU, speed: 14.0, damage_multiplier: 1.5, range: 500.0, color: "#FDE047", size: 18.0, piercing: true, target_origin: false },
-    ProjectileAbility { id: "skill_slash_scatter", cooldown_seconds: 3.0, kind: ProjectileKind::SlashWave, count: 3, spread_radians: 0.7, speed: 20.0, damage_multiplier: 1.25, range: 320.0, color: "#A855F7", size: 16.0, piercing: true, target_origin: false },
-    ProjectileAbility { id: "skill_blade_storm", cooldown_seconds: 9.0, kind: ProjectileKind::SlashWave, count: 12, spread_radians: std::f64::consts::TAU, speed: 18.0, damage_multiplier: 1.8, range: 520.0, color: "#F8FAFC", size: 18.0, piercing: true, target_origin: true },
+    ProjectileAbility { id: "skill_spinning_blade", cooldown_seconds: 4.0, kind: ProjectileKind::SlashWave, count: 8, spread_radians: std::f64::consts::TAU, speed: 14.0, damage_multiplier: 1.5, range: 500.0, color: "#FDE047", size: 18.0, visual_arc_radians: 0.9, piercing: true, target_origin: false },
+    ProjectileAbility { id: "skill_slash_scatter", cooldown_seconds: 3.0, kind: ProjectileKind::SlashWave, count: 3, spread_radians: 0.7, speed: 20.0, damage_multiplier: 1.25, range: 320.0, color: "#A855F7", size: 16.0, visual_arc_radians: 0.9, piercing: true, target_origin: false },
+    ProjectileAbility { id: "skill_blade_storm", cooldown_seconds: 9.0, kind: ProjectileKind::SlashWave, count: 12, spread_radians: std::f64::consts::TAU, speed: 18.0, damage_multiplier: 1.8, range: 520.0, color: "#F8FAFC", size: 18.0, visual_arc_radians: 0.9, piercing: true, target_origin: true },
 ];
 
 static CYBERMAGE_PROJECTILES: [ProjectileAbility; 2] = [
-    ProjectileAbility { id: "skill_meteor_rain", cooldown_seconds: 8.0, kind: ProjectileKind::MagicOrb, count: 24, spread_radians: 1.1, speed: 16.0, damage_multiplier: 1.8, range: 700.0, color: "#FB7185", size: 14.0, piercing: false, target_origin: true },
-    ProjectileAbility { id: "skill_hellhounds", cooldown_seconds: 6.0, kind: ProjectileKind::MagicOrb, count: 8, spread_radians: std::f64::consts::TAU, speed: 30.0, damage_multiplier: 1.9, range: 600.0, color: "#22D3EE", size: 10.0, piercing: true, target_origin: true },
+    ProjectileAbility { id: "skill_meteor_rain", cooldown_seconds: 8.0, kind: ProjectileKind::MagicOrb, count: 24, spread_radians: 1.1, speed: 16.0, damage_multiplier: 1.8, range: 700.0, color: "#FB7185", size: 14.0, visual_arc_radians: 0.9, piercing: false, target_origin: true },
+    ProjectileAbility { id: "skill_hellhounds", cooldown_seconds: 6.0, kind: ProjectileKind::MagicOrb, count: 8, spread_radians: std::f64::consts::TAU, speed: 30.0, damage_multiplier: 1.9, range: 600.0, color: "#22D3EE", size: 10.0, visual_arc_radians: 0.9, piercing: true, target_origin: true },
 ];
 
 static CYBERMAGE_DASH: DashAbility = DashAbility { id: "skill_titan_golem", cooldown_seconds: 7.0, distance: 450.0, damage_multiplier: 2.2, color: "#67E8F9" };
@@ -174,33 +179,34 @@ pub fn basic_attack(weapon: &str, context: &mut CastContext<'_>) -> CastOutput {
     let ability = match weapon {
         "scythe" => ProjectileAbility {
             id: "basic_scythe", cooldown_seconds: 0.48, kind: ProjectileKind::SlashWave,
-            count: 3, spread_radians: 0.9, speed: 10.0, damage_multiplier: 0.4,
-            range: 180.0, color: "#84CC16", size: 26.0, piercing: true, target_origin: false,
+            // One wave tracks the cursor; the two side waves are exactly +/-20 degrees.
+            count: 3, spread_radians: 40.0_f64.to_radians(), speed: 10.0, damage_multiplier: 0.4,
+            range: 180.0, color: "#84CC16", size: 26.0, visual_arc_radians: 30.0_f64.to_radians(), piercing: true, target_origin: false,
         },
         "katana" | "sledgehammer" | "greatsword" => ProjectileAbility {
             id: "basic_melee", cooldown_seconds: 0.22, kind: ProjectileKind::SlashWave,
             count: 1, spread_radians: 0.0, speed: 14.0, damage_multiplier: 1.25,
-            range: 190.0, color: "#F8FAFC", size: 16.0, piercing: true, target_origin: false,
+            range: 190.0, color: "#F8FAFC", size: 16.0, visual_arc_radians: 0.9, piercing: true, target_origin: false,
         },
         "staff" | "wand" | "grimoire" | "totem" => ProjectileAbility {
             id: "basic_magic", cooldown_seconds: 0.18, kind: ProjectileKind::MagicOrb,
             count: 1, spread_radians: 0.0, speed: 18.0, damage_multiplier: 1.15,
-            range: 1_050.0, color: "#A78BFA", size: 8.0, piercing: false, target_origin: false,
+            range: 1_050.0, color: "#A78BFA", size: 8.0, visual_arc_radians: 0.9, piercing: false, target_origin: false,
         },
         "shotgun" => ProjectileAbility {
             id: "basic_shotgun", cooldown_seconds: 0.45, kind: ProjectileKind::Bullet,
             count: 6, spread_radians: 0.42, speed: 22.0, damage_multiplier: 0.58,
-            range: 680.0, color: "#FDE047", size: 4.5, piercing: false, target_origin: false,
+            range: 680.0, color: "#FDE047", size: 4.5, visual_arc_radians: 0.9, piercing: false, target_origin: false,
         },
         "cheytac" => ProjectileAbility {
             id: "basic_cheytac", cooldown_seconds: 0.85, kind: ProjectileKind::Bullet,
             count: 1, spread_radians: 0.0, speed: 38.0, damage_multiplier: 3.1,
-            range: 2_200.0, color: "#E2E8F0", size: 6.0, piercing: true, target_origin: false,
+            range: 2_200.0, color: "#E2E8F0", size: 6.0, visual_arc_radians: 0.9, piercing: true, target_origin: false,
         },
         "ak47" | "mac10" | "revolver" | "pistol" | "throwing_knives" | _ => ProjectileAbility {
             id: "basic_firearm", cooldown_seconds: 0.12, kind: ProjectileKind::Bullet,
             count: 1, spread_radians: 0.0, speed: 24.0, damage_multiplier: 1.2,
-            range: 1_500.0, color: "#38BDF8", size: 5.0, piercing: false, target_origin: false,
+            range: 1_500.0, color: "#38BDF8", size: 5.0, visual_arc_radians: 0.9, piercing: false, target_origin: false,
         },
     };
     let mut output = ability.execute(context);
@@ -218,7 +224,7 @@ pub fn basic_attack(weapon: &str, context: &mut CastContext<'_>) -> CastOutput {
         // Each animated crescent has its own server-side sweep. This does not
         // depend on the WebView visual projectile surviving long enough to
         // overlap a replicated target.
-        for offset in [-0.45_f64, 0.0, 0.45] {
+        for offset in [-20.0_f64.to_radians(), 0.0, 20.0_f64.to_radians()] {
             output.cone_hits.push(ConeHit {
                 origin_x,
                 origin_y,
@@ -308,15 +314,24 @@ mod tests {
             projectile["type"] == "slash_wave"
                 && projectile["color"] == "#84CC16"
                 && projectile["piercing"] == true
+                && projectile["arcRadians"] == json!(30.0_f64.to_radians())
         }));
+        let ids = output.projectiles.iter().map(|projectile| projectile["id"].as_str().unwrap()).collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), 3, "each Reaper wave must have its own replicated identity");
+        let angles = output.projectiles.iter().map(|projectile| {
+            projectile["vy"].as_f64().unwrap().atan2(projectile["vx"].as_f64().unwrap())
+        }).collect::<Vec<_>>();
+        assert!((angles[0] + 20.0_f64.to_radians()).abs() < 1e-9);
+        assert!(angles[1].abs() < 1e-9);
+        assert!((angles[2] - 20.0_f64.to_radians()).abs() < 1e-9);
         assert_eq!(output.cone_hits.len(), 4);
         assert_eq!(output.cone_hits[0].range, 140.0);
         assert_eq!(output.cone_hits[0].arc_radians, 2.5);
         assert_eq!(output.cone_hits[0].damage, 30.0);
         assert_eq!(output.cone_hits[1].range, 180.0);
         assert_eq!(output.cone_hits[1].damage, 6.0);
-        assert_eq!(output.cone_hits[1].angle, -0.45);
-        assert_eq!(output.cone_hits[3].angle, 0.45);
+        assert_eq!(output.cone_hits[1].angle, -20.0_f64.to_radians());
+        assert_eq!(output.cone_hits[3].angle, 20.0_f64.to_radians());
         assert!(output.projectiles.iter().all(|projectile| projectile["collisionRadius"] == 80.0));
     }
 }

@@ -5061,7 +5061,8 @@ function drawProjectiles(ctx: CanvasRenderingContext2D, projectiles: Projectile[
       ctx.shadowColor = p.color || '#38BDF8';
       ctx.shadowBlur = 8;
       ctx.beginPath();
-      ctx.arc(0, 0, p.size || 16, -Math.PI * 0.45, Math.PI * 0.45);
+      const arcRadians = Math.max(0.1, Math.min(Math.PI * 2, p.arcRadians ?? Math.PI * 0.9));
+      ctx.arc(0, 0, p.size || 16, -arcRadians * 0.5, arcRadians * 0.5);
       ctx.stroke();
     } else if (p.type === 'magic_orb' || p.type === 'fireball') {
       const r = p.size || 8;

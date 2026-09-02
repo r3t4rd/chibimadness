@@ -1031,6 +1031,8 @@ export interface Projectile {
   damage: number;
   range: number;
   distanceTraveled: number;
+  /** Server-authored angular width for travelling slash-wave presentation. */
+  arcRadians?: number;
   /**
    * Screen-space launch offset. It lets a projectile originate at an elevated
    * character without changing its authoritative world-space collision path.

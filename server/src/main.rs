@@ -2258,9 +2258,9 @@ mod tests {
             owner_id: "reaper", player: &player_value, target_x: 300.0, target_y: 100.0, sequence: &mut sequence,
         });
         let monsters = sanitize_world_monsters(&[json!({
-            // This sits within the large +0.45 rad crescent volume, far enough
-            // away that the 140-unit immediate center sweep cannot explain it.
-            "id": "outer_wave_target", "x": 250.0, "y": 245.0,
+            // This sits on the +20 degree outer crescent, far enough away
+            // that the 140-unit immediate center sweep cannot explain it.
+            "id": "outer_wave_target", "x": 250.0, "y": 155.0,
             "hp": 100.0, "maxHp": 100.0, "speed": 0.5, "atk": 10.0,
         })]).expect("valid monster manifest");
         let mut state = WorldState::default();
@@ -2275,7 +2275,9 @@ mod tests {
         }
 
         let world = state.combat_world.expect("world remains available");
-        assert_eq!(number(world.monsters.get("outer_wave_target").expect("monster"), "hp", 0.0), 95.0);
+        // The server sweep lands at cast time and the matching travelling
+        // outer crescent lands on its path afterwards.
+        assert_eq!(number(world.monsters.get("outer_wave_target").expect("monster"), "hp", 0.0), 90.0);
     }
 
     #[test]
