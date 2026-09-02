@@ -750,18 +750,11 @@ export function App() {
               if (screenX < -180 || screenX > viewportWidth + 180 || screenY < -90 || screenY > viewportHeight + 90) return null;
               return { id, label, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
             };
+            // Enemy atlas cells already contain their source nameplate and
+            // health presentation. A second DOM plate sits above it and can
+            // only advance at WebView cadence, so it looks detached from a
+            // 240 Hz native sprite. Keep DOM world UI for operators/NPCs.
             const actors = [
-              ...curEngine.monsters
-                .filter((monster) => monster.hp > 0)
-                .map((monster) => screenActor(
-                  monster.id,
-                  `Lv.${monster.level ?? 1} ${monster.name}`,
-                  monster.x,
-                  monster.y,
-                  monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
-                  monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
-                  true,
-                )),
               ...(Object.values(curEngine.remotePlayers) as Player[])
                 .filter((player) => player.id !== curEngine.player.id)
                 .concat(curEngine.player)
