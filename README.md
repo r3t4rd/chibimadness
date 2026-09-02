@@ -1,129 +1,188 @@
-# ChibiVerse MMORPG (ChibiMadness)
+# ChibiMadness
 
-Многопользовательская 2D MMORPG в стиле Chibi с открытым миром, транспортом, прокачкой, крафтом, квестами, диалогами с NPC, мировыми боссами и сетевым коопом в реальном времени.
+ChibiMadness — проект и Windows-дистрибутив 2D action RPG, которая внутри web-клиента называется ChibiVerse MMORPG. В одном репозитории находятся браузерная игра, authoritative Rust-сервер, Windows WebView-клиент, установщик и release workflow.
 
-> Основной репозиторий игры, desktop-клиента и production multiplayer-сервера. Больше не нужно вручную переносить изменения между отдельными папками: веб-игра живёт в корне, Rust-сервер — в [`server/`](server), Windows-клиент WebView — в [`desktop/`](desktop).
+В игре уже реализованы три класса (gunslinger, swordmaster, cybermage), стрельба и ближний бой, классовые навыки, эволюции, транспорт и скейтборд, здания с несколькими этажами, квесты, крафт, экипировка, боссы, Nullspace/horde-режим и общий сетевой бой.
 
-## Релизы Windows
+## Карта runtime
 
-Создай и отправь тег — GitHub Actions соберёт `.exe`, встроит в него текущий веб-бандл и создаст GitHub Release. По умолчанию клиент подключается к `wss://testgame.zei.su/ws`.
+| Часть | Точка входа | Назначение |
+| --- | --- | --- |
+| Web-клиент | **src/main.tsx**, **src/App.tsx** | React-интерфейс, Canvas 2D, ввод и локальное сохранение операторов |
+| Игровой движок | **src/game/useGameEngine.ts** | Игровой цикл, бой, физика, коллизии, здания, транспорт и переходы между режимами |
+| Локальный web-сервер | **server.ts** | Express, Vite middleware, /api/health и базовый WebSocket-релей для разработки |
+| Production world server | **server/src/main.rs** | Authoritative состояние игроков, мобов, снарядов, урона и Nullspace |
+| NPC runtime | **server/src/ai.rs** | Utility AI, архетипы, память цели, телеграфы, attack tokens и уровни 1–40 |
+| Windows-клиент | **desktop/src/launcher.rs**, **desktop/src/main.rs** | Стабильный launcher, обновляемый WebView game host, WSS и проверяемые web/native updates |
+| Native renderer | **src/game/renderScene.ts**, **desktop/src/scene_executor.rs** | Экспериментальная запись Canvas-команд и их выполнение через Rust/WGPU |
 
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+**server.ts** и **server/** — разные серверы. Первый нужен для быстрого web-разработческого цикла. Rust-сервер используется там, где мир и бой должны быть authoritative.
 
-В Release публикуются portable `ChibiMadness-Portable-<version>.zip` и рекомендуемый `ChibiMadness-Setup-<version>.exe`. Setup позволяет выбрать папку установки, создаёт Start Menu/опциональный desktop shortcut и удаляется из Windows Apps. Это per-user установщик без UAC; стандартная папка — `%LOCALAPPDATA%\Programs\ChibiMadness`.
+## Быстрый старт
 
-Также workflow можно запустить вручную во вкладке **Actions**: в этом случае `.exe` будет доступен как artifact запуска. Чтобы вручную указать другой сервер при старте, используй:
+### Требования
 
-```powershell
-.\chibimadness-desktop.exe --server wss://example.com/ws
-```
+- Node.js 22 и npm;
+- современный браузер с Canvas 2D, Web Audio и WebSocket;
+- Rust stable с поддержкой edition 2024 — только для **server/** и **desktop/**;
+- Windows WebView2 Runtime и MSVC toolchain — только для desktop-сборки.
 
-Desktop uses the original Canvas2D world renderer by default, so the shipped
-client preserves the game's established map and Chibi visuals. The Rust/WGPU
-world renderer remains available as an experimental performance path; it does
-not yet have visual parity with the original renderer and must be enabled
-explicitly:
+### Web-разработка
 
-```powershell
-.\chibimadness-desktop.exe --native-renderer
-```
-
-### Hot updates без замены `.exe`
-
-Начиная с desktop-клиента с updater, каждый GitHub Release содержит `web-patch.zip` и `patch-manifest.json`. При запуске game host берёт последнюю проверенную web-версию: TS/JS-логику, карту, объекты, UI и ассеты можно менять последующими релизами без новой загрузки native runtime.
-
-Patch cache находится в `%LOCALAPPDATA%\ChibiMadness\web-patches`. Bundle проверяется по списку файлов, размеру и SHA-256 перед запуском; неполная загрузка игнорируется, а после успешного обновления остаётся только активная версия cache.
-
-Нативная часть разделена на стабильный `chibimadness-desktop.exe` launcher и обновляемый Rust game host. Launcher при старте проверяет `native-patch-manifest.json`, скачивает и SHA-256-проверяет `native-patch.zip`, затем запускает проверенный host из `%LOCALAPPDATA%\ChibiMadness\native-versions`. Поэтому изменения Rust desktop-host применяются без повторного installer. Первый переход на эту схему требует установить один такой release поверх старой версии.
-
-## Production multiplayer
-
-Rust-сервер в [`server/`](server) — authoritative для общего мира: игроков, мобов, урона, снарядов и Nullspace. Инвентари, квесты и дропы намеренно остаются локальными. Инструкция для Linux, Nginx и PM2 находится в [`server/README.md`](server/README.md).
-
----
-
-## 🚀 Быстрый старт
-
-### 1. Требования к окружению
-* **Node.js**: версия 18.x или 20.x+ (LTS) или **Bun** (1.0+)
-* **Менеджер пакетов**: `npm`, `pnpm` или `bun`
-* **Браузер**: Любой современный браузер с поддержкой HTML5 Canvas и WebSockets
-
-### 2. Установка зависимостей
-Откройте терминал в корне проекта и выполните:
-```bash
-npm install
-# или если используете bun:
-# bun install
-```
-
-### 3. Настройка переменных окружения (`.env`)
-В корне проекта находится файл `.env`:
-```env
-GEMINI_API_KEY=""
-APP_URL="http://localhost:3000"
-PORT=3000
-```
-
-### 4. Запуск в режиме разработки
-```bash
+~~~bash
+npm ci
 npm run dev
-# или bun run dev
-```
-После запуска откройте в браузере: **`http://localhost:3000`**
+~~~
 
-> 💡 **Мультиплеер**: Чтобы протестировать сетевую игру, откройте сайт в двух разных вкладках или браузерах — персонажи появятся в одном мире и смогут взаимодействовать в реальном времени.
+Игра откроется на [http://localhost:3000](http://localhost:3000). Проверка процесса: [http://localhost:3000/api/health](http://localhost:3000/api/health).
 
----
+Настройки локального процесса необязательны:
 
-## 🛠 Доступные команды (Scripts)
+~~~bash
+cp .env.example .env
+~~~
 
-| Команда | Описание |
-|---|---|
-| `npm run dev` | Запуск dev-сервера (Express + WebSockets + Vite HMR) на порту 3000 |
-| `npm run build` | Сборка фронтенда (`vite build`) и бэкенда (`esbuild server.ts`) в папку `dist/` |
-| `npm run start` | Запуск собранного продакшн-сервера из `dist/server.cjs` |
-| `npm run lint` | Проверка типов TypeScript (`tsc --noEmit`) |
-| `npm run clean` | Очистка папки сборки `dist` |
+### Production-сборка web
 
----
+~~~bash
+npm run lint
+npm run build
+NODE_ENV=production npm run start
+~~~
 
-## 📂 Структура проекта
+**npm run build** создаёт Vite-бандл и **dist/server.cjs**. При NODE_ENV=production команда **npm run start** обслуживает собранный SPA и WebSocket-релей без Vite.
 
-```text
-chibimadness-main/
-├── .env                  # Настройки окружения (порт, API ключи)
-├── index.html            # Главный HTML-шаблон
-├── package.json          # Зависимости и скрипты
-├── server.ts             # Express + WebSocket бэкенд сервер
-├── tsconfig.json         # Конфигурация TypeScript
-├── vite.config.ts        # Конфигурация сборщика Vite
-└── src/
-    ├── main.tsx          # Точка входа React
-    ├── App.tsx           # Главный компонент (игровой цикл, модалки)
-    ├── index.css         # Базовые стили Tailwind CSS
-    ├── types/
-    │   └── game.ts       # Интерфейсы TypeScript (Player, Item, Mob, Quest и т.д.)
-    ├── components/       # UI компоненты интерфейса
-    │   ├── CharacterCreator.tsx # Создание и кастомизация персонажа
-    │   ├── HUD.tsx              # ХП, мана, полоса опыта, горячие клавиши
-    │   ├── InventoryModal.tsx   # Инвентарь и экипировка
-    │   ├── CraftingModal.tsx    # Меню крафта предметов
-    │   ├── ShopModal.tsx        # Магазин торговца
-    │   ├── SkillTreeModal.tsx   # Дерево навыков
-    │   ├── WorldMapModal.tsx    # Карта мира
-    │   ├── DialogueModal.tsx    # Диалоги с NPC
-    │   ├── ChatAndEmotes.tsx    # Чат и эмоции
-    │   ├── BossBar.tsx          # Полоса здоровья босса
-    │   └── MobileControls.tsx   # Сенсорное управление для мобильных
-    └── game/             # Игровой движок (Canvas 2D)
-        ├── constants.ts         # Баланс, базы данных мобов, предметов, классов
-        ├── chibiRenderer.ts     # Процедурная отрисовка чиби-персонажей и экипировки
-        ├── worldRenderer.ts     # Отрисовка мира, биомов, погоды и освещения
-        ├── useGameEngine.ts     # Физика, коллизии, бой, стейт игры
-        ├── audioEngine.ts       # Процедурные звуки и музыка (Web Audio API)
-        └── multiplayerClient.ts # WebSocket клиент для синхронизации игроков
-```
+### Authoritative Rust-сервер
+
+~~~bash
+cargo run --manifest-path server/Cargo.toml -- --bind 127.0.0.1:3010 --max-players 64
+~~~
+
+Rust-процесс предоставляет только WebSocket. В production путь /ws должен проксироваться к нему через TLS reverse proxy. Браузерный клиент использует WebSocket того же origin; desktop-клиент получает отдельный wss:// endpoint от native host.
+
+Подробнее: [архитектура](docs/ARCHITECTURE.md), [разработка](docs/DEVELOPMENT.md), [сервер](server/README.md).
+
+## Управление
+
+| Ввод | Действие |
+| --- | --- |
+| WASD / стрелки | Движение; внутри лифта W/S выбирают этаж |
+| ЛКМ | Атака в направлении курсора |
+| ПКМ | Прицеливание |
+| Shift | Уклонение/рывок |
+| Space | Прыжок |
+| 1–6 | Оружие классовой панели |
+| Q/E/F | Навыки; E также взаимодействует с ближайшим NPC |
+| R | Перезарядка |
+| V/G | Сесть в транспорт или выйти |
+| T | Эвакуация из horde-режима, когда она доступна |
+| I/B/K/M | Инвентарь, крафт, навыки, карта |
+| удержание C | Gunsmith для класса gunslinger |
+| Esc | Закрыть окно или открыть настройки |
+
+Сенсорное управление находится в **src/components/MobileControls.tsx**.
+
+## Команды
+
+| Команда | Что выполняет |
+| --- | --- |
+| npm run dev | Express + WebSocket + Vite middleware на PORT |
+| npm run lint | TypeScript typecheck через tsc --noEmit |
+| npm run build | Web-бандл и production Node entrypoint |
+| npm run start | Запуск dist/server.cjs; режим раздачи определяется NODE_ENV |
+| npm run preview | Просмотр Vite-бандла |
+| npm run clean | Удаление локальных build-артефактов |
+| cargo test --manifest-path server/Cargo.toml | Тесты authoritative сервера и NPC |
+| cargo test --manifest-path desktop/Cargo.toml | Тесты manifest/patch validation desktop-клиента |
+
+## Структура репозитория
+
+~~~text
+.
+├── .github/workflows/release.yml  # Windows packages, web/native patches, GitHub Release
+├── desktop/
+│   ├── build.rs                   # Встраивает разрешённые файлы dist/ в game host
+│   ├── src/launcher.rs            # Стабильный launcher и native self-update
+│   ├── src/main.rs                # WebView game host, WSS и web patch validation
+│   ├── src/scene_executor.rs      # Canvas display-list → GPU triangles
+│   └── src/world_renderer.rs      # WGPU surface, scene cache и presentation
+├── docs/
+│   ├── README.md                  # Индекс документации
+│   ├── ARCHITECTURE.md            # Runtime-границы и потоки данных
+│   ├── COMBAT_AI.md               # Боевой AI и шкала уровней NPC
+│   ├── DEVELOPMENT.md             # Локальная разработка и проверки
+│   └── RELEASES.md                # Desktop release и hot updates
+├── installer/chibimadness.iss     # Per-user Windows installer
+├── server/
+│   ├── src/ai.rs                  # Детерминированный utility AI
+│   ├── src/main.rs                # Authoritative WebSocket world
+│   └── README.md                  # Запуск и Linux deployment
+├── src/
+│   ├── components/                # HUD, редактор персонажа, модальные окна, mobile UI
+│   ├── game/
+│   │   ├── useGameEngine.ts       # Основной игровой цикл
+│   │   ├── constants.ts           # Контент, баланс и стартовый roster
+│   │   ├── buildings.ts           # Планировки, этажи и коллизии интерьеров
+│   │   ├── worldRenderer.ts       # Мир, погода, эффекты и противники
+│   │   ├── chibiRenderer.ts       # Персонажи и экипировка
+│   │   ├── multiplayerClient.ts   # WebSocket/desktop bridge
+│   │   ├── renderScene.ts          # Запись Canvas-команд для native renderer
+│   │   ├── renderScene.worker.ts   # Компиляция static/dynamic сцен вне UI thread
+│   │   └── characterSave.ts        # Локальные слоты операторов
+│   └── types/game.ts              # Общая модель игрового состояния
+├── deploy-server.sh               # Sparse deploy Rust-сервера на текущий VPS layout
+├── server.ts                      # Локальный/standalone Node web process
+├── package.json                   # Web scripts и зависимости
+└── vite.config.ts                 # React, Tailwind и HMR
+~~~
+
+## Сетевая авторитетность и сохранения
+
+- Rust-сервер владеет общей позицией/HP игроков, roster мобов, решениями NPC, снарядами, уроном, респавном и состоянием Nullspace.
+- Инвентарь, экипировка, навыки, квесты, золото и эволюции сохраняются в браузерном localStorage под ключом **chibimadness.operators.v1**.
+- Слотов операторов максимум восемь. Серверной базы аккаунтов или облачных сохранений сейчас нет.
+- Resume token защищает уже занятую multiplayer identity, но живёт только в памяти процесса и не является системой аккаунтов.
+- Node WebSocket в **server.ts** — облегчённый relay. Он не заменяет Rust simulation.
+
+## Документация
+
+- [Индекс документации](docs/README.md)
+- [Архитектура](docs/ARCHITECTURE.md)
+- [Разработка и проверки](docs/DEVELOPMENT.md)
+- [Боевой AI NPC](docs/COMBAT_AI.md)
+- [Релизы и hot updates](docs/RELEASES.md)
+- [Production multiplayer server](server/README.md)
+
+## Релизы
+
+Workflow **.github/workflows/release.yml** собирает portable ZIP, Inno Setup installer, проверяемый web patch и native patch с обновляемым Rust game host. Push в main создаёт Actions artifact; тег v* дополнительно публикует все шесть файлов в GitHub Release.
+
+Стабильный **chibimadness-desktop.exe** запускает установленный или SHA-256-проверенный **chibimadness-game.exe**. Изменения launcher требуют нового installer/portable package; game host и web-контент обновляются своими patch-пакетами.
+
+Canvas2D остаётся production renderer по умолчанию и сохраняет текущий вид карты и персонажей. Экспериментальный Rust/WGPU renderer включается явно и пока не имеет полной визуальной совместимости:
+
+~~~powershell
+.\chibimadness-desktop.exe --native-renderer
+~~~
+
+Полная процедура и границы hot-update механизма описаны в [docs/RELEASES.md](docs/RELEASES.md).
+
+## Проверки перед PR
+
+~~~bash
+npm ci
+npm run lint
+npm run build
+cargo fmt --manifest-path server/Cargo.toml -- --check
+cargo clippy --manifest-path server/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path server/Cargo.toml
+~~~
+
+Для изменений desktop дополнительно:
+
+~~~bash
+cargo fmt --manifest-path desktop/Cargo.toml -- --check
+cargo test --manifest-path desktop/Cargo.toml
+~~~
+
+Проект не содержит корневого файла лицензии; не предполагается лицензия только по значениям в отдельных Cargo manifests.

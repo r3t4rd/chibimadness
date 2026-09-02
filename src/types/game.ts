@@ -471,6 +471,7 @@ export interface InteriorFloor {
   props: BuildingProp[];
   exitPad?: { x: number; y: number; width: number; height: number };
   elevator: { x: number; y: number; width: number; height: number };
+  elevatorLanding: { x: number; y: number };
   spawn: { x: number; y: number };
 }
 
@@ -817,6 +818,16 @@ export interface Monster {
   targetPlayerId: string | null;
   attackCooldown: number;
   specialCooldown: number;
+  aiLevel?: number;
+  aiTier?: 'training' | 'street' | 'tactical' | 'elite' | 'nemesis';
+  aiArchetype?: 'rusher' | 'shooter' | 'flanker' | 'sniper' | 'tank' | 'controller';
+  aiIntent?: 'idle' | 'investigate' | 'advance' | 'hold' | 'flank' | 'retreat' | 'telegraph' | 'attack';
+  attackCommitted?: boolean;
+  attackToken?: boolean;
+  telegraphRemaining?: number;
+  telegraphDuration?: number;
+  telegraphAimX?: number;
+  telegraphAimY?: number;
   sniperLaser?: {
     active: boolean;
     angle: number;

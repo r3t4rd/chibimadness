@@ -1285,7 +1285,50 @@ export const QUESTS_DATABASE: Record<string, Quest> = {
   },
 };
 
-export const INITIAL_MONSTERS: Monster[] = [
+const INITIAL_MONSTER_AI_LEVELS: Record<string, number> = {
+  target_human_1: 1,
+  mob_wolf_1: 2,
+  mob_wolf_2: 3,
+  bandit_grunt_1: 4,
+  bandit_grunt_2: 5,
+  bandit_scout_1: 6,
+  bandit_shotgunner_1: 7,
+  bandit_sniper_1: 8,
+  cop_patrol_1: 9,
+  cop_patrol_2: 10,
+  cop_patrol_3: 11,
+  cop_patrol_4: 12,
+  cop_shield_1: 13,
+  cop_shield_2: 14,
+  cop_shield_3: 15,
+  punk_anarchist_1: 16,
+  cop_swat_1: 17,
+  cop_swat_2: 18,
+  cop_swat_3: 19,
+  cop_commando_1: 20,
+  cop_commando_2: 21,
+  cop_marksman_1: 22,
+  cop_marksman_2: 23,
+  punk_anarchist_2: 24,
+  punk_anarchist_3: 25,
+  punk_anarchist_4: 26,
+  punk_molotov_1: 27,
+  punk_molotov_2: 28,
+  punk_molotov_3: 29,
+  punk_gunner_1: 30,
+  punk_gunner_2: 31,
+  punk_gunner_3: 32,
+  punk_shotgun_1: 33,
+  punk_rebel_1: 34,
+  boss_outlaw_viktor: 35,
+  boss_welder: 36,
+  cop_juggernaut_1: 37,
+  cop_juggernaut_2: 38,
+  punk_juggernaut_1: 39,
+  punk_juggernaut_2: 40,
+};
+
+const INITIAL_MONSTER_ROSTER: Monster[] = [
   // Forest Feral Wolves
   {
     id: 'mob_wolf_1',
@@ -3121,6 +3164,11 @@ export const INITIAL_MONSTERS: Monster[] = [
     animTimer: 0,
   },
 ];
+
+export const INITIAL_MONSTERS: Monster[] = INITIAL_MONSTER_ROSTER.map((monster) => ({
+  ...monster,
+  aiLevel: INITIAL_MONSTER_AI_LEVELS[monster.id] ?? 20,
+}));
 
 export const CLASS_DEFAULTS = {
   gunslinger: {

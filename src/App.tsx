@@ -45,6 +45,7 @@ import {
 } from './game/multiplayerClient';
 
 type NativeColor = [number, number, number, number];
+const MONSTER_AI_TIER_COLORS = ['#72E6A5', '#54C8FF', '#F5BC61', '#F07A8F', '#D08BFF'];
 
 /** DOM-only UI placed over the native WGPU world. It intentionally contains
  * no Canvas commands: entity bodies remain native sprites, while TS owns the
@@ -52,6 +53,7 @@ type NativeColor = [number, number, number, number];
 type NativeUiActor = {
   id: string;
   label?: string;
+  labelColor?: string;
   badge?: string;
   screenX: number;
   screenY: number;
@@ -772,27 +774,36 @@ export function App() {
               hpRatio: number,
               hostile: boolean,
               badge?: string,
+              labelColor?: string,
             ): NativeUiActor | null => {
               const screenX = (x - camera.x) * camera.zoom + viewportWidth / 2;
               const screenY = (y - camera.y) * camera.zoom + viewportHeight / 2 - size * camera.zoom * 2.08;
               if (screenX < -180 || screenX > viewportWidth + 180 || screenY < -90 || screenY > viewportHeight + 90) return null;
-              return { id, label, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
+              return { id, label, labelColor, badge, screenX, screenY, hpRatio: Math.max(0, Math.min(1, hpRatio)), hostile };
             };
-            // Enemy text belongs to neither the sprite nor WGPU primitives:
-            // it is intentionally omitted here. HP is live TS UI from the
-            // replicated snapshot and is positioned every rAF above.
+            // Enemy AI levels and HP stay live TS UI from the replicated
+            // snapshot and are positioned every rAF above.
             const actors = [
               ...curEngine.monsters
                 .filter((monster) => monster.hp > 0)
-                .map((monster) => screenActor(
-                  monster.id,
-                  undefined,
-                  monster.x,
-                  monster.y,
-                  monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
-                  monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
-                  true,
-                )),
+                .map((monster) => {
+                  const aiLevel = Number.isFinite(monster.aiLevel)
+                    ? Math.max(1, Math.min(40, Math.round(monster.aiLevel ?? 20)))
+                    : null;
+                  return screenActor(
+                    monster.id,
+                    aiLevel === null ? undefined : `AI ${aiLevel}`,
+                    monster.x,
+                    monster.y,
+                    monster.hordeKind ? (monster.isBoss ? 44 : 30) : (monster.isBoss ? 58 : 42),
+                    monster.maxHp > 0 ? monster.hp / monster.maxHp : 0,
+                    true,
+                    undefined,
+                    aiLevel === null
+                      ? undefined
+                      : MONSTER_AI_TIER_COLORS[Math.min(4, Math.floor((aiLevel - 1) / 8))],
+                  );
+                }),
               ...(Object.values(curEngine.remotePlayers) as Player[])
                 .filter((player) => player.id !== curEngine.player.id)
                 .concat(curEngine.player)
@@ -967,7 +978,15 @@ export function App() {
         if (nativeSpriteBodies) {
           const hasCombatVfx = worldInput.projectiles.length > 0
             || worldInput.particles.length > 0
-            || worldInput.damagePopups.length > 0;
+            || worldInput.damagePopups.length > 0
+            || worldInput.monsters.some((monster) => (
+              Number.isFinite(monster.telegraphRemaining)
+              && Number.isFinite(monster.telegraphDuration)
+              && (monster.telegraphRemaining ?? 0) > 0
+              && (monster.telegraphDuration ?? 0) > 0
+              && Number.isFinite(monster.telegraphAimX)
+              && Number.isFinite(monster.telegraphAimY)
+            ));
           pendingDynamicRender = null;
           clearDynamicFrame();
           if (hasCombatVfx) {
@@ -1260,7 +1279,10 @@ export function App() {
                   style={{ transform: `translate3d(${actor.screenX}px, ${actor.screenY}px, 0) translate(-50%, -100%)` }}
                 >
                   {actor.label && (
-                    <div className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]">
+                    <div
+                      className="max-w-full truncate rounded-full border border-slate-400/80 bg-slate-950/90 px-2 py-0.5 text-[10px] font-bold leading-none text-slate-50 shadow-[0_1px_0_rgba(255,255,255,0.22)]"
+                      style={actor.labelColor ? { color: actor.labelColor } : undefined}
+                    >
                       {actor.label}
                     </div>
                   )}
