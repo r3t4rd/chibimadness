@@ -21,13 +21,29 @@ import {
   getHordeMobAtlasSprites,
 } from '../src/game/worldRenderer';
 import { NPCS_DATABASE } from '../src/game/constants';
-import {
-  NATIVE_CHARACTER_SPRITE_RECIPES,
-  NATIVE_CHARACTER_WEAPONS,
-} from './native-visual-recipes';
 import { ChibiConfig, Player, Monster, GunType } from '../src/types/game';
 
 const OUTPUT_DIR = path.resolve(process.cwd(), 'assets/sprites');
+const CHARACTER_CATALOG_PATH = path.resolve(process.cwd(), 'assets/native/characters.json');
+
+type CharacterCatalogEntry = {
+  id: string;
+  name: string;
+  allWeapons?: boolean;
+  weapon?: GunType;
+  chibi: ChibiConfig;
+};
+
+type NativeCharacterCatalog = {
+  weapons: GunType[];
+  characters: CharacterCatalogEntry[];
+};
+
+// Shared source of truth with the native Rust frame resolver. Canvas is used
+// only here to bake PNGs; this catalog is never bundled into the WebView.
+const CHARACTER_CATALOG = JSON.parse(
+  fs.readFileSync(CHARACTER_CATALOG_PATH, 'utf8'),
+) as NativeCharacterCatalog;
 
 if (!fs.existsSync(OUTPUT_DIR)) {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
@@ -554,8 +570,11 @@ function generateCharactersAtlas() {
     outfitType: 'idol_stage',
     ribbonColor: '#06B6D4',
   };
-  const mikuWeapons: GunType[] = [...NATIVE_CHARACTER_WEAPONS];
-  const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
+  const mikuWeapons: GunType[] = [...CHARACTER_CATALOG.weapons];
+  // Kept temporarily below only as visual documentation while the remaining
+  // creator presets are reviewed. Atlas output uses `operatorPresets` from
+  // the JSON catalog defined after this list.
+  const legacyOperatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] = [
     // Full frames come from the exact creator recipe and weapon source call.
     // There is no native vector approximation or runtime Canvas composition.
     ...mikuWeapons.map((weapon) => ({
@@ -564,8 +583,8 @@ function generateCharactersAtlas() {
       chibi: mikuChibi,
       weapon,
     })),
-    ...NATIVE_CHARACTER_SPRITE_RECIPES.flatMap((recipe) => (
-      NATIVE_CHARACTER_WEAPONS.map((weapon) => ({
+    ...CHARACTER_CATALOG.characters.filter((recipe) => recipe.id !== 'hatsune_miku' && recipe.allWeapons).flatMap((recipe) => (
+      CHARACTER_CATALOG.weapons.map((weapon) => ({
         id: `${recipe.id}_${weapon}`,
         name: recipe.name,
         chibi: recipe.chibi,
@@ -719,6 +738,19 @@ function generateCharactersAtlas() {
       },
     },
   ];
+
+  const operatorPresets: { id: string; name: string; chibi: ChibiConfig; weapon: GunType }[] =
+    CHARACTER_CATALOG.characters.flatMap((character) => {
+      const weapons = character.allWeapons
+        ? CHARACTER_CATALOG.weapons
+        : character.weapon ? [character.weapon] : [];
+      return weapons.map((weapon) => ({
+        id: character.allWeapons ? `${character.id}_${weapon}` : character.id,
+        name: character.name,
+        chibi: character.chibi,
+        weapon,
+      }));
+    });
 
   const items = operatorPresets.map((op) => ({
     id: `character_${op.id}`,

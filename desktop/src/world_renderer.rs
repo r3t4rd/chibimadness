@@ -2832,7 +2832,10 @@ impl NativeWorldRenderer {
             "decal" => self.add_decal(entity, x, y, world),
             "summon" => self.add_summon(entity, x, y, world),
             "popup" => self.add_popup(entity, x, y, world),
-            "monster" if entity.effect_type == "forest_wolf" => self.add_forest_wolf(entity, x, y, world),
+            // Actors are atlas-only in native mode. A missing explicit match
+            // resolves through `assets/native/characters.json`; never fall
+            // back to the old hand-drawn chibi/humanoid geometry.
+            "player" | "npc" | "monster" => {},
             _ => self.add_humanoid(entity, x, y, world),
         }
     }

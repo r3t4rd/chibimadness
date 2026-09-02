@@ -468,6 +468,11 @@ class MultiplayerClient {
     this.send({ type: 'world_fire', projectile });
   }
 
+  /** Shared-combat intent: server Rust selects the loadout and spawns effects. */
+  public castSkill(slot: number, targetX: number, targetY: number) {
+    this.send({ type: 'skill_cast', slot, targetX, targetY });
+  }
+
   public hasSharedWorld() {
     return this.sharedWorldReady;
   }

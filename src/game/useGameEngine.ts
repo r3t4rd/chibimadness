@@ -2758,6 +2758,14 @@ export function useGameEngine(initialPlayer: Player) {
 
     sound.playSkillCast(skill.type);
 
+    // Native/shared combat sends a tiny input intent only. Rust selects the
+    // class ability, enforces cooldown and produces the authoritative effects;
+    // do not replay the large local TS skill branch in this mode.
+    if (net.hasSharedWorld()) {
+      net.castSkill(skillIndex, targetX, targetY);
+      return;
+    }
+
     const pushSkillProj = (proj: Projectile) => {
       // In a shared world, projectile collision and damage are server-owned.
       // Adding the projectile locally made it disappear at the next snapshot
